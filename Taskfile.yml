@@ -1,0 +1,113 @@
+version: '3'
+
+includes:
+  web:
+    taskfile: ./apps/web/Taskfile.yml
+    dir: ./apps/web
+  api:
+    taskfile: ./apps/api/Taskfile.yml
+    dir: ./apps/api
+  crawler:
+    taskfile: ./services/crawler/Taskfile.yml
+    dir: ./services/crawler
+  pipeline:
+    taskfile: ./services/pipeline/Taskfile.yml
+    dir: ./services/pipeline
+  intelligence:
+    taskfile: ./services/intelligence/Taskfile.yml
+    dir: ./services/intelligence
+
+tasks:
+  setup:
+    desc: Sync dependencies for scaffolded services
+    cmds:
+      - task: web:setup
+      - task: api:setup
+      - task: crawler:setup
+      - task: pipeline:setup
+      - task: intelligence:setup
+
+  lint:
+    desc: Lint scaffolded services
+    cmds:
+      - python3 -m json.tool package.json > /dev/null
+      - task --list > /dev/null
+      - git diff --check HEAD
+      - task: web:lint
+      - task: api:lint
+      - task: crawler:lint
+      - task: pipeline:lint
+      - task: intelligence:lint
+
+  format:
+    desc: Format scaffolded services
+    cmds:
+      - task: web:format
+      - task: api:format
+      - task: crawler:format
+      - task: pipeline:format
+      - task: intelligence:format
+
+  format:check:
+    desc: Check formatting without modifying files
+    cmds:
+      - git diff --check HEAD
+      - task: web:format:check
+      - task: api:format:check
+      - task: crawler:format:check
+      - task: pipeline:format:check
+      - task: intelligence:format:check
+
+  typecheck:
+    desc: Typecheck scaffolded services
+    cmds:
+      - task: web:typecheck
+      - task: api:typecheck
+      - task: crawler:typecheck
+      - task: pipeline:typecheck
+      - task: intelligence:typecheck
+
+  test:
+    desc: Run unit tests for scaffolded services
+    cmds:
+      - task: web:test
+      - task: api:test
+      - task: crawler:test
+      - task: pipeline:test
+      - task: intelligence:test
+
+  check:
+    desc: Run the fast pre-PR checks in order
+    cmds:
+      - task: format:check
+      - task: lint
+      - task: typecheck
+      - task: test
+
+  check:full:
+    desc: Run fast checks and secret scanning
+    cmds:
+      - task: check
+      - task: security
+
+  security:
+    desc: Scan the working tree for secrets
+    cmds:
+      - gitleaks dir --no-banner --redact .
+
+  hooks:install:
+    desc: Install the fast pre-commit hooks
+    cmds:
+      - pre-commit install
+
+  clean:
+    desc: Remove generated caches and build output, preserving environments and data
+    cmds:
+      - rm -rf .task .pytest_cache .ruff_cache .mypy_cache .pyright coverage htmlcov dist build
+      - rm -rf apps/web/.next apps/web/coverage apps/web/dist apps/api/coverage apps/api/dist
+      - rm -rf services/crawler/.pytest_cache services/crawler/.ruff_cache services/pipeline/.pytest_cache services/pipeline/.ruff_cache services/intelligence/.pytest_cache services/intelligence/.ruff_cache
+
+  tasks:
+    desc: List available commands
+    cmds:
+      - task --list

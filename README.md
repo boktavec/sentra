@@ -138,6 +138,35 @@ Empty areas contain `.gitkeep` placeholders so Git preserves the intended struct
 
 AI coding agents may be used heavily during implementation. Architectural decisions, tradeoffs, failure modes, security boundaries, scalability assumptions, and verification remain deliberate engineering responsibilities. Changes should be reviewed against those responsibilities and measured where possible.
 
+## Development Setup
+
+Install [mise](https://mise.jdx.dev/) as a prerequisite. It pins Node.js, Python, pnpm, uv, Task, pre-commit, and gitleaks for this repository.
+
+```bash
+git clone git@github.com:boktavec/sentra.git
+cd sentra
+mise install
+task setup
+```
+
+`mise` manages versions and tools, `Task` is the workflow interface, `pnpm` manages TypeScript dependencies, and `uv` manages Python dependencies. The root `package.json` only identifies the workspace; application and service dependencies will be added when each component is scaffolded.
+
+Common commands:
+
+```bash
+task lint
+task format
+task format:check
+task typecheck
+task test
+task check
+task check:full
+task security
+task hooks:install
+```
+
+Namespaced commands target one component, for example `task crawler:test` or `task api:lint`. Component commands report a skip until their `pyproject.toml` or `package.json` exists. `task check` is the fast pre-PR sequence; `task check:full` also scans the working tree for secrets. Run `pre-commit run --all-files` to apply the repository hygiene hooks to all tracked files.
+
 ## Roadmap
 
 1. **Phase 0 — Repository and engineering foundation**

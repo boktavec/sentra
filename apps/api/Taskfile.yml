@@ -1,0 +1,32 @@
+version: '3'
+
+tasks:
+  setup:
+    desc: setup apps/api
+    cmds:
+      - 'if [ -f package.json ]; then pnpm install; else echo "apps/api has not been scaffolded yet; skipping."; fi'
+
+  lint:
+    desc: lint apps/api
+    cmds:
+      - 'if [ -f package.json ]; then pnpm run lint; else echo "apps/api has not been scaffolded yet; skipping."; fi'
+
+  format:
+    desc: format apps/api
+    cmds:
+      - 'if [ -f package.json ]; then pnpm run format; else echo "apps/api has not been scaffolded yet; skipping."; fi'
+
+  format:check:
+    desc: format:check apps/api
+    cmds:
+      - 'if [ -f package.json ]; then pnpm run format:check; else echo "apps/api has not been scaffolded yet; skipping."; fi'
+
+  typecheck:
+    desc: typecheck apps/api
+    cmds:
+      - 'if [ -f package.json ]; then pnpm run typecheck; else echo "apps/api has not been scaffolded yet; skipping."; fi'
+
+  test:
+    desc: test apps/api
+    cmds:
+      - 'if [ -f package.json ]; then pnpm run test; else echo "apps/api has not been scaffolded yet; skipping."; fi'
