@@ -5,7 +5,7 @@ export type ApiResult<T> =
   { ok: true; data: T; status: number } | { ok: false; status: number; correlationId: string };
 
 interface Init {
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "PATCH" | "DELETE";
   body?: unknown;
 }
 
@@ -22,9 +22,10 @@ const requestInit = (accessToken: string, correlationId: string, init: Init): Re
 });
 
 async function toResult<T>(res: Response, correlationId: string): Promise<ApiResult<T>> {
-  return res.ok
-    ? { ok: true, data: (await res.json()) as T, status: res.status }
-    : { ok: false, status: res.status, correlationId };
+  if (!res.ok) return { ok: false, status: res.status, correlationId };
+  // 204 has no body.
+  const data = res.status === 204 ? undefined : await res.json();
+  return { ok: true, data: data as T, status: res.status };
 }
 
 /** Server-side call to the API with the user's access token and a propagated correlation ID. */
@@ -46,3 +47,9 @@ export const apiGet = <T>(path: string, accessToken: string) =>
 
 export const apiPost = <T>(path: string, accessToken: string, body: unknown) =>
   apiRequest<T>(path, accessToken, { method: "POST", body });
+
+export const apiPatch = <T>(path: string, accessToken: string, body: unknown) =>
+  apiRequest<T>(path, accessToken, { method: "PATCH", body });
+
+export const apiDelete = (path: string, accessToken: string) =>
+  apiRequest<undefined>(path, accessToken, { method: "DELETE" });

@@ -1,25 +1,11 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
-import { apiGet } from "@/lib/api";
-import { callApi } from "@/lib/auth";
+import { fetchOrg } from "@/lib/orgs";
 
 export const dynamic = "force-dynamic";
 
-interface Org {
-  id: string;
-  name: string;
-  slug: string;
-  role: string;
-}
-
 export default async function OrgPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const org = await callApi((token) =>
-    apiGet<Org>(`/v1/orgs/by-slug/${encodeURIComponent(slug)}`, token),
-  );
-
-  // A missing org and an org the user does not belong to look the same: the API returns 404 for both.
-  if (!org.ok && org.status === 404) notFound();
+  const org = await fetchOrg(slug);
   if (!org.ok) {
     return (
       <main>
@@ -41,6 +27,9 @@ export default async function OrgPage({ params }: { params: Promise<{ slug: stri
       </p>
       <p>
         Your role: <strong data-testid="org-role">{org.data.role}</strong>
+      </p>
+      <p>
+        <Link href={`/orgs/${org.data.slug}/members`}>Members</Link>
       </p>
     </main>
   );
