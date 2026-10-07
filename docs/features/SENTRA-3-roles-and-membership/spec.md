@@ -1,6 +1,6 @@
 # SENTRA-3: Organization roles and membership management
 
-- Status: Draft
+- Status: Implemented, in review
 - YouTrack: http://localhost:8080/issue/SENTRA-3 (Identity & Tenant Foundation, P0)
 - Owner: Brian Oktavec
 
@@ -124,18 +124,18 @@ No third-party behavior beyond the existing stack (Fastify, `pg`, Next.js) is re
 
 ## Acceptance criteria
 
-- [ ] The system supports `admin` and `member` roles in `memberships`.
-- [ ] Authorization is enforced server-side through `requireRole` on the checked `TenantContext`; role comes from the caller's membership for that org.
-- [ ] A member gets `403 forbidden` on every admin-only operation.
-- [ ] A non-member gets the same `404` as for a missing org, on every route; bypass attempts (foreign `orgId`, body-supplied tenant or role fields) are rejected or ignored.
-- [ ] Any member can list the org's members with cursor pagination; emails are returned to admins only.
-- [ ] Deleting a user who is not a member succeeds (`204`) with no backend change and no error in the web app.
-- [ ] An admin can change a member's role and remove a member; any member can leave.
-- [ ] The last admin can never be demoted, removed, or leave, including under concurrent requests.
-- [ ] Each membership change writes an audit event in the same transaction; a repeated role set causes no write and no extra audit event.
-- [ ] A removed or demoted user loses access on their next request.
-- [ ] Outcomes are logged and counted.
-- [ ] The web app has a members page; admin controls are hidden from members and the server still enforces.
+- [x] The system supports `admin` and `member` roles in `memberships`.
+- [x] Authorization is enforced server-side through `requireRole` on the checked `TenantContext`; role comes from the caller's membership for that org.
+- [x] A member gets `403 forbidden` on every admin-only operation.
+- [x] A non-member gets the same `404` as for a missing org, on every route; bypass attempts (foreign `orgId`, body-supplied tenant or role fields) are rejected or ignored.
+- [x] Any member can list the org's members with cursor pagination; emails are returned to admins only.
+- [x] Deleting a user who is not a member succeeds (`204`) with no backend change and no error in the web app.
+- [x] An admin can change a member's role and remove a member; any member can leave.
+- [x] The last admin can never be demoted, removed, or leave, including under concurrent requests.
+- [x] Each membership change writes an audit event in the same transaction; a repeated role set causes no write and no extra audit event.
+- [x] A removed or demoted user loses access on their next request.
+- [x] Outcomes are logged and counted.
+- [x] The web app has a members page; admin controls are hidden from members and the server still enforces.
 
 ## Verification
 
@@ -155,7 +155,7 @@ No third-party behavior beyond the existing stack (Fastify, `pg`, Next.js) is re
 ## Open questions and assumptions to validate
 
 - **Resolved with the owner:** members see names only, admins see names and emails; a repeated `DELETE` is an idempotent `204` with no backend change and no web error.
-- **Users with no email:** `users.email` is nullable, so admins may see a missing email for some members. The page shows the name only in that case.
+- **Users with no email or name (found during implementation):** Zitadel access tokens carry neither claim, even though the web app requests the `profile` and `email` scopes, so `users.email` and `users.name` are null for real users today. The members list therefore shows "(no name)" and no email until the profile is stored. This is a SENTRA-1 gap and out of scope here; the Playwright test sets the profile with SQL. SENTRA-28 needs the verified email to match invitations and will read it from Zitadel's userinfo endpoint, which also fixes the display. Follow-up: store name and email at sign-in.
 - **Role in cached data:** SENTRA-1's user cache holds only user IDs, not roles, so role changes need no cache invalidation. Re-check if a role cache is ever added.
 - **Outbox table owner:** SENTRA-28 or SENTRA-29 creates it (tracked on SENTRA-29).
 - **Email-verified claim:** whether the token `Claims` expose it is a SENTRA-28 question, not needed here.
