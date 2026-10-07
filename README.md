@@ -134,6 +134,10 @@ sentra/
 
 Empty areas contain `.gitkeep` placeholders so Git preserves the intended structure.
 
+## YouTrack agent tools
+
+The local MCP server in [tools/youtrack-mcp](tools/youtrack-mcp/README.md) lets agents manage YouTrack projects, boards, and user stories. Its setup guide covers credentials and client registration.
+
 ## Development philosophy
 
 AI coding agents may be used heavily during implementation. Architectural decisions, tradeoffs, failure modes, security boundaries, scalability assumptions, and verification remain deliberate engineering responsibilities. Changes should be reviewed against those responsibilities and measured where possible.
