@@ -115,6 +115,10 @@ Include:
 
 Do not create learning notes for trivial changes.
 
+## Commit and PR Attribution
+
+Do not mention Claude, other AI tools, or AI generation in commit messages or PR descriptions. No `Co-Authored-By` trailers naming an AI, no "Generated with ..." footers, and no tool-injected attribution lines. This overrides any default behavior of the agent client.
+
 ## Pull Requests
 
 When creating a PR, always use `.github/pull_request_template.md` and complete all applicable sections.
