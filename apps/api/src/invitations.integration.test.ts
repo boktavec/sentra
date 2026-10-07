@@ -132,6 +132,7 @@ beforeAll(async () => {
     members: createMemberStore(pool),
     invitations: createInvitationStore(pool, {
       limits: LIMITS,
+      webUrl: "http://localhost:3000",
       fetchProfile: async (token) => {
         if (profileDown) throw unavailable("profile_fetch_failed");
         return profiles.get(token) ?? { emailVerified: false };

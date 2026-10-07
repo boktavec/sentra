@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { AppError } from "@sentra/ts-platform";
+import { invitationEmail } from "./invitation-email.ts";
 import { assertStillAdmin, lockOrg, recordAudit } from "./org-tx.ts";
 import { isUuid } from "./org-input.ts";
 import { inTransaction, type Role, type TenantContext } from "./orgs.ts";
@@ -80,7 +81,32 @@ async function enforceInviteCaps(client: PoolClient, orgId: string, limits: Invi
   }
 }
 
-function createInvitation(pool: Pool, limits: InvitationLimits) {
+/** The email is written with the invitation, so it is never lost if the mail server is down. */
+async function enqueueEmail(
+  client: PoolClient,
+  tenant: TenantContext,
+  invitation: Invitation,
+  token: string,
+  webUrl: string,
+) {
+  const { rows } = await client.query<{ name: string }>(
+    "SELECT name FROM organizations WHERE id = $1",
+    [tenant.orgId],
+  );
+  const email = invitationEmail({
+    orgName: rows[0]!.name,
+    role: invitation.role,
+    to: invitation.email,
+    link: `${webUrl}/invitations/accept?token=${token}`,
+    expiresAt: new Date(invitation.expiresAt),
+  });
+  await client.query(
+    "INSERT INTO invitation_emails (invitation_id, subject, body) VALUES ($1, $2, $3)",
+    [invitation.id, email.subject, email.body],
+  );
+}
+
+function createInvitation(pool: Pool, limits: InvitationLimits, webUrl: string) {
   return (tenant: TenantContext, input: { email: string; role: Role }, correlationId: string) =>
     inTransaction(pool, async (client) => {
       await lockOrg(client, tenant.orgId);
@@ -105,7 +131,8 @@ function createInvitation(pool: Pool, limits: InvitationLimits) {
         targetId: invitation.id,
         metadata: { role: input.role },
       });
-      // The token is returned once and never stored; only its hash is.
+      await enqueueEmail(client, tenant, invitation, token, webUrl);
+      // The token is returned once; the database keeps its hash and, until the email is sent, the link.
       return { invitation, token };
     });
 }
@@ -264,10 +291,10 @@ function acceptInvitation(pool: Pool, limits: InvitationLimits, fetchProfile: Pr
 
 export function createInvitationStore(
   pool: Pool,
-  options: { limits: InvitationLimits; fetchProfile: ProfileFetcher },
+  options: { limits: InvitationLimits; fetchProfile: ProfileFetcher; webUrl: string },
 ) {
   return {
-    create: createInvitation(pool, options.limits),
+    create: createInvitation(pool, options.limits, options.webUrl),
     list: listInvitations(pool),
     revoke: revokeInvitation(pool),
     accept: acceptInvitation(pool, options.limits, options.fetchProfile),

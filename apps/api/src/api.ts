@@ -1,4 +1,5 @@
 import { Redis } from "ioredis";
+import { createTransport } from "nodemailer";
 import { Pool } from "pg";
 import type { Logger } from "@sentra/ts-platform";
 import { buildApp } from "./app.ts";
@@ -8,12 +9,31 @@ import { JwksCache } from "./jwks.ts";
 import { createFailureLimiter } from "./limiter.ts";
 import * as metrics from "./metrics.ts";
 import { migrate } from "./migrate.ts";
+import { createEmailSender } from "./email-sender.ts";
 import { createInvitationStore } from "./invitations.ts";
 import { createMemberStore } from "./members.ts";
 import { createOrgStore } from "./orgs.ts";
 import { createProfileFetcher } from "./profile.ts";
 import { createUserStore } from "./users.ts";
 import { createVerifier } from "./verifier.ts";
+
+function startEmailSender(smtpUrl: string, config: Config, pool: Pool, logger: Logger) {
+  const sender = createEmailSender(pool, {
+    transport: createTransport({
+      url: smtpUrl,
+      connectionTimeout: 5000,
+      greetingTimeout: 5000,
+      socketTimeout: 10_000,
+    }),
+    from: config.emailFrom,
+    logger,
+    maxAttempts: config.emailMaxAttempts,
+    leaseSeconds: 60,
+    backoffBaseSeconds: 30,
+  });
+  sender.start(config.emailPollSeconds * 1000);
+  return sender;
+}
 
 /** Wires the real dependencies. Used by the server and by integration tests. */
 export async function createApi(config: Config, logger: Logger) {
@@ -54,6 +74,7 @@ export async function createApi(config: Config, logger: Logger) {
     members: createMemberStore(pool),
     invitations: createInvitationStore(pool, {
       fetchProfile: createProfileFetcher(config.issuer),
+      webUrl: config.webUrl,
       limits: {
         ttlHours: config.invitationTtlHours,
         maxPending: config.maxPendingInvitationsPerOrg,
@@ -73,11 +94,18 @@ export async function createApi(config: Config, logger: Logger) {
     },
   });
 
+  // ponytail: in-process sender, safe across replicas (SKIP LOCKED); move to a worker if sending load grows.
+  const sender = config.smtpUrl
+    ? startEmailSender(config.smtpUrl, config, pool, logger)
+    : undefined;
+  if (!sender) logger.warn({}, "email_disabled_no_smtp_url");
+
   return {
     app,
     pool,
     redis,
     async close() {
+      await sender?.stop();
       await app.close();
       await pool.end();
       redis.disconnect();

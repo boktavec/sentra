@@ -108,6 +108,7 @@ beforeAll(async () => {
     members: createMemberStore(pool),
     invitations: createInvitationStore(pool, {
       fetchProfile: async () => ({ emailVerified: false }),
+      webUrl: "http://localhost:3000",
       limits: { ttlHours: 1, maxPending: 1, maxPerDay: 1, maxMembers: 1 },
     }),
     trustedProxies: false,
