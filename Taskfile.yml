@@ -7,6 +7,12 @@ includes:
   api:
     taskfile: ./apps/api/Taskfile.yml
     dir: ./apps/api
+  stack:
+    taskfile: ./infra/docker/Taskfile.yml
+    dir: ./infra/docker
+  platform:
+    taskfile: ./packages/ts-platform/Taskfile.yml
+    dir: ./packages/ts-platform
   crawler:
     taskfile: ./services/crawler/Taskfile.yml
     dir: ./services/crawler
@@ -23,6 +29,7 @@ tasks:
     cmds:
       - task: web:setup
       - task: api:setup
+      - task: platform:setup
       - task: crawler:setup
       - task: pipeline:setup
       - task: intelligence:setup
@@ -35,6 +42,7 @@ tasks:
       - git diff --check HEAD
       - task: web:lint
       - task: api:lint
+      - task: platform:lint
       - task: crawler:lint
       - task: pipeline:lint
       - task: intelligence:lint
@@ -44,6 +52,7 @@ tasks:
     cmds:
       - task: web:format
       - task: api:format
+      - task: platform:format
       - task: crawler:format
       - task: pipeline:format
       - task: intelligence:format
@@ -54,6 +63,7 @@ tasks:
       - git diff --check HEAD
       - task: web:format:check
       - task: api:format:check
+      - task: platform:format:check
       - task: crawler:format:check
       - task: pipeline:format:check
       - task: intelligence:format:check
@@ -63,6 +73,7 @@ tasks:
     cmds:
       - task: web:typecheck
       - task: api:typecheck
+      - task: platform:typecheck
       - task: crawler:typecheck
       - task: pipeline:typecheck
       - task: intelligence:typecheck
@@ -72,9 +83,16 @@ tasks:
     cmds:
       - task: web:test
       - task: api:test
+      - task: platform:test
       - task: crawler:test
       - task: pipeline:test
       - task: intelligence:test
+
+  test:integration:
+    desc: Run integration tests (needs `task stack:up` and `task stack:bootstrap`)
+    cmds:
+      - task: api:test:integration
+      - task: web:test:e2e
 
   check:
     desc: Run the fast pre-PR checks in order

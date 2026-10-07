@@ -1,4 +1,4 @@
-version: '3'
+version: "3"
 
 tasks:
   setup:
@@ -30,3 +30,13 @@ tasks:
     desc: test apps/web
     cmds:
       - 'if [ -f package.json ]; then pnpm run test; else echo "apps/web has not been scaffolded yet; skipping."; fi'
+
+  test:e2e:
+    desc: Playwright sign-in E2E (needs `task stack:up` and `task stack:bootstrap`)
+    cmds:
+      - pnpm run test:e2e
+
+  dev:
+    desc: Run apps/web against the local stack
+    cmds:
+      - pnpm run dev

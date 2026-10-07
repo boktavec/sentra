@@ -1,0 +1,78 @@
+import Fastify from "fastify";
+import {
+  AppError,
+  requestLogger,
+  resolveCorrelationId,
+  toErrorResponse,
+  type Logger,
+} from "@sentra/ts-platform";
+import { createAuthenticator } from "./auth.ts";
+import * as metrics from "./metrics.ts";
+import type { AuthUser } from "./users.ts";
+
+declare module "fastify" {
+  interface FastifyRequest {
+    ctx: { correlationId: string; log: Logger };
+    user?: AuthUser;
+  }
+}
+
+interface Deps {
+  logger: Logger;
+  authenticate: ReturnType<typeof createAuthenticator>;
+  ready: () => Promise<boolean>;
+  trustedProxies: string[] | false;
+}
+
+export function buildApp({ logger, authenticate, ready, trustedProxies }: Deps) {
+  const app = Fastify({ trustProxy: trustedProxies });
+
+  app.decorateRequest("ctx");
+  app.addHook("onRequest", async (request, reply) => {
+    const incoming = request.headers["x-correlation-id"];
+    const correlationId = resolveCorrelationId(typeof incoming === "string" ? incoming : undefined);
+    request.ctx = { correlationId, log: requestLogger(logger, correlationId) };
+    reply.header("x-correlation-id", correlationId);
+  });
+
+  app.setErrorHandler((err, request, reply) => {
+    const { correlationId, log } = request.ctx;
+    const response = toErrorResponse(
+      err instanceof AppError ? err : fastifyClientError(err),
+      correlationId,
+    );
+    if (response.status >= 500) log.error({ err }, "request_failed");
+    return reply.status(response.status).headers(response.headers).send(response.body);
+  });
+  app.setNotFoundHandler(() => {
+    throw new AppError("not_found", 404, "Not found");
+  });
+
+  app.get("/healthz", async () => ({ status: "ok" }));
+  app.get("/readyz", async (_request, reply) =>
+    (await ready()) ? { status: "ready" } : reply.status(503).send({ status: "not_ready" }),
+  );
+  app.get("/metrics", async (_request, reply) =>
+    reply.type("text/plain; version=0.0.4").send(metrics.render()),
+  );
+
+  app.register(async (protectedRoutes) => {
+    protectedRoutes.addHook("onRequest", async (request) => {
+      request.user = await authenticate(request, request.ctx.log);
+      request.ctx.log = requestLogger(logger, request.ctx.correlationId, {
+        userId: request.user.id,
+      });
+    });
+    protectedRoutes.get("/v1/me", async (request) => ({ id: request.user!.id }));
+  });
+
+  return app;
+}
+
+/** Fastify's own 4xx errors (bad JSON, etc.) keep their status but get a generic message. */
+function fastifyClientError(err: unknown): unknown {
+  const status = (err as { statusCode?: number }).statusCode;
+  return status && status >= 400 && status < 500
+    ? new AppError("bad_request", status, "Bad request")
+    : err;
+}

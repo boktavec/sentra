@@ -1,0 +1,32 @@
+version: "3"
+
+tasks:
+  setup:
+    desc: setup packages/ts-platform
+    cmds:
+      - pnpm install
+
+  lint:
+    desc: lint packages/ts-platform
+    cmds:
+      - pnpm run lint
+
+  format:
+    desc: format packages/ts-platform
+    cmds:
+      - pnpm run format
+
+  format:check:
+    desc: format:check packages/ts-platform
+    cmds:
+      - pnpm run format:check
+
+  typecheck:
+    desc: typecheck packages/ts-platform
+    cmds:
+      - pnpm run typecheck
+
+  test:
+    desc: test packages/ts-platform
+    cmds:
+      - pnpm run test

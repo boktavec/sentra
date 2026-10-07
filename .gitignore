@@ -75,3 +75,9 @@ override.tf.json
 *_override.tf.json
 crash.log
 crash.*.log
+
+# Next.js / Playwright
+next-env.d.ts
+*.tsbuildinfo
+test-results/
+playwright-report/

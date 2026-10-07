@@ -1,0 +1,33 @@
+{
+  "name": "@sentra/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch --env-file-if-exists=../../infra/docker/.env.sentra src/server.ts",
+    "start": "node --env-file-if-exists=../../infra/docker/.env.sentra src/server.ts",
+    "migrate": "node --env-file-if-exists=../../infra/docker/.env.sentra src/migrate.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "eslint src",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test:integration": "sh -c 'set -a; . ../../infra/docker/.env.sentra; set +a; INTEGRATION=1 exec vitest run'"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "@types/pg": "^8.23.1",
+    "eslint": "^10.12.0",
+    "prettier": "^3.9.9",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.1",
+    "vitest": "^5.0.3"
+  },
+  "dependencies": {
+    "@sentra/ts-platform": "workspace:*",
+    "fastify": "^5.12.5",
+    "ioredis": "^6.0.0",
+    "jose": "^6.2.12",
+    "pg": "^8.23.1"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "@sentra/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "sh -c 'set -a; [ -f ../../infra/docker/.env.sentra ] && . ../../infra/docker/.env.sentra; set +a; exec next dev -p 3000'",
+    "build": "next build",
+    "start": "sh -c 'set -a; [ -f ../../infra/docker/.env.sentra ] && . ../../infra/docker/.env.sentra; set +a; exec next start -p 3000'",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "test:e2e": "sh -c 'set -a; [ -f ../../infra/docker/.env.sentra ] && . ../../infra/docker/.env.sentra; set +a; exec playwright test'",
+    "lint": "eslint src",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "@sentra/ts-platform": "workspace:*",
+    "ioredis": "^6.0.0",
+    "next": "^16.3.8",
+    "openid-client": "^6.8.8",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^26.6.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "eslint": "^10.12.0",
+    "prettier": "^3.9.9",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.1",
+    "vitest": "^5.0.3"
+  }
+}
