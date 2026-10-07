@@ -17,6 +17,8 @@
 
 ## Decisions and alternatives
 
+Label any claim about third-party behavior or defaults as **Verified** (say how: decoded a real token, tried the unhappy path, read the running config) or **Assumed** (say how it will be validated).
+
 | Decision | Chosen approach | Alternatives considered | Reason and tradeoff |
 | --- | --- | --- | --- |
 | | | | |

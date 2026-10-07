@@ -45,7 +45,7 @@ Read the relevant skill file before starting that kind of work. The files live i
 
 These MCP servers are configured for the user's local Codex, Claude Code, and Pi agents. Check that a server is connected before relying on it; tool names and availability can vary by client.
 
-- **`youtrack`** is the source of truth for Sentra projects, boards, and user stories. Read the story and its links before planning; after the spec is agreed, use it to create or update story details, acceptance criteria, dependencies, and status. Search before creating an issue to avoid duplicates. Delete projects, boards, or stories only when the user explicitly requests deletion.
+- **`youtrack`** is the source of truth for Sentra projects, boards, and user stories. Story URLs have the form `http://localhost:8080/issue/<ID>` (for example `http://localhost:8080/issue/SENTRA-1`); use that URL, not just the ID, wherever a story is linked. Read the story and its links before planning; after the spec is agreed, use it to create or update story details, acceptance criteria, dependencies, and status. Search before creating an issue to avoid duplicates. Delete projects, boards, or stories only when the user explicitly requests deletion.
 - **`context7`** provides current third-party library and framework documentation. Use it when a spec or implementation depends on a version-specific API, configuration, or integration behavior. Record the library version and relevant finding in the spec or PR. Sentra's repository and agreed spec remain the authority for Sentra requirements and decisions.
 
 Keep MCP credentials out of the repository and do not paste them into issues, specs, logs, or PRs. If a server is unavailable, say which lookup could not be completed and continue with the work that does not depend on it.
@@ -70,11 +70,19 @@ Ask only the questions that can change the design or acceptance criteria, but ke
 
 When the planning phase is complete, create a feature folder at `docs/features/<issue-id>-<short-slug>/` and put its spec at `docs/features/<issue-id>-<short-slug>/spec.md`, using [`docs/templates/feature-spec.md`](docs/templates/feature-spec.md). If there is no YouTrack issue yet, use a descriptive slug for the folder and rename it when an issue ID becomes available. Link the YouTrack issue when available, and add the spec link back to the issue. Record decisions, alternatives, assumptions, measurable targets, edge cases, and verification. Present the draft to the user for review and incorporate corrections before implementation. Keep the spec current when implementation reveals a changed requirement. Record a separate ADR for lasting architecture decisions.
 
+Verify claims about third-party behavior against the running system before relying on them, especially security-relevant defaults. Decode a real token, try the unhappy path (for example registering without verifying an email), and check which ports and defaults actually apply. Label each such claim in the spec as **Verified** (and how) or **Assumed**. Library documentation says what a tool can do; only the running system shows what it does by default.
+
 ## Feature Branch and Worktree Lifecycle
 
-For each feature, create a dedicated branch and Git worktree from the latest default branch before writing its spec or implementation. Use `feature/<issue-id>-<short-slug>` for the branch when an issue ID exists; otherwise use a descriptive slug. Keep the feature's spec, code, tests, and documentation in that worktree. Agents working in parallel must use separate worktrees and avoid editing each other's branches.
+For each feature, create a dedicated branch and Git worktree from the latest default branch before writing its spec or implementation. Use `feature/<issue-id>-<short-slug>` for the branch when an issue ID exists; otherwise use a descriptive slug. Keep the feature's spec, code, tests, and documentation in that worktree. Agents working in parallel must use separate worktrees and avoid editing each other's branches. Stage explicit paths rather than `git add -A`, and check `git status` for untracked generated files before committing.
 
-Open a PR for the feature and link its YouTrack story and spec. An open PR does not make the story Done. After the PR is merged, verify the merge, then mark the YouTrack story **Done**. Check that the feature worktree has no uncommitted or unmerged work, remove that worktree, and delete its local branch and remote branch if the remote branch still exists. Clean up only branches and worktrees created for that feature; if any step is blocked, report what remains instead of discarding work.
+Move the YouTrack story to **In Progress** when the worktree is created.
+
+Open a PR for the feature and link its YouTrack story URL and spec. An open PR does not make the story Done. After the PR is merged, verify the merge, then mark the YouTrack story **Done**, tick its acceptance criteria, and repoint its spec, ADR, and learning-note links to the default branch (branch URLs break once the branch is deleted). Check that the feature worktree has no uncommitted or unmerged work, remove that worktree, and delete its local branch and remote branch if the remote branch still exists. Clean up only branches and worktrees created for that feature; if any step is blocked, report what remains instead of discarding work.
+
+## Agent Instruction Files
+
+The root `AGENTS.md` is the single source of agent guidance. Do not commit nested or tool-generated agent instruction files such as `apps/web/AGENTS.md` or `CLAUDE.md`. Scaffolding tools sometimes generate them (Next.js does, unless `agentRules: false` is set); disable the option or delete the files before committing.
 
 ## Architecture Decisions
 
@@ -114,7 +122,8 @@ When creating a PR, always use `.github/pull_request_template.md` and complete a
 PRs should clearly include:
 
 - summary of what was built
-- link to the related user story or issue
+- link to the related user story: the YouTrack story URL, not just its ID
+- links to the spec, ADR, and learning note when they exist
 - context for why the feature is needed
 - why the implementation was designed this way
 - meaningful alternatives and tradeoffs
@@ -122,8 +131,10 @@ PRs should clearly include:
 - unit test coverage
 - regression test coverage
 - important edge cases, including any not yet handled
+- new dependencies and why each is needed
+- how to run the feature locally (stack, ports, Task commands)
 
-For UI changes, manually verify the feature in the browser and use Playwright to capture relevant screenshots.
+For UI changes, manually verify the feature in the browser and use Playwright to capture relevant screenshots. Commit the screenshots under `docs/features/<issue-id>-<short-slug>/screenshots/` and reference them in the PR body with absolute commit-SHA permalinks (`https://github.com/<owner>/<repo>/blob/<sha>/<path>?raw=true`). Branch URLs and relative links break once the branch is deleted or the PR is viewed elsewhere.
 
 Do not replace manual testing instructions with automated test results.
 
@@ -134,6 +145,7 @@ Mark sections `N/A` only when they genuinely do not apply.
 Before completing meaningful work:
 
 - run relevant formatting, linting, type checking, and tests
+- run `task fallow` (fallow audit against the default branch) and resolve every finding by fixing it, not by suppressing it; document any finding that cannot be fixed
 - verify expected behavior and regressions
 - consider security, tenant isolation, failure modes, and scalability
 - update relevant documentation
