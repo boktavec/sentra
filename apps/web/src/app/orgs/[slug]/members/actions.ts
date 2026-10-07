@@ -1,8 +1,10 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { apiDelete, apiPatch, type ApiResult } from "@/lib/api";
+import { apiDelete, apiPatch, apiPost, type ApiResult } from "@/lib/api";
 import { callApi } from "@/lib/auth";
+import { config } from "@/lib/config";
 
 const field = (form: FormData, name: string) => String(form.get(name) ?? "");
 const memberPath = (form: FormData) =>
@@ -32,4 +34,42 @@ export async function leaveOrganization(form: FormData) {
   const result = await callApi((token) => apiDelete(memberPath(form), token));
   if (result.ok || result.status === 404) redirect("/");
   finish(form, result);
+}
+
+export interface InviteState {
+  link?: string;
+  error?: string;
+}
+
+const INVITE_MESSAGES: Record<string, string> = {
+  invalid_input: "Enter a valid email address and a role.",
+  invitation_limit_reached: "This organization has reached its invitation limit. Try again later.",
+  forbidden: "Only admins can invite people.",
+};
+
+export async function createInvitation(_prev: InviteState, form: FormData): Promise<InviteState> {
+  const orgId = encodeURIComponent(field(form, "orgId"));
+  const result = await callApi((token) =>
+    apiPost<{ token: string }>(`/v1/orgs/${orgId}/invitations`, token, {
+      email: field(form, "email"),
+      role: field(form, "role"),
+    }),
+  );
+  if (!result.ok) {
+    return {
+      error:
+        (result.code && INVITE_MESSAGES[result.code]) ||
+        `The service is temporarily unavailable. Reference: ${result.correlationId}`,
+    };
+  }
+  revalidatePath(membersPage(form));
+  // The token is shown once, here; the API keeps only its hash.
+  return {
+    link: `${config().webUrl}/invitations/accept?token=${encodeURIComponent(result.data.token)}`,
+  };
+}
+
+export async function revokeInvitation(form: FormData) {
+  const path = `/v1/orgs/${encodeURIComponent(field(form, "orgId"))}/invitations/${encodeURIComponent(field(form, "invitationId"))}`;
+  finish(form, await callApi((token) => apiDelete(path, token)));
 }

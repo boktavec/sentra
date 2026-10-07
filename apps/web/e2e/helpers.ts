@@ -40,3 +40,20 @@ export async function signUp(page: Page, email: string) {
   await page.getByRole("button", { name: "Continue" }).click();
   await expect(page).toHaveURL("http://localhost:3000/");
 }
+
+/** Signs an existing user in from the identity provider's login page. */
+export async function signIn(page: Page, email: string) {
+  await page.locator("input[name=loginName]").fill(email);
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.locator("input[name=password]").fill(PASSWORD);
+  await page.getByRole("button", { name: "Continue" }).click();
+}
+
+/** Creates an organization through the web form and waits for its page. */
+export async function createOrg(page: Page, name: string, slug: string) {
+  await page.goto("/orgs/new");
+  await page.getByLabel("Name").fill(name);
+  await page.getByLabel("Slug").fill(slug);
+  await page.getByRole("button", { name: "Create organization" }).click();
+  await expect(page).toHaveURL(`http://localhost:3000/orgs/${slug}`);
+}

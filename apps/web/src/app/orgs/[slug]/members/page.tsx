@@ -2,7 +2,8 @@ import Link from "next/link";
 import { apiGet } from "@/lib/api";
 import { callApi } from "@/lib/auth";
 import { fetchOrg, type Org } from "@/lib/orgs";
-import { changeRole, leaveOrganization, removeMember } from "./actions";
+import { changeRole, leaveOrganization, removeMember, revokeInvitation } from "./actions";
+import { InviteForm } from "./invite-form";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +13,13 @@ interface Member {
   email?: string | null;
   role: "admin" | "member";
   joinedAt: string;
+}
+
+interface Invitation {
+  id: string;
+  email: string;
+  role: "admin" | "member";
+  expiresAt: string;
 }
 
 type MemberPage = { items: Member[]; nextCursor: string | null };
@@ -64,7 +72,11 @@ function ActionForm(props: {
 function RoleForm({ org, member }: { org: Org; member: Member }) {
   return (
     <ActionForm org={org} member={member} action={changeRole}>
-      <select name="role" defaultValue={member.role} aria-label={`Role for ${member.name}`}>
+      <select
+        name="role"
+        defaultValue={member.role}
+        aria-label={`Role for ${member.name ?? "member"}`}
+      >
         <option value="admin">admin</option>
         <option value="member">member</option>
       </select>{" "}
@@ -136,6 +148,56 @@ function MembersTable({ org, page, youId }: { org: Org; page: MemberPage; youId:
   );
 }
 
+function PendingRow({ org, invitation }: { org: Org; invitation: Invitation }) {
+  return (
+    <tr data-testid="invitation-row">
+      <td>{invitation.email}</td>
+      <td>{invitation.role}</td>
+      <td>{new Date(invitation.expiresAt).toLocaleDateString("en-US")}</td>
+      <td>
+        <form action={revokeInvitation}>
+          <input type="hidden" name="orgId" value={org.id} />
+          <input type="hidden" name="slug" value={org.slug} />
+          <input type="hidden" name="invitationId" value={invitation.id} />
+          <button type="submit">Revoke</button>
+        </form>
+      </td>
+    </tr>
+  );
+}
+
+/** Admins only: invite someone and see (and revoke) pending invitations. */
+async function Invitations({ org }: { org: Org }) {
+  if (org.role !== "admin") return null;
+  const pending = await callApi((token) =>
+    apiGet<{ items: Invitation[] }>(`/v1/orgs/${org.id}/invitations`, token),
+  );
+  const items = pending.ok ? pending.data.items : [];
+  return (
+    <section>
+      <h2>Invite someone</h2>
+      <InviteForm orgId={org.id} slug={org.slug} />
+      {items.length > 0 && (
+        <table data-testid="invitations">
+          <thead>
+            <tr>
+              <th>Pending invitation</th>
+              <th>Role</th>
+              <th>Expires</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((invitation) => (
+              <PendingRow key={invitation.id} org={org} invitation={invitation} />
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
 function ErrorNotice({ code }: { code?: string }) {
   if (!code) return null;
   return (
@@ -172,6 +234,7 @@ export default async function MembersPage({
       <h1>Members</h1>
       <ErrorNotice code={error} />
       <MembersTable org={view.org} page={view.page} youId={view.youId} />
+      <Invitations org={view.org} />
       {view.page.nextCursor && (
         <p>
           <Link href={`?cursor=${encodeURIComponent(view.page.nextCursor)}`}>More members</Link>

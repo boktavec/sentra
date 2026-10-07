@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { config } from "./config.ts";
 
 export type ApiResult<T> =
-  { ok: true; data: T; status: number } | { ok: false; status: number; correlationId: string };
+  | { ok: true; data: T; status: number }
+  | { ok: false; status: number; correlationId: string; code?: string };
 
 interface Init {
   method: "GET" | "POST" | "PATCH" | "DELETE";
@@ -21,8 +22,18 @@ const requestInit = (accessToken: string, correlationId: string, init: Init): Re
   signal: AbortSignal.timeout(5000),
 });
 
+/** The `<code>` of an RFC 9457 `urn:sentra:error:<code>` problem body, if there is one. */
+async function errorCode(res: Response): Promise<string | undefined> {
+  try {
+    const { type } = (await res.json()) as { type?: string };
+    return type?.replace("urn:sentra:error:", "");
+  } catch {
+    return undefined;
+  }
+}
+
 async function toResult<T>(res: Response, correlationId: string): Promise<ApiResult<T>> {
-  if (!res.ok) return { ok: false, status: res.status, correlationId };
+  if (!res.ok) return { ok: false, status: res.status, correlationId, code: await errorCode(res) };
   // 204 has no body.
   const data = res.status === 204 ? undefined : await res.json();
   return { ok: true, data: data as T, status: res.status };

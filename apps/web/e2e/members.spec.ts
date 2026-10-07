@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { signUp } from "./helpers";
+import { createOrg, signUp } from "./helpers";
 
 const SHOTS = "../../docs/features/SENTRA-3-roles-and-membership/screenshots";
 const PG_CONTAINER = process.env["SENTRA_PG_CONTAINER"] ?? "sentra-sentra-postgres-1";
@@ -21,14 +21,6 @@ const seedMember = (slug: string, userId: string) =>
   psql(`INSERT INTO memberships (org_id, user_id, role)
     SELECT id, '${userId}', 'member' FROM organizations WHERE slug = '${slug}'
     ON CONFLICT DO NOTHING`);
-
-async function createOrg(page: Page, name: string, slug: string) {
-  await page.goto("/orgs/new");
-  await page.getByLabel("Name").fill(name);
-  await page.getByLabel("Slug").fill(slug);
-  await page.getByRole("button", { name: "Create organization" }).click();
-  await expect(page).toHaveURL(`http://localhost:3000/orgs/${slug}`);
-}
 
 const signedInUserId = async (page: Page) => (await page.getByTestId("user-id").textContent())!;
 

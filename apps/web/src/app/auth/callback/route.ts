@@ -4,6 +4,7 @@ import { config } from "@/lib/config";
 import { logger } from "@/lib/logger";
 import { client, oidcConfig } from "@/lib/oidc";
 import { redis } from "@/lib/redis";
+import { RETURN_COOKIE, safeReturnPath } from "@/lib/return-to";
 import {
   LOGIN_COOKIE,
   SESSION_COOKIE,
@@ -66,9 +67,11 @@ export async function GET(request: NextRequest) {
     const tokens = await exchangeCode(request, await takeLoginState(request));
     const sessionId = await createSession(sessionFromTokens(tokens));
     logger.info({ correlationId, subject: tokens.claims()?.sub }, "login_succeeded");
-    const response = NextResponse.redirect(new URL("/", config().webUrl));
+    const returnTo = safeReturnPath(request.cookies.get(RETURN_COOKIE)?.value);
+    const response = NextResponse.redirect(new URL(returnTo, config().webUrl));
     response.cookies.set(SESSION_COOKIE, sessionId, cookieOptions());
     response.cookies.delete(LOGIN_COOKIE);
+    response.cookies.delete(RETURN_COOKIE);
     return response;
   } catch (err) {
     return failure(err, correlationId);
