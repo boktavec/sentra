@@ -68,7 +68,7 @@ Cover the material unknowns for that story, including:
 
 Ask only the questions that can change the design or acceptance criteria, but keep probing until those decisions are explicit. If the user cannot provide a number or decision, propose a stated assumption and a way to validate it. Do not invent capacity targets.
 
-Write the resulting spec under `docs/specs/` using [`docs/specs/story-template.md`](docs/specs/story-template.md), named `<issue-id>-<short-slug>.md`. Link the YouTrack issue when available, and add the spec link back to the issue. Record decisions, alternatives, assumptions, measurable targets, edge cases, and verification. Present the draft to the user for review and incorporate corrections before implementation. Keep the spec current when implementation reveals a changed requirement. Record a separate ADR for lasting architecture decisions.
+When the planning phase is complete, create a feature folder at `docs/features/<issue-id>-<short-slug>/` and put its spec at `docs/features/<issue-id>-<short-slug>/spec.md`, using [`docs/templates/feature-spec.md`](docs/templates/feature-spec.md). If there is no YouTrack issue yet, use a descriptive slug for the folder and rename it when an issue ID becomes available. Link the YouTrack issue when available, and add the spec link back to the issue. Record decisions, alternatives, assumptions, measurable targets, edge cases, and verification. Present the draft to the user for review and incorporate corrections before implementation. Keep the spec current when implementation reveals a changed requirement. Record a separate ADR for lasting architecture decisions.
 
 ## Architecture Decisions
 
