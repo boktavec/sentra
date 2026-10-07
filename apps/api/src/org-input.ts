@@ -37,6 +37,24 @@ export function validateRole(body: unknown): "admin" | "member" {
   return role;
 }
 
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function validateNewInvitation(body: unknown): { email: string; role: "admin" | "member" } {
+  const { email } = (body ?? {}) as Record<string, unknown>;
+  if (typeof email !== "string") throw invalid("email");
+  const normalized = email.trim().toLowerCase();
+  if (normalized.length < 3 || normalized.length > 254 || !EMAIL.test(normalized)) {
+    throw invalid("email");
+  }
+  return { email: normalized, role: validateRole(body) };
+}
+
+export function validateAcceptBody(body: unknown): string {
+  const { token } = (body ?? {}) as Record<string, unknown>;
+  if (typeof token !== "string") throw invalid("token");
+  return token;
+}
+
 export function encodeCursor(createdAt: string, orgId: string): string {
   return Buffer.from(JSON.stringify([createdAt, orgId])).toString("base64url");
 }

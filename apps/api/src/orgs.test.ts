@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { decodeCursor, encodeCursor, validateNewOrg, validateRole } from "./org-input.ts";
+import {
+  decodeCursor,
+  encodeCursor,
+  validateAcceptBody,
+  validateNewInvitation,
+  validateNewOrg,
+  validateRole,
+} from "./org-input.ts";
 
 describe("validateNewOrg", () => {
   it("accepts a normal org and trims the name", () => {
@@ -65,5 +72,38 @@ describe("validateRole", () => {
     { role: ["admin"] },
   ])("rejects %j", (body) => {
     expect(() => validateRole(body)).toThrow(/Invalid input/);
+  });
+});
+
+describe("validateNewInvitation", () => {
+  it("trims and lowercases the email", () => {
+    expect(validateNewInvitation({ email: "  Ada@Example.COM ", role: "member" })).toEqual({
+      email: "ada@example.com",
+      role: "member",
+    });
+  });
+
+  it.each([
+    {},
+    { role: "member" },
+    { email: 1, role: "member" },
+    { email: "nope", role: "member" },
+    { email: "a@b", role: "member" },
+    { email: "a b@c.com", role: "member" },
+    { email: "a@@c.com", role: "member" },
+    { email: `${"x".repeat(250)}@c.com`, role: "member" },
+    { email: "a@b.com", role: "owner" },
+    { email: "a@b.com" },
+  ])("rejects %j", (body) => {
+    expect(() => validateNewInvitation(body)).toThrow(/Invalid input/);
+  });
+});
+
+describe("validateAcceptBody", () => {
+  it("returns a string token and rejects anything else", () => {
+    expect(validateAcceptBody({ token: "abc" })).toBe("abc");
+    for (const body of [undefined, {}, { token: 1 }, { token: null }, { token: ["a"] }]) {
+      expect(() => validateAcceptBody(body)).toThrow(/Invalid input/);
+    }
   });
 });

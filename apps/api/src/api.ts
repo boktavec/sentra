@@ -8,8 +8,10 @@ import { JwksCache } from "./jwks.ts";
 import { createFailureLimiter } from "./limiter.ts";
 import * as metrics from "./metrics.ts";
 import { migrate } from "./migrate.ts";
+import { createInvitationStore } from "./invitations.ts";
 import { createMemberStore } from "./members.ts";
 import { createOrgStore } from "./orgs.ts";
+import { createProfileFetcher } from "./profile.ts";
 import { createUserStore } from "./users.ts";
 import { createVerifier } from "./verifier.ts";
 
@@ -50,6 +52,15 @@ export async function createApi(config: Config, logger: Logger) {
     authenticate,
     orgs: createOrgStore(pool, { maxOrgsPerUser: config.maxOrgsPerUser }),
     members: createMemberStore(pool),
+    invitations: createInvitationStore(pool, {
+      fetchProfile: createProfileFetcher(config.issuer),
+      limits: {
+        ttlHours: config.invitationTtlHours,
+        maxPending: config.maxPendingInvitationsPerOrg,
+        maxPerDay: config.maxInvitationsPerOrgPerDay,
+        maxMembers: config.maxMembersPerOrg,
+      },
+    }),
     trustedProxies: config.trustedProxies,
     ready: async () => {
       if (!jwks.ready) return false;

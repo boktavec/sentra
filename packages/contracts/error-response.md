@@ -31,3 +31,8 @@ Error codes used by the organization APIs (`type` is `urn:sentra:error:<code>`):
 | `org_limit_reached` | 403 | The caller is at the per-user organization cap. |
 | `slug_taken` | 409 | The organization slug is already in use. |
 | `invalid_input` | 400 | Malformed or out-of-range input. |
+| `invitation_email_mismatch` | 403 | The signed-in user's verified email is not the address the invitation was sent to. |
+| `invitation_limit_reached` | 403 | The organization has reached its pending-invitation or daily invitation cap. |
+| `member_limit_reached` | 403 | The organization has reached its member cap. |
+| `invitation_expired` | 410 | The invitation's lifetime has passed. |
+| `invitation_unavailable` | 410 | The invitation was revoked or already used. |

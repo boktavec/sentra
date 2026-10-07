@@ -7,6 +7,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createLogger, unauthenticated } from "@sentra/ts-platform";
 import { buildApp } from "./app.ts";
+import { createInvitationStore } from "./invitations.ts";
 import { createMemberStore } from "./members.ts";
 import { migrate } from "./migrate.ts";
 import { createOrgStore, type Role } from "./orgs.ts";
@@ -105,6 +106,10 @@ beforeAll(async () => {
     logger,
     orgs: createOrgStore(pool, { maxOrgsPerUser: 50 }),
     members: createMemberStore(pool),
+    invitations: createInvitationStore(pool, {
+      fetchProfile: async () => ({ emailVerified: false }),
+      limits: { ttlHours: 1, maxPending: 1, maxPerDay: 1, maxMembers: 1 },
+    }),
     trustedProxies: false,
     ready: async () => true,
     authenticate: async (request) => {

@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 import { AppError } from "@sentra/ts-platform";
-import * as metrics from "./metrics.ts";
 import { decodeCursor, encodeCursor } from "./org-input.ts";
+import { assertStillAdmin, lockOrg, recordAudit } from "./org-tx.ts";
 import { inTransaction, type Role, type TenantContext } from "./orgs.ts";
 
 interface Member {
@@ -32,33 +32,7 @@ const toMember = (row: MemberRow, caller: TenantContext): Member => ({
   ...(caller.role === "admin" ? { email: row.email } : {}),
 });
 
-const forbidden = () => {
-  metrics.inc("role_denied_total");
-  return new AppError("forbidden", 403, "Forbidden", { reason: "role_denied" });
-};
-
 const notFound = () => new AppError("not_found", 404, "Not found", { reason: "member_not_found" });
-
-/**
- * Serializes every membership change in one org. NO KEY UPDATE conflicts with itself but not with
- * the foreign-key checks other rows run against this org, so it blocks only other changes.
- */
-const lockOrg = (client: PoolClient, orgId: string) =>
-  client.query("SELECT 1 FROM organizations WHERE id = $1 FOR NO KEY UPDATE", [orgId]);
-
-/**
- * The caller's role was read before the lock was taken, so re-read it under the lock: an admin who
- * was demoted or removed in the meantime must not complete an admin-only change.
- */
-async function assertStillAdmin(client: PoolClient, tenant: TenantContext) {
-  const { rows } = await client.query<{ role: Role }>(
-    "SELECT role FROM memberships WHERE org_id = $1 AND user_id = $2",
-    [tenant.orgId, tenant.userId],
-  );
-  if (!rows[0])
-    throw new AppError("not_found", 404, "Not found", { reason: "tenant_access_denied" });
-  if (rows[0].role !== "admin") throw forbidden();
-}
 
 /** Runs after the change inside the transaction; zero admins left rolls the whole change back. */
 async function assertAdminRemains(client: PoolClient, orgId: string) {
@@ -72,20 +46,6 @@ async function assertAdminRemains(client: PoolClient, orgId: string) {
     });
   }
 }
-
-const recordAudit = (
-  client: PoolClient,
-  tenant: TenantContext,
-  correlationId: string,
-  action: string,
-  targetUserId: string,
-  metadata: Record<string, string>,
-) =>
-  client.query(
-    `INSERT INTO audit_events (org_id, actor_user_id, action, target_type, target_id, correlation_id, metadata)
-     VALUES ($1, $2, $3, 'user', $4, $5, $6)`,
-    [tenant.orgId, tenant.userId, action, targetUserId, correlationId, metadata],
-  );
 
 function listMembers(pool: Pool) {
   return async (tenant: TenantContext, limit: number, cursor?: string) => {
@@ -134,9 +94,14 @@ function setRole(pool: Pool) {
         role,
       ]);
       await assertAdminRemains(client, tenant.orgId);
-      await recordAudit(client, tenant, correlationId, "member.role_changed", userId, {
-        from: current.role,
-        to: role,
+      await recordAudit(client, {
+        orgId: tenant.orgId,
+        actorUserId: tenant.userId,
+        correlationId,
+        action: "member.role_changed",
+        targetType: "user",
+        targetId: userId,
+        metadata: { from: current.role, to: role },
       });
       return { member: toMember({ ...current, role }, tenant), changed: true };
     });
@@ -160,14 +125,15 @@ function removeMember(pool: Pool) {
       if (!rows[0]) return { removed: false, leaving };
 
       await assertAdminRemains(client, tenant.orgId);
-      await recordAudit(
-        client,
-        tenant,
+      await recordAudit(client, {
+        orgId: tenant.orgId,
+        actorUserId: tenant.userId,
         correlationId,
-        leaving ? "member.left" : "member.removed",
-        userId,
-        { role: rows[0].role },
-      );
+        action: leaving ? "member.left" : "member.removed",
+        targetType: "user",
+        targetId: userId,
+        metadata: { role: rows[0].role },
+      });
       return { removed: true, leaving };
     });
 }
