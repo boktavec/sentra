@@ -70,6 +70,12 @@ Ask only the questions that can change the design or acceptance criteria, but ke
 
 When the planning phase is complete, create a feature folder at `docs/features/<issue-id>-<short-slug>/` and put its spec at `docs/features/<issue-id>-<short-slug>/spec.md`, using [`docs/templates/feature-spec.md`](docs/templates/feature-spec.md). If there is no YouTrack issue yet, use a descriptive slug for the folder and rename it when an issue ID becomes available. Link the YouTrack issue when available, and add the spec link back to the issue. Record decisions, alternatives, assumptions, measurable targets, edge cases, and verification. Present the draft to the user for review and incorporate corrections before implementation. Keep the spec current when implementation reveals a changed requirement. Record a separate ADR for lasting architecture decisions.
 
+## Feature Branch and Worktree Lifecycle
+
+For each feature, create a dedicated branch and Git worktree from the latest default branch before writing its spec or implementation. Use `feature/<issue-id>-<short-slug>` for the branch when an issue ID exists; otherwise use a descriptive slug. Keep the feature's spec, code, tests, and documentation in that worktree. Agents working in parallel must use separate worktrees and avoid editing each other's branches.
+
+Open a PR for the feature and link its YouTrack story and spec. An open PR does not make the story Done. After the PR is merged, verify the merge, then mark the YouTrack story **Done**. Check that the feature worktree has no uncommitted or unmerged work, remove that worktree, and delete its local branch and remote branch if the remote branch still exists. Clean up only branches and worktrees created for that feature; if any step is blocked, report what remains instead of discarding work.
+
 ## Architecture Decisions
 
 Do not silently make significant architectural decisions.
