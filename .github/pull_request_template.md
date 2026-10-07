@@ -6,7 +6,7 @@
 
 <!-- Link the YouTrack story by URL (not just its ID), then any spec, ADR, and learning note. Use commit-SHA permalinks or the default-branch path, not the feature branch. -->
 
-Story: <YouTrack story URL>
+Story: http://localhost:8080/issue/<ISSUE-ID>
 
 Spec / ADR / learning note:
 
