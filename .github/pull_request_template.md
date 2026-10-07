@@ -4,9 +4,11 @@
 
 ## User Story
 
-<!-- Link the related user story, issue, or task. -->
+<!-- Link the YouTrack story by URL (not just its ID), then any spec, ADR, and learning note. Use commit-SHA permalinks or the default-branch path, not the feature branch. -->
 
-Closes/Relates to: #
+Story: <YouTrack story URL>
+
+Spec / ADR / learning note:
 
 ## Context
 
@@ -27,6 +29,10 @@ Required for UI changes.
 
 Use Playwright to capture screenshots of the implemented UI where practical.
 Include relevant states such as desktop/mobile, success/error, or before/after when useful.
+
+Commit the images under docs/features/<issue-id>-<slug>/screenshots/ and link them with absolute
+commit-SHA permalinks (https://github.com/<owner>/<repo>/blob/<sha>/<path>?raw=true) so they
+survive branch deletion.
 
 Delete this section for non-UI changes.
 -->
@@ -80,6 +86,16 @@ Do not claim "none" without considering failure modes, tenant boundaries, invali
 ### Not Yet Covered / Follow-up
 
 -
+
+## New Dependencies
+
+<!-- List each new dependency, service, or datastore and why it is needed. Write N/A if none. -->
+
+-
+
+## Running Locally
+
+<!-- Commands to start the stack and run the feature (Task commands, ports, setup). Note which test suites need the stack and whether CI runs them. -->
 
 ## Additional Notes
 

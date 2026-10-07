@@ -102,10 +102,16 @@ tasks:
       - task: typecheck
       - task: test
 
+  fallow:
+    desc: Audit changes against main for dead code, duplication, and complexity (fix findings, don't suppress)
+    cmds:
+      - fallow audit --base origin/main
+
   check:full:
-    desc: Run fast checks and secret scanning
+    desc: Run fast checks, fallow audit, and secret scanning
     cmds:
       - task: check
+      - task: fallow
       - task: security
 
   security:

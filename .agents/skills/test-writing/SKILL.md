@@ -14,7 +14,17 @@ description: How to write tests - real code paths over mocks, production-shaped 
 - Prefer one end-to-end style test through the real entry point over several unit tests with mocked collaborators. Add a narrow unit test only for edge cases (e.g. empty input, empty page).
 - Assert on business outcomes (counts, totals, final state), not on internal calls.
 
+## Keep infrastructure-dependent tests separate
+- `task test` must run with no running services. Tests that need the local stack (databases, identity provider, queues, a browser) are integration or E2E tests: name them `*.integration.test.ts` or put them under `e2e/`, and run them with `task test:integration`.
+- Integration tests should fail loudly, not skip silently, when the stack is down.
+- Say in the PR which suites need the stack and whether CI runs them.
+
+## Cover the unhappy path for security behavior
+- For authentication, authorization, tenant isolation, and input validation, test the negative paths with the same weight as the happy path: missing, malformed, expired, and tampered credentials; forged cookies or IDs; another tenant's resource; unverified accounts; the dependency being down.
+- Assert that failures are indistinguishable to the caller where they should be (same status and body) and that secrets never appear in logs or responses.
+- Generate hostile inputs with the real mechanism where possible (sign a real token with a real key and break one property) rather than hand-written strings.
+
 ## Check before finishing
-- Does the test fail if the behavior breaks? For a bug fix, run it against the old code and confirm it fails for the identified reason. For new code, break the logic temporarily and confirm it fails.
+- Does the test fail if the behavior breaks? For a bug fix, run it against the old code and confirm it fails for the identified reason. For new code, break the logic temporarily (for example remove the throttle, flip the check, delete the guard) and confirm the test fails; revert afterward. If a test fails the first time you run it, decide whether the test or the code is wrong before changing either.
 - Run the full suite, not just the new test.
 - Match the repo's existing test framework and conventions. Don't add dependencies or frameworks.
