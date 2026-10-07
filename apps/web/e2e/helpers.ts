@@ -3,22 +3,38 @@ import { expect, type Page } from "@playwright/test";
 const MAILPIT = "http://localhost:8025";
 export const PASSWORD = "Sentra-Test-1234!";
 
-/** Reads the verification code Zitadel emailed to Mailpit (polls: delivery is asynchronous). */
-export async function verificationCode(email: string): Promise<string> {
-  for (let i = 0; i < 30; i++) {
+/** Polls Mailpit for a message matching `query` until `extract` finds something in its text. */
+async function waitForMail(
+  query: string,
+  extract: (text: string) => string | undefined,
+  attempts: number,
+): Promise<string> {
+  for (let i = 0; i < attempts; i++) {
     const found = await (
-      await fetch(`${MAILPIT}/api/v1/search?query=${encodeURIComponent(`to:${email}`)}`)
+      await fetch(`${MAILPIT}/api/v1/search?query=${encodeURIComponent(query)}`)
     ).json();
     const id = found.messages?.[0]?.ID;
     if (id) {
       const message = await (await fetch(`${MAILPIT}/api/v1/message/${id}`)).json();
-      const code = /Code ([A-Z0-9]{6})/.exec(message.Text)?.[1];
-      if (code) return code;
+      const value = extract(message.Text);
+      if (value) return value;
     }
     await new Promise((r) => setTimeout(r, 500));
   }
-  throw new Error(`No verification email for ${email}`);
+  throw new Error(`No email matching ${query}`);
 }
+
+/** Reads the accept link from the invitation email Sentra sent to `email` (sending is asynchronous). */
+export const invitationLink = (email: string) =>
+  waitForMail(
+    `to:${email} subject:invited`,
+    (text) => /(http:\/\/\S+\/invitations\/accept\?token=[A-Za-z0-9_-]+)/.exec(text)?.[1],
+    60,
+  );
+
+/** Reads the verification code Zitadel emailed to Mailpit (delivery is asynchronous). */
+export const verificationCode = (email: string) =>
+  waitForMail(`to:${email}`, (text) => /Code ([A-Z0-9]{6})/.exec(text)?.[1], 30);
 
 export async function register(page: Page, email: string) {
   await page.getByRole("button", { name: "Register new user" }).click();

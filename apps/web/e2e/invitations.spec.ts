@@ -1,7 +1,7 @@
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { createOrg, signIn, signUp } from "./helpers";
+import { createOrg, invitationLink, signIn, signUp } from "./helpers";
 
-const SHOTS = "../../docs/features/SENTRA-28-organization-invitations/screenshots";
+const SHOTS = "../../docs/features/SENTRA-29-invitation-email-delivery/screenshots";
 const LOGIN_URL = /localhost:8180\/ui\/v2\/login\/loginname/;
 
 /** A new browser context, so each person has their own cookies and identity-provider session. */
@@ -39,8 +39,21 @@ test("an admin invites someone, who signs in through the link and joins; wrong a
   await signUp(admin, adminEmail);
   await createOrg(admin, `Invite ${run}`, slug);
   await admin.goto(`/orgs/${slug}/members`);
-  const link = await invite(admin, inviteeEmail, "member");
+  const shownLink = await invite(admin, inviteeEmail, "member");
   await expect(admin.getByTestId("invitation-row")).toHaveCount(1);
+  // The invitee gets the link by email, and it is the same link the admin was shown.
+  const link = await invitationLink(inviteeEmail);
+  expect(link).toBe(shownLink);
+  const mail = await admin.context().newPage();
+  const found = await (
+    await fetch(
+      `http://localhost:8025/api/v1/search?query=${encodeURIComponent(`to:${inviteeEmail}`)}`,
+    )
+  ).json();
+  await mail.goto(`http://localhost:8025/view/${found.messages[0].ID}`);
+  await expect(mail.getByText(`Invite ${run}`).first()).toBeVisible();
+  await mail.screenshot({ path: `${SHOTS}/email-received.png` });
+  await mail.close();
   await admin.screenshot({ path: `${SHOTS}/1-invitation-created.png` });
 
   // A signed-in stranger cannot use the link, and learns nothing about the organization.

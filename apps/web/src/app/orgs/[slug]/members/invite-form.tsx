@@ -31,7 +31,8 @@ export function InviteForm({ orgId, slug }: { orgId: string; slug: string }) {
       )}
       {state.link && (
         <p data-testid="invite-link-box">
-          Share this link with the invitee. It is shown only once:
+          An email with the link is on its way. If it does not arrive you can share this link
+          yourself (it is shown only once):
           <br />
           <code data-testid="invite-link">{state.link}</code>
         </p>
