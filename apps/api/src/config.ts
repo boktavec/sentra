@@ -15,6 +15,7 @@ export interface Config {
   redisUrl: string;
   authFailLimit: number;
   authFailWindowSeconds: number;
+  maxOrgsPerUser: number;
   /** Fastify `trustProxy` value; unset means use the socket address and ignore X-Forwarded-For. */
   trustedProxies: string[] | false;
 }
@@ -30,6 +31,7 @@ export function loadConfig(): Config {
     redisUrl: required("REDIS_URL"),
     authFailLimit: int("AUTH_FAIL_LIMIT", 10),
     authFailWindowSeconds: int("AUTH_FAIL_WINDOW_SECONDS", 60),
+    maxOrgsPerUser: int("MAX_ORGS_PER_USER", 5),
     trustedProxies: process.env["TRUSTED_PROXIES"]
       ? process.env["TRUSTED_PROXIES"].split(",")
       : false,

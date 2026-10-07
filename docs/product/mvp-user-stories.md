@@ -65,6 +65,7 @@ This feature establishes the tenant model that future authorization and scaling 
 - Users cannot access organizations they are not authorized to access.
 - Organization creation generates an audit event.
 - Tenant identifiers are propagated through relevant backend operations.
+- A signed-in user can create an organization from the web app, see their organizations, and open one by its slug; an organization they do not belong to looks the same as one that does not exist.
 
 ---
 
