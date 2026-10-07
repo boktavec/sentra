@@ -7,6 +7,7 @@ import { redis } from "./redis.ts";
 export const SESSION_COOKIE = "sentra_session";
 export const LOGIN_COOKIE = "sentra_login";
 const REFRESH_SKEW_SECONDS = 30;
+const DEFAULT_TOKEN_LIFETIME_SECONDS = 300;
 
 export interface Session {
   accessToken: string;
@@ -16,6 +17,8 @@ export interface Session {
 }
 
 const key = (id: string) => `session:${id}`;
+const nowSeconds = () => Math.floor(Date.now() / 1000);
+const isFresh = (session: Session) => session.accessExpiresAt - nowSeconds() > REFRESH_SKEW_SECONDS;
 
 export const cookieOptions = (maxAge?: number) =>
   ({
@@ -26,10 +29,32 @@ export const cookieOptions = (maxAge?: number) =>
     ...(maxAge ? { maxAge } : {}),
   }) as const;
 
+const withoutUndefined = (values: Record<string, string | undefined>) =>
+  Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined));
+
+const expiryOf = (tokens: client.TokenEndpointResponse) =>
+  nowSeconds() + (tokens.expires_in ?? DEFAULT_TOKEN_LIFETIME_SECONDS);
+
+/** Builds a session from a token response; a refresh response may omit values it didn't rotate. */
+export function sessionFromTokens(
+  tokens: client.TokenEndpointResponse,
+  previous?: Session,
+): Session {
+  return {
+    ...previous,
+    ...withoutUndefined({ refreshToken: tokens.refresh_token, idToken: tokens.id_token }),
+    accessToken: tokens.access_token,
+    accessExpiresAt: expiryOf(tokens),
+  };
+}
+
+const saveSession = (id: string, session: Session) =>
+  redis().set(key(id), JSON.stringify(session), "EX", config().sessionIdleSeconds);
+
 /** Tokens live only in Redis; the browser holds an opaque random session ID. */
 export async function createSession(session: Session): Promise<string> {
   const id = randomBytes(32).toString("base64url");
-  await redis().set(key(id), JSON.stringify(session), "EX", config().sessionIdleSeconds);
+  await saveSession(id, session);
   return id;
 }
 
@@ -45,43 +70,57 @@ export async function currentSessionId(): Promise<string | undefined> {
   return (await cookies()).get(SESSION_COOKIE)?.value;
 }
 
+/** Refreshes with the provider and stores the result. A rejected refresh token ends the session. */
+async function refresh(
+  id: string,
+  session: Session,
+  refreshToken: string,
+): Promise<Session | null> {
+  try {
+    const tokens = await client.refreshTokenGrant(await oidcConfig(), refreshToken);
+    const renewed = sessionFromTokens(tokens, session);
+    await saveSession(id, renewed);
+    return renewed;
+  } catch {
+    await destroySession(id);
+    return null;
+  }
+}
+
+/** Another request holds the refresh lock; wait briefly for its result instead of refreshing twice. */
+async function waitForRefresh(id: string): Promise<string | null> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const latest = await loadSession(id);
+    if (!latest) return null;
+    if (isFresh(latest)) return latest.accessToken;
+  }
+  return null;
+}
+
+/** A short Redis lock stops parallel requests from burning a rotating refresh token twice. */
+async function refreshExclusively(
+  id: string,
+  session: Session,
+  refreshToken: string,
+): Promise<string | null> {
+  const lock = `${key(id)}:refresh`;
+  if (!(await redis().set(lock, "1", "EX", 10, "NX"))) return waitForRefresh(id);
+  try {
+    return (await refresh(id, session, refreshToken))?.accessToken ?? null;
+  } finally {
+    await redis().del(lock);
+  }
+}
+
 /**
  * Returns a valid access token, refreshing server-side when near expiry. Returns null if the
  * session is gone or can no longer be refreshed (caller should send the user to sign in).
- * A short Redis lock stops parallel requests from burning a rotating refresh token twice.
  */
 export async function accessTokenFor(id: string): Promise<string | null> {
-  let session = await loadSession(id);
+  const session = await loadSession(id);
   if (!session) return null;
-  const now = () => Math.floor(Date.now() / 1000);
-  if (session.accessExpiresAt - now() > REFRESH_SKEW_SECONDS) return session.accessToken;
+  if (isFresh(session)) return session.accessToken;
   if (!session.refreshToken) return null;
-
-  const lock = `${key(id)}:refresh`;
-  if (await redis().set(lock, "1", "EX", 10, "NX")) {
-    try {
-      const tokens = await client.refreshTokenGrant(await oidcConfig(), session.refreshToken);
-      session = {
-        accessToken: tokens.access_token,
-        refreshToken: tokens.refresh_token ?? session.refreshToken,
-        idToken: tokens.id_token ?? session.idToken,
-        accessExpiresAt: now() + (tokens.expires_in ?? 300),
-      };
-      await redis().set(key(id), JSON.stringify(session), "EX", config().sessionIdleSeconds);
-      return session.accessToken;
-    } catch {
-      await destroySession(id); // refresh token rejected or expired: the session is over
-      return null;
-    } finally {
-      await redis().del(lock);
-    }
-  }
-  // Another request is refreshing; wait briefly for its result.
-  for (let i = 0; i < 20; i++) {
-    await new Promise((r) => setTimeout(r, 100));
-    const latest = await loadSession(id);
-    if (latest && latest.accessExpiresAt - now() > REFRESH_SKEW_SECONDS) return latest.accessToken;
-    if (!latest) return null;
-  }
-  return null;
+  return refreshExclusively(id, session, session.refreshToken);
 }

@@ -12,5 +12,3 @@ export function inc(name: string, labels: Record<string, string> = {}): void {
 export function render(): string {
   return [...counters].map(([key, value]) => `${key} ${value}`).join("\n") + "\n";
 }
-
-export const get = (key: string): number => counters.get(key) ?? 0;

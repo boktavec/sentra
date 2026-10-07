@@ -1,0 +1,3 @@
+{
+  "entry": ["infra/docker/bootstrap-zitadel.mjs"]
+}

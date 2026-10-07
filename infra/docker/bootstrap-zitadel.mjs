@@ -28,6 +28,18 @@ const pat = execFileSync(
   { encoding: "utf8" },
 ).trim();
 
+const toJson = (body) =>
+  body === undefined ? undefined : JSON.stringify(body);
+const fromJson = (text) => (text ? JSON.parse(text) : {});
+
+// Zitadel answers a no-op update with 400 ("No changes" / "has not been changed" / "NotChanged");
+// that is success for an idempotent script.
+const isNoOp = (res, text) =>
+  res.status === 400 && /no changes|not been changed|not ?changed/i.test(text);
+
+const isAccepted = (res, text, allow) =>
+  res.ok || isNoOp(res, text) || allow.includes(res.status);
+
 async function call(method, path, body, { allow = [] } = {}) {
   const res = await fetch(`${ISSUER}${path}`, {
     method,
@@ -35,18 +47,13 @@ async function call(method, path, body, { allow = [] } = {}) {
       authorization: `Bearer ${pat}`,
       "content-type": "application/json",
     },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: toJson(body),
   });
   const text = await res.text();
-  const json = text ? JSON.parse(text) : {};
-  // Zitadel answers a no-op update with 400 ("No changes" / "has not been changed"); that is success for an idempotent script.
-  const noChanges =
-    res.status === 400 &&
-    /no changes|not been changed|not ?changed/i.test(text);
-  if (!res.ok && !noChanges && !allow.includes(res.status)) {
+  if (!isAccepted(res, text, allow)) {
     throw new Error(`${method} ${path} -> ${res.status} ${text}`);
   }
-  return { status: res.status, json };
+  return { status: res.status, json: fromJson(text) };
 }
 
 const nameQuery = (name) => ({
@@ -181,7 +188,14 @@ await call(
 // Test-only machine user: lets integration tests obtain real Zitadel-signed JWTs
 // (client credentials grant) without driving the browser login.
 ({ json } = await call("POST", "/management/v1/users/_search", {
-  queries: [{ userNameQuery: { userName: "sentra-test", method: "TEXT_QUERY_METHOD_EQUALS" } }],
+  queries: [
+    {
+      userNameQuery: {
+        userName: "sentra-test",
+        method: "TEXT_QUERY_METHOD_EQUALS",
+      },
+    },
+  ],
 }));
 let testUserId = json.result?.[0]?.id;
 if (!testUserId) {

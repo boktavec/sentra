@@ -12,7 +12,7 @@
     "lint": "eslint src",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test:integration": "INTEGRATION=1 node --env-file=../../infra/docker/.env.sentra ./node_modules/vitest/vitest.mjs run"
+    "test:integration": "sh -c 'set -a; . ../../infra/docker/.env.sentra; set +a; INTEGRATION=1 exec vitest run'"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
