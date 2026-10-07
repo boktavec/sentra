@@ -7,6 +7,9 @@ includes:
   api:
     taskfile: ./apps/api/Taskfile.yml
     dir: ./apps/api
+  stack:
+    taskfile: ./infra/docker/Taskfile.yml
+    dir: ./infra/docker
   platform:
     taskfile: ./packages/ts-platform/Taskfile.yml
     dir: ./packages/ts-platform

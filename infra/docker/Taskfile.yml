@@ -1,0 +1,33 @@
+version: "3"
+
+tasks:
+  up:
+    desc: Start the local stack (Zitadel, Postgres, Redis, Mailpit) and wait until healthy
+    cmds:
+      - "[ -f .env ] || cp .env.example .env"
+      - docker compose --env-file .env -f compose.yml up -d --wait
+
+  down:
+    desc: Stop the local stack, keeping data volumes
+    cmds:
+      - docker compose --env-file .env -f compose.yml down
+
+  reset:
+    desc: Stop the local stack and delete its data volumes
+    cmds:
+      - docker compose --env-file .env -f compose.yml down -v
+
+  logs:
+    desc: Tail logs for the local stack
+    cmds:
+      - docker compose --env-file .env -f compose.yml logs -f --tail=100
+
+  ps:
+    desc: Show local stack status
+    cmds:
+      - docker compose --env-file .env -f compose.yml ps
+
+  bootstrap:
+    desc: Configure Zitadel (project, OIDC app, policies, SMTP); writes gitignored .env.sentra
+    cmds:
+      - node bootstrap-zitadel.mjs
