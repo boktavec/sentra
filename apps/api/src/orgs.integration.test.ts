@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createLogger, unauthenticated } from "@sentra/ts-platform";
 import { buildApp } from "./app.ts";
 import { migrate } from "./migrate.ts";
+import { createMemberStore } from "./members.ts";
 import { createOrgStore } from "./orgs.ts";
 import { createUserStore } from "./users.ts";
 
@@ -52,6 +53,7 @@ beforeAll(async () => {
   app = buildApp({
     logger,
     orgs: createOrgStore(pool, { maxOrgsPerUser: MAX }),
+    members: createMemberStore(pool),
     trustedProxies: false,
     ready: async () => true,
     authenticate: async (request) => {

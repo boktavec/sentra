@@ -8,6 +8,7 @@ import { JwksCache } from "./jwks.ts";
 import { createFailureLimiter } from "./limiter.ts";
 import * as metrics from "./metrics.ts";
 import { migrate } from "./migrate.ts";
+import { createMemberStore } from "./members.ts";
 import { createOrgStore } from "./orgs.ts";
 import { createUserStore } from "./users.ts";
 import { createVerifier } from "./verifier.ts";
@@ -48,6 +49,7 @@ export async function createApi(config: Config, logger: Logger) {
     logger,
     authenticate,
     orgs: createOrgStore(pool, { maxOrgsPerUser: config.maxOrgsPerUser }),
+    members: createMemberStore(pool),
     trustedProxies: config.trustedProxies,
     ready: async () => {
       if (!jwks.ready) return false;

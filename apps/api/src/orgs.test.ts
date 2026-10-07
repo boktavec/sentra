@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeCursor, encodeCursor, validateNewOrg } from "./org-input.ts";
+import { decodeCursor, encodeCursor, validateNewOrg, validateRole } from "./org-input.ts";
 
 describe("validateNewOrg", () => {
   it("accepts a normal org and trims the name", () => {
@@ -47,5 +47,23 @@ describe("cursor", () => {
     ["bad uuid", encodeCursor("2026-10-07 12:34:56+00", "nope")],
   ])("rejects a tampered cursor: %s", (_label, cursor) => {
     expect(() => decodeCursor(cursor)).toThrow(expect.objectContaining({ status: 400 }));
+  });
+});
+
+describe("validateRole", () => {
+  it.each(["admin", "member"])("accepts %s", (role) => {
+    expect(validateRole({ role })).toBe(role);
+  });
+
+  it.each([
+    undefined,
+    null,
+    {},
+    { role: "owner" },
+    { role: "Admin" },
+    { role: 1 },
+    { role: ["admin"] },
+  ])("rejects %j", (body) => {
+    expect(() => validateRole(body)).toThrow(/Invalid input/);
   });
 });

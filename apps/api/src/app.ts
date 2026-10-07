@@ -8,6 +8,8 @@ import {
 } from "@sentra/ts-platform";
 import { createAuthenticator } from "./auth.ts";
 import * as metrics from "./metrics.ts";
+import { registerMemberRoutes } from "./member-routes.ts";
+import type { MemberStore } from "./members.ts";
 import { registerOrgRoutes } from "./org-routes.ts";
 import type { OrgStore, TenantContext } from "./orgs.ts";
 import type { AuthUser } from "./users.ts";
@@ -24,11 +26,12 @@ interface Deps {
   logger: Logger;
   authenticate: ReturnType<typeof createAuthenticator>;
   orgs: OrgStore;
+  members: MemberStore;
   ready: () => Promise<boolean>;
   trustedProxies: string[] | false;
 }
 
-export function buildApp({ logger, authenticate, orgs, ready, trustedProxies }: Deps) {
+export function buildApp({ logger, authenticate, orgs, members, ready, trustedProxies }: Deps) {
   const app = Fastify({ trustProxy: trustedProxies });
 
   app.decorateRequest("ctx");
@@ -70,6 +73,7 @@ export function buildApp({ logger, authenticate, orgs, ready, trustedProxies }: 
     protectedRoutes.get("/v1/me", async (request) => ({ id: request.user!.id }));
 
     registerOrgRoutes(protectedRoutes, { logger, orgs });
+    registerMemberRoutes(protectedRoutes, { logger, orgs, members });
   });
 
   return app;

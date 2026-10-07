@@ -31,6 +31,12 @@ export function validateNewOrg(body: unknown): { name: string; slug: string } {
   return { name: trimmed, slug };
 }
 
+export function validateRole(body: unknown): "admin" | "member" {
+  const { role } = (body ?? {}) as Record<string, unknown>;
+  if (role !== "admin" && role !== "member") throw invalid("role");
+  return role;
+}
+
 export function encodeCursor(createdAt: string, orgId: string): string {
   return Buffer.from(JSON.stringify([createdAt, orgId])).toString("base64url");
 }

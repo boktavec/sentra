@@ -20,3 +20,14 @@ Rules:
 - The correlation ID is also returned in the `x-correlation-id` response header.
 
 TypeScript implementation: `packages/ts-platform` (`toErrorResponse`). Other languages implement this shape independently.
+
+Error codes used by the organization APIs (`type` is `urn:sentra:error:<code>`):
+
+| Code | Status | Meaning |
+| --- | --- | --- |
+| `not_found` | 404 | Missing resource, or an organization the caller does not belong to. The two are indistinguishable. |
+| `forbidden` | 403 | The caller belongs to the organization but their role does not allow the operation. Never returned to non-members. |
+| `last_admin` | 409 | The change would leave the organization with no admin. |
+| `org_limit_reached` | 403 | The caller is at the per-user organization cap. |
+| `slug_taken` | 409 | The organization slug is already in use. |
+| `invalid_input` | 400 | Malformed or out-of-range input. |
