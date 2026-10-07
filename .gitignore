@@ -1,0 +1,75 @@
+# Node.js and JavaScript tooling
+node_modules/
+.next/
+.nuxt/
+.output/
+.turbo/
+.cache/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.venv/
+venv/
+env/
+
+# Secrets and local configuration; keep documented examples
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Coverage and build output
+coverage/
+.coverage
+.coverage.*
+htmlcov/
+*.lcov
+dist/
+build/
+out/
+target/
+
+# Local data, databases, logs, and temporary files
+data/
+.local/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+*.bak
+
+# Terraform state and local overrides if Terraform is added later
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+crash.log
+crash.*.log
