@@ -53,7 +53,7 @@ const nameQuery = (name) => ({
   queries: [{ nameQuery: { name, method: "TEXT_QUERY_METHOD_EQUALS" } }],
 });
 
-// Project (its ID is the expected `aud` of access tokens)
+// Project
 let { json } = await call(
   "POST",
   "/management/v1/projects/_search",
@@ -178,14 +178,37 @@ await call(
   { allow: [400, 412] },
 );
 
+// Test-only machine user: lets integration tests obtain real Zitadel-signed JWTs
+// (client credentials grant) without driving the browser login.
+({ json } = await call("POST", "/management/v1/users/_search", {
+  queries: [{ userNameQuery: { userName: "sentra-test", method: "TEXT_QUERY_METHOD_EQUALS" } }],
+}));
+let testUserId = json.result?.[0]?.id;
+if (!testUserId) {
+  ({ json } = await call("POST", "/management/v1/users/machine", {
+    userName: "sentra-test",
+    name: "Sentra integration tests",
+    accessTokenType: "ACCESS_TOKEN_TYPE_JWT",
+  }));
+  testUserId = json.userId;
+}
+({ json } = await call("PUT", `/management/v1/users/${testUserId}/secret`, {}));
+const testClientId = json.clientId;
+const testClientSecret = json.clientSecret;
+
 writeFileSync(
   OUT,
   [
     `ZITADEL_ISSUER=${ISSUER}`,
     `ZITADEL_PROJECT_ID=${projectId}`,
+    // Tokens carry the issuing client ID in `aud`; the API accepts only these (test client is dev-only).
+    `AUTH_AUDIENCES=${clientId},${testClientId}`,
     `ZITADEL_CLIENT_ID=${clientId}`,
     `ZITADEL_CLIENT_SECRET=${clientSecret}`,
+    `ZITADEL_TEST_CLIENT_ID=${testClientId}`,
+    `ZITADEL_TEST_CLIENT_SECRET=${testClientSecret}`,
     `REDIS_URL=redis://127.0.0.1:${env.REDIS_PUBLISHED_PORT}`,
+    `DATABASE_URL=postgresql://sentra:${env.SENTRA_DB_PASSWORD}@127.0.0.1:${env.SENTRA_DB_PUBLISHED_PORT}/sentra`,
     "",
   ].join("\n"),
 );

@@ -88,6 +88,11 @@ tasks:
       - task: pipeline:test
       - task: intelligence:test
 
+  test:integration:
+    desc: Run integration tests (needs `task stack:up` and `task stack:bootstrap`)
+    cmds:
+      - task: api:test:integration
+
   check:
     desc: Run the fast pre-PR checks in order
     cmds:

@@ -1,4 +1,4 @@
-version: '3'
+version: "3"
 
 tasks:
   setup:
@@ -30,3 +30,13 @@ tasks:
     desc: test apps/api
     cmds:
       - 'if [ -f package.json ]; then pnpm run test; else echo "apps/api has not been scaffolded yet; skipping."; fi'
+
+  test:integration:
+    desc: Integration tests for apps/api (needs `task stack:up` and `task stack:bootstrap`)
+    cmds:
+      - pnpm run test:integration
+
+  dev:
+    desc: Run apps/api with auto-reload against the local stack
+    cmds:
+      - pnpm run dev

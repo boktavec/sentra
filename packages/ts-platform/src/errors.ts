@@ -3,14 +3,21 @@
  * `cause` are for logs and metrics only and must never reach a response body.
  */
 export class AppError extends Error {
+  readonly code: string;
+  readonly status: number;
+  readonly options: { reason?: string; retryAfterSeconds?: number; cause?: unknown };
+
   constructor(
-    readonly code: string,
-    readonly status: number,
+    code: string,
+    status: number,
     message: string,
-    readonly options: { reason?: string; retryAfterSeconds?: number; cause?: unknown } = {},
+    options: { reason?: string; retryAfterSeconds?: number; cause?: unknown } = {},
   ) {
     super(message, { cause: options.cause });
     this.name = "AppError";
+    this.code = code;
+    this.status = status;
+    this.options = options;
   }
 
   get reason(): string | undefined {
