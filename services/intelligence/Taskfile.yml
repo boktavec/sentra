@@ -1,0 +1,32 @@
+version: '3'
+
+tasks:
+  setup:
+    desc: setup services/intelligence
+    cmds:
+      - 'if [ -f pyproject.toml ]; then uv sync; else echo "services/intelligence has not been scaffolded yet; skipping."; fi'
+
+  lint:
+    desc: lint services/intelligence
+    cmds:
+      - 'if [ -f pyproject.toml ]; then uv run ruff check .; else echo "services/intelligence has not been scaffolded yet; skipping."; fi'
+
+  format:
+    desc: format services/intelligence
+    cmds:
+      - 'if [ -f pyproject.toml ]; then uv run ruff format .; else echo "services/intelligence has not been scaffolded yet; skipping."; fi'
+
+  format:check:
+    desc: format:check services/intelligence
+    cmds:
+      - 'if [ -f pyproject.toml ]; then uv run ruff format --check .; else echo "services/intelligence has not been scaffolded yet; skipping."; fi'
+
+  typecheck:
+    desc: typecheck services/intelligence
+    cmds:
+      - 'if [ -f pyproject.toml ]; then uv run pyright; else echo "services/intelligence has not been scaffolded yet; skipping."; fi'
+
+  test:
+    desc: test services/intelligence
+    cmds:
+      - 'if [ -f pyproject.toml ]; then uv run pytest; else echo "services/intelligence has not been scaffolded yet; skipping."; fi'

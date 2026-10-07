@@ -1,0 +1,32 @@
+version: '3'
+
+tasks:
+  setup:
+    desc: setup services/pipeline
+    cmds:
+      - 'if [ -f pyproject.toml ]; then uv sync; else echo "services/pipeline has not been scaffolded yet; skipping."; fi'
+
+  lint:
+    desc: lint services/pipeline
+    cmds:
+      - 'if [ -f pyproject.toml ]; then uv run ruff check .; else echo "services/pipeline has not been scaffolded yet; skipping."; fi'
+
+  format:
+    desc: format services/pipeline
+    cmds:
+      - 'if [ -f pyproject.toml ]; then uv run ruff format .; else echo "services/pipeline has not been scaffolded yet; skipping."; fi'
+
+  format:check:
+    desc: format:check services/pipeline
+    cmds:
+      - 'if [ -f pyproject.toml ]; then uv run ruff format --check .; else echo "services/pipeline has not been scaffolded yet; skipping."; fi'
+
+  typecheck:
+    desc: typecheck services/pipeline
+    cmds:
+      - 'if [ -f pyproject.toml ]; then uv run pyright; else echo "services/pipeline has not been scaffolded yet; skipping."; fi'
+
+  test:
+    desc: test services/pipeline
+    cmds:
+      - 'if [ -f pyproject.toml ]; then uv run pytest; else echo "services/pipeline has not been scaffolded yet; skipping."; fi'

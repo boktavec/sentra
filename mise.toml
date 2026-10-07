@@ -1,0 +1,8 @@
+[tools]
+node = "24.21.0" # LTS
+python = "3.14.8"
+pnpm = "12.9.1"
+uv = "0.12.20"
+task = "3.54.0"
+pre-commit = "4.6.2"
+gitleaks = "8.30.1"
