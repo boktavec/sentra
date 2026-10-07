@@ -39,13 +39,16 @@
 | --- | --- | --- | --- |
 | Identity provider | Self-hosted Zitadel in Docker | Hosted (Clerk/Auth0); Keycloak; Ory; Auth.js in Next.js | Local-first, no vendor dependency, lighter than Keycloak, less assembly than Ory. Cost: another service to run; smaller community. |
 | Tenancy source of truth | Zitadel is identity only; Sentra orgs and roles live in Sentra's Postgres | Use Zitadel organizations | One source of truth for tenancy and authorization; avoids coupling the tenant model to the IdP. |
-| Session model | Next.js server-side OIDC client (code + PKCE), tokens held server-side, httpOnly cookie; Bearer access token to API | Browser-side OIDC; opaque tokens with introspection | Tokens never reach browser JS; API stays stateless. Cost: Next.js owns refresh. |
+| Session model | Next.js server-side OIDC client (code + PKCE). Tokens live in Redis; the browser holds only an opaque random session ID in an httpOnly cookie. Bearer access token to API | Browser-side OIDC; opaque tokens with introspection | Tokens never reach browser JS; API stays stateless; sign-out and a rejected refresh genuinely destroy the session (an encrypted-cookie session could not be revoked server-side). Refresh uses a short Redis lock so parallel requests don't burn a rotating refresh token twice. Cost: Next.js owns refresh; web sign-in depends on Redis (fails closed). |
 | Token verification | API verifies JWT locally against cached JWKS; sole verifier | Per-service verification; gateway; introspection | One place for auth logic (AC 6), no per-request network call, scales with API replicas. Gateway is a revisit trigger (second user-facing service, centralized WAF/rate limiting). |
 | User record | JIT upsert on first authenticated request, keyed by `(issuer, sub)`, internal UUID PK | No user table; webhook sync | Decouples Sentra IDs from IdP IDs with no extra infrastructure. Cost: cached email/name can go stale until next sign-in. |
 | Sign-in methods | Email + password, optional TOTP MFA, self-registration with email verification | Social login; enforced MFA; invite-only | Smallest setup that works offline; MFA available without test friction. Cost: accounts without MFA are weaker; open signup can be abused. |
 | Token lifetime | Access token 10 min; refresh server-side; idle session ~8–12 h | 1–2 min tokens; per-action revocation checks | Bounded revocation lag; sessions survive brief Zitadel outages. Cost: not instant revocation. |
 | JWKS handling | Cache; refresh on unknown `kid` (throttled, ~1/min); serve stale on refresh failure; not-ready at cold start if never fetched | Fail closed; fetch per request | Zitadel outage does not sign out active users; random `kid`s cannot force fetch storms. Cost: a revoked key can verify until the next successful refresh. |
-| Abuse limits | Zitadel lockout for password guessing plus API per-IP failed-auth limit in Redis, fail open | In-memory per instance; Postgres counters; edge limiting | Holds across replicas. Cost: new Redis dependency; shared-NAT users may be affected. |
+| Abuse limits | Zitadel lockout (5 attempts) for password guessing plus API per-IP failed-auth limit in Redis, fail open. Only failures are counted, so valid requests never touch Redis and are never throttled, even from a shared NAT | In-memory per instance; Postgres counters; edge limiting | Holds across replicas. Cost: new Redis dependency; shared-NAT users may be affected. |
+| Audience validation | API accepts tokens whose `aud` contains a configured client ID (`AUTH_AUDIENCES`): the web app's client, plus the test client in the dev env file only | Project-ID audience via `urn:zitadel:iam:org:project:id:<id>:aud` | Zitadel did not add the project ID to `aud` for this app (even with a user grant), but always includes the issuing client ID. Cost: each new first-party client must be added to the allow-list. |
+| Operational database | Dedicated `sentra-postgres` service for Sentra's own tables (starting with `users`), separate from Zitadel's Postgres | Share Zitadel's Postgres | Keeps the IdP's database and Sentra's operational data independently managed, migrated and backed up. Cost: one more container. |
+| Email verification | Enforced by Zitadel Login v2 (`EMAIL_VERIFICATION=true` on the login container) with SMTP to Mailpit locally | Rely on defaults | Registration alone signs the user in with no verification by default; this setting is required to meet the spec. |
 | Observability | API-side auth logs and counters; sign-in internals stay in Zitadel's event log | Logs only; full OTel now | Meets AC 5 cheaply; SENTRA-22/23 extend it. |
 | Testing | Integration tests against real Zitadel + Redis, one Playwright E2E, unit tests for pure logic | Mock OIDC server; mocks only | Proves the riskiest part (the real integration). Cost: slower tests, heavier CI. |
 | Shared logging and error handling | New TS workspace package `packages/ts-platform` (logger, error types, error-to-response mapping); cross-language contract documented in `packages/contracts` | Modules inside `apps/api` only; per-feature ad hoc handling | Used by `apps/api` and `apps/web` server code without duplication, and the contract lets Python services implement the same shape. Python services get their own implementation per the "no shared implementation across languages" rule. Cost: one new package. |
@@ -57,12 +60,12 @@
   - `apps/api`: auth middleware, JWKS cache, rate limiter, user provisioning.
   - `packages/ts-platform` (new): logger, errors.
   - `packages/contracts`: error body and log field contract; identity shape for downstream services.
-  - Local stack: minimal compose file for Zitadel, Redis, Mailpit (`infra/docker`), started via Task.
+  - Local stack (`infra/docker`, started via `task stack:up`, configured by `task stack:bootstrap`): Traefik + `zitadel-api` + `zitadel-login` + Zitadel's Postgres (Zitadel's supported topology), `sentra-postgres`, Redis, Mailpit. Host ports: Zitadel 8180, Redis 6390, Sentra Postgres 5440, Mailpit UI 8025 (chosen to avoid collisions with common local services); all bound to localhost.
 - **Request flow:**
   1. Browser requests a protected page, so Next.js redirects to Zitadel (code + PKCE).
   2. After sign-in, Next.js exchanges the code, stores tokens server-side, and sets an httpOnly session cookie.
   3. Next.js server code calls the API with `Authorization: Bearer <access token>`.
-  4. The API checks the per-IP failure limit, then verifies the token: signature, `iss`, `aud`, `exp`, `nbf`, expected algorithm only, ~30 s skew.
+  4. The API verifies the token locally: signature, `iss`, `aud` (allow-listed client IDs), `exp`, `nbf`, RS256 only, 30 s skew. On a 401-class failure it increments the per-IP failure counter in Redis and returns `429` once over the limit.
   5. The API upserts the user on first sight and attaches `{ userId, issuer, subject }` plus the correlation ID to the request context.
   6. The route handler runs; failures are thrown as typed errors and mapped to responses in one place.
 - **Error contract:**
@@ -76,7 +79,7 @@
   - Request-scoped child logger carrying the correlation ID. The ID is accepted from `X-Correlation-Id` or generated, and echoed on responses.
   - Tenant ID is added once it exists (SENTRA-2).
 - **Identity passed downstream:** `userId` and `correlationId` in the HTTP/event contract. Python services never see user tokens.
-- **Storage:** `users(id uuid pk, issuer text, subject text, email text, name text, created_at, updated_at, unique(issuer, subject))`. The upsert is idempotent and safe under concurrent first requests (`INSERT ... ON CONFLICT`).
+- **Storage:** `users(id uuid pk, issuer text, subject text, email text null, name text null, created_at, updated_at, unique(issuer, subject))` in the `sentra` database. The upsert is idempotent and safe under concurrent first requests (`INSERT ... ON CONFLICT`). `email` and `name` are filled only when present in token claims; Zitadel access tokens do not carry them, so they are currently null (see follow-ups).
 - **Compatibility:** greenfield, nothing to migrate.
 
 ## Workload and targets
@@ -88,8 +91,8 @@
 | Data size and growth | One small row per user | Derived | n/a |
 | Latency or throughput target | **Unknown.** Token verification is local CPU and should be negligible against request latency | No target invented | Measure in SENTRA-26/27 |
 | Availability and recovery target | **Unknown.** Active sessions keep working during a Zitadel outage; sign-in/refresh/registration do not | Design property, not an SLO | Failure test below |
-| Failed-auth limit | 10 failures/IP/minute, then `429` | Assumption, tunable by config | Tune from auth-failure counters |
-| Access token lifetime | 10 min; idle session ~8–12 h | Assumption | Confirm in Zitadel config test |
+| Failed-auth limit | 10 failures/IP/minute, then `429` for further failures in the window | Assumption, tunable by `AUTH_FAIL_LIMIT` / `AUTH_FAIL_WINDOW_SECONDS` | Tune from auth-failure counters |
+| Access token lifetime | 10 min (`expires_in` observed: 599 s); idle session 10 h; refresh token absolute lifetime 24 h | Assumption, set by `task stack:bootstrap` | Observed in a real token |
 
 ## Edge cases and failure behavior
 
@@ -128,16 +131,16 @@
 
 ## Acceptance criteria
 
-- [ ] A user can register, verify their email, and sign in through Zitadel (optionally with TOTP MFA).
-- [ ] Unauthenticated users are redirected from protected web routes, and API requests without a valid token get `401`.
-- [ ] The API resolves the authenticated user (internal UUID) on every protected request, creating the `users` row on first sight, idempotently under concurrency.
-- [ ] Auth failures return a generic RFC 9457 body that does not reveal the failure reason, token contents, or internals.
-- [ ] Auth outcomes are logged (structured, tokens redacted) and counted.
-- [ ] Token verification exists only in the API; no other service or app re-implements it.
-- [ ] More than 10 failed auths per IP per minute returns `429`; the limiter fails open if Redis is down.
-- [ ] A Zitadel outage does not invalidate sessions that are already signed in.
-- [ ] Sign-out ends the web session and the Zitadel session.
-- [ ] Logging and error handling live in a shared package and are used by the API's auth path and the web server code, with no per-feature copies.
+- [x] A user can register, verify their email, and sign in through Zitadel (optionally with TOTP MFA).
+- [x] Unauthenticated users are redirected from protected web routes, and API requests without a valid token get `401`.
+- [x] The API resolves the authenticated user (internal UUID) on every protected request, creating the `users` row on first sight, idempotently under concurrency.
+- [x] Auth failures return a generic RFC 9457 body that does not reveal the failure reason, token contents, or internals.
+- [x] Auth outcomes are logged (structured, tokens redacted) and counted.
+- [x] Token verification exists only in the API; no other service or app re-implements it.
+- [x] More than 10 failed auths per IP per minute returns `429`; the limiter fails open if Redis is down.
+- [x] A Zitadel outage does not invalidate sessions that are already signed in.
+- [x] Sign-out ends the web session and the Zitadel session.
+- [x] Logging and error handling live in a shared package and are used by the API's auth path and the web server code, with no per-feature copies.
 
 ## Verification
 
@@ -156,9 +159,13 @@
 
 ## Open questions and assumptions to validate
 
-- **Library choices.** Logger (leaning `pino`, for built-in redaction), JWT/JWKS verification (leaning `jose`), OIDC client for Next.js, and Redis client need confirming via context7 against current versions before implementation. Each is a new dependency and will be justified in the PR. Owner: Brian, before implementation.
+- **Library choices (resolved).** `fastify` (API), `pino` (logging, built-in redaction), `jose` (JWT/JWKS), `openid-client` v6 (Next.js OIDC client), `ioredis`, `pg`, `next` 16 / `react` 19. Each is used for something that would otherwise be hand-rolled security code or a large amount of plumbing; versions confirmed against current docs via context7.
 - **Shared package placement.** Resolved at spec review: `packages/ts-platform` is the home for shared logging and error handling.
 - **10-minute access token and 8–12 hour idle session.** Assumptions. Validate against Zitadel defaults and adjust.
 - **Signup spam.** Open registration is accepted for the MVP. Add a trigger (e.g. signup volume) for introducing a control.
 - **Trusted-proxy configuration.** How `X-Forwarded-For` trust is configured in deployment is deferred until there is a deployment topology.
 - **SENTRA-24 alignment.** Resolved at spec review: SENTRA-1 ships a minimal compose file (Zitadel + its Postgres, Redis, Mailpit) exposed through Task commands. SENTRA-24 later adopts and extends it.
+- **Follow-up: profile claims.** Users get `email`/`name` only if they appear in the access token, which Zitadel does not include. Options: call the OIDC userinfo endpoint on first sight, or have the web app pass profile data. Not needed by any SENTRA-1 criterion; decide with SENTRA-2/3.
+- **Follow-up: TypeScript pinned to 6.x.** `typescript-eslint` does not support TypeScript 7 yet (tracking issue #10940 for 7.1). Revisit when it does.
+- **Follow-up: `/metrics` is unauthenticated** and counters are in-process. Acceptable for the local MVP; SENTRA-23 replaces both.
+- **Follow-up: production topology.** `devMode` OIDC app settings, http redirect URIs, insecure dev secrets in `.env.example`, and the trusted-proxy list all need production values before any deployment.

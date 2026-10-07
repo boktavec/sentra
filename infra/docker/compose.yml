@@ -165,7 +165,8 @@ services:
       ZITADEL_SESSION_COOKIE_SECRET: ${LOGIN_SESSION_COOKIE_SECRET}
       CUSTOM_REQUEST_HEADERS: Host:${ZITADEL_DOMAIN},X-Forwarded-Proto:${ZITADEL_PUBLIC_SCHEME}
 
-      # Future-ready placeholders for upcoming Login OTEL support.
+      # Users must verify their email (code sent via SMTP) before they can sign in.
+      EMAIL_VERIFICATION: "true"
     healthcheck:
       test:
         - CMD
