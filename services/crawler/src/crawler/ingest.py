@@ -8,6 +8,7 @@ from typing import Any
 from . import contracts, events, signing
 from .config import Limits
 from .fetch import Downloaded, FetchFailed, NotModified, fetch
+from .metrics import DOWNLOAD_BYTES, RETRIES
 from .runs import Run, Runs
 from .storage import ArtifactStore
 
@@ -82,6 +83,7 @@ def _process(run: Run, deps: Deps) -> str:
                 tmp_dir=deps.tmp_dir,
             )
         except FetchFailed as e:
+            RETRIES.labels(run.source).inc(e.attempts - 1)
             # Publish first, then mark: if we crash in between, the redelivery retries the whole run.
             deps.publish(
                 events.crawl_failed(run.run_id, run.correlation_id, run.source, run.ecosystem, e.reason, e.attempts)
@@ -90,6 +92,7 @@ def _process(run: Run, deps: Deps) -> str:
             log.error("ingestion failed", extra={**extra, "reason": e.reason})
             return "failed"
 
+        RETRIES.labels(run.source).inc(result.attempts - 1)
         if isinstance(result, NotModified):
             deps.runs.mark_unchanged(
                 run.run_id,
@@ -101,6 +104,7 @@ def _process(run: Run, deps: Deps) -> str:
             log.info("upstream unchanged (304)", extra=extra)
             return "unchanged"
 
+        DOWNLOAD_BYTES.labels(run.source).inc(result.size)
         try:
             if previous and previous.sha256 == result.sha256:
                 deps.runs.mark_unchanged(run.run_id, result.etag, result.sha256, result.size, result.attempts)

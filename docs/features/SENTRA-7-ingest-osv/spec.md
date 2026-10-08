@@ -121,7 +121,7 @@ operator/scheduler --signed crawl.requested--> Redpanda --> crawler worker
   - Topic ACLs for who may publish are a deployed-environment concern, documented not enforced here.
 - Logs, metrics, traces, alerts:
   - Structured logs with `runId` and `correlationId`, following `packages/contracts/logging.md`.
-  - Metrics: runs by status, download duration, bytes fetched, retry count, dropped events by reason, consumer lag.
+  - Metrics (`crawler_*`, Prometheus on `127.0.0.1:9102/metrics`): requests by outcome (which covers runs by status and drops by reason), request duration, bytes downloaded, fetch retries, worker errors. Consumer lag is read from the broker (`rpk group describe sentra-crawler`), not exported by the crawler.
   - Alerts: **Unknown** until SENTRA-23 defines the metrics stack; failed runs and stuck `fetching`/`stored` runs are the candidates.
 - Rollout, migration, rollback, operational owner:
   - Additive migration and new service; rollback is stopping the worker and, if needed, dropping the table. Raw artifacts are retained.

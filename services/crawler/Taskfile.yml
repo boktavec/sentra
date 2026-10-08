@@ -35,3 +35,9 @@ tasks:
     desc: Integration tests for services/crawler (needs `task stack:up`; uses a scratch database and bucket)
     cmds:
       - uv run pytest tests/integration
+
+  run:
+    desc: Run the crawler worker against the local stack (needs `task stack:up` and migrations applied)
+    cmds:
+      - "[ -f .env ] || cp .env.example .env"
+      - uv run --env-file .env python -m crawler

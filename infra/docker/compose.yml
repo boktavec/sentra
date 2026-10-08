@@ -40,7 +40,7 @@ services:
       - --smp=1
       - --memory=512M
       - --kafka-addr=0.0.0.0:${REDPANDA_KAFKA_PORT}
-      - --advertise-kafka-addr=localhost:${REDPANDA_KAFKA_PORT}
+      - --advertise-kafka-addr=127.0.0.1:${REDPANDA_KAFKA_PORT}
     ports:
       - 127.0.0.1:${REDPANDA_KAFKA_PORT}:${REDPANDA_KAFKA_PORT}
     healthcheck:
