@@ -13,7 +13,9 @@ import type { InvitationStore } from "./invitations.ts";
 import { registerMemberRoutes } from "./member-routes.ts";
 import type { MemberStore } from "./members.ts";
 import { registerOrgRoutes } from "./org-routes.ts";
+import { registerProjectRoutes } from "./project-routes.ts";
 import type { OrgStore, TenantContext } from "./orgs.ts";
+import type { ProjectStore } from "./projects.ts";
 import type { AuthUser } from "./users.ts";
 
 declare module "fastify" {
@@ -29,6 +31,7 @@ interface Deps {
   authenticate: ReturnType<typeof createAuthenticator>;
   orgs: OrgStore;
   members: MemberStore;
+  projects: ProjectStore;
   invitations: InvitationStore;
   ready: () => Promise<boolean>;
   trustedProxies: string[] | false;
@@ -39,6 +42,7 @@ export function buildApp({
   authenticate,
   orgs,
   members,
+  projects,
   invitations,
   ready,
   trustedProxies,
@@ -85,6 +89,7 @@ export function buildApp({
 
     registerOrgRoutes(protectedRoutes, { logger, orgs });
     registerMemberRoutes(protectedRoutes, { logger, orgs, members });
+    registerProjectRoutes(protectedRoutes, { logger, orgs, projects });
     registerInvitationRoutes(protectedRoutes, { logger, orgs, invitations });
   });
 
