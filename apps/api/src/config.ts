@@ -16,6 +16,17 @@ export interface Config {
   authFailLimit: number;
   authFailWindowSeconds: number;
   maxOrgsPerUser: number;
+  invitationTtlHours: number;
+  maxPendingInvitationsPerOrg: number;
+  maxInvitationsPerOrgPerDay: number;
+  maxMembersPerOrg: number;
+  /** Public address of the web app, used in invitation emails. */
+  webUrl: string;
+  /** SMTP server for invitation email; unset disables sending (emails wait in the outbox). */
+  smtpUrl: string | undefined;
+  emailFrom: string;
+  emailMaxAttempts: number;
+  emailPollSeconds: number;
   /** Fastify `trustProxy` value; unset means use the socket address and ignore X-Forwarded-For. */
   trustedProxies: string[] | false;
 }
@@ -32,6 +43,15 @@ export function loadConfig(): Config {
     authFailLimit: int("AUTH_FAIL_LIMIT", 10),
     authFailWindowSeconds: int("AUTH_FAIL_WINDOW_SECONDS", 60),
     maxOrgsPerUser: int("MAX_ORGS_PER_USER", 5),
+    invitationTtlHours: int("INVITATION_TTL_HOURS", 168),
+    maxPendingInvitationsPerOrg: int("MAX_PENDING_INVITATIONS_PER_ORG", 50),
+    maxInvitationsPerOrgPerDay: int("MAX_INVITATIONS_PER_ORG_PER_DAY", 50),
+    maxMembersPerOrg: int("MAX_MEMBERS_PER_ORG", 100),
+    webUrl: process.env["WEB_URL"] ?? "http://localhost:3000",
+    smtpUrl: process.env["SMTP_URL"] || undefined,
+    emailFrom: process.env["EMAIL_FROM"] ?? "Sentra <no-reply@sentra.local>",
+    emailMaxAttempts: int("EMAIL_MAX_ATTEMPTS", 5),
+    emailPollSeconds: int("EMAIL_POLL_SECONDS", 5),
     trustedProxies: process.env["TRUSTED_PROXIES"]
       ? process.env["TRUSTED_PROXIES"].split(",")
       : false,

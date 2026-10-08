@@ -35,6 +35,10 @@ services:
     restart: unless-stopped
     ports:
       - 127.0.0.1:${MAILPIT_UI_PUBLISHED_PORT}:8025
+      - 127.0.0.1:${MAILPIT_SMTP_PUBLISHED_PORT}:1025
+    environment:
+      # Without this each new SMTP connection waits ~10s on a reverse-DNS lookup of the client.
+      MP_SMTP_DISABLE_RDNS: "true"
     networks:
       - zitadel
 

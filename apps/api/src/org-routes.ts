@@ -6,7 +6,7 @@ import type { OrgStore } from "./orgs.ts";
 
 const PAGE_LIMIT = { default: 50, max: 100 };
 
-interface Deps {
+export interface Deps {
   logger: Logger;
   orgs: OrgStore;
 }
@@ -33,7 +33,7 @@ function createRoute({ orgs }: Deps) {
   };
 }
 
-function parseLimit(raw: string | undefined): number {
+export function parseLimit(raw: string | undefined): number {
   const limit = Number(raw ?? PAGE_LIMIT.default);
   if (!Number.isInteger(limit) || limit < 1 || limit > PAGE_LIMIT.max) {
     throw new AppError("invalid_input", 400, "Invalid input", { reason: "limit" });
@@ -42,7 +42,7 @@ function parseLimit(raw: string | undefined): number {
 }
 
 /** Resolves the caller's membership; its TenantContext is the only tenant input org routes use. */
-function scopeTo({ logger, orgs }: Deps) {
+export function scopeTo({ logger, orgs }: Deps) {
   return async (request: FastifyRequest, by: { orgId: string } | { slug: string }) => {
     const { tenant, org } = await orgs.resolveTenant(request.user!.id, by).catch((err: unknown) => {
       if ((err as AppError).reason === "tenant_access_denied") {
@@ -58,6 +58,14 @@ function scopeTo({ logger, orgs }: Deps) {
     request.ctx.log.debug("tenant_resolved");
     return org;
   };
+}
+
+/** Call after `scopeTo`. A member on an admin-only route gets a generic 403; non-members already got 404. */
+export function requireAdmin(request: FastifyRequest) {
+  if (request.tenant!.role === "admin") return;
+  metrics.inc("role_denied_total");
+  request.ctx.log.warn({ route: request.routeOptions.url }, "role_denied");
+  throw new AppError("forbidden", 403, "Forbidden", { reason: "role_denied" });
 }
 
 /** Registers org routes on an already-authenticated Fastify scope. */

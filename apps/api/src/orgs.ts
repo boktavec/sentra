@@ -3,11 +3,13 @@ import { AppError } from "@sentra/ts-platform";
 import * as metrics from "./metrics.ts";
 import { decodeCursor, encodeCursor, isUuid } from "./org-input.ts";
 
-export interface Org {
+export type Role = "admin" | "member";
+
+interface Org {
   id: string;
   name: string;
   slug: string;
-  role: "admin";
+  role: Role;
   createdAt: string;
 }
 
@@ -15,7 +17,7 @@ export interface Org {
 export interface TenantContext {
   orgId: string;
   userId: string;
-  role: Org["role"];
+  role: Role;
 }
 
 interface NewOrg {
@@ -27,7 +29,7 @@ interface OrgRow {
   id: string;
   name: string;
   slug: string;
-  role: "admin";
+  role: Role;
   created_at: Date;
 }
 
@@ -41,7 +43,10 @@ const toOrg = (row: OrgRow): Org => ({
   createdAt: row.created_at.toISOString(),
 });
 
-async function inTransaction<T>(pool: Pool, work: (client: PoolClient) => Promise<T>): Promise<T> {
+export async function inTransaction<T>(
+  pool: Pool,
+  work: (client: PoolClient) => Promise<T>,
+): Promise<T> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");

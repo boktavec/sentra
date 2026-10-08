@@ -223,6 +223,8 @@ writeFileSync(
     `ZITADEL_TEST_CLIENT_SECRET=${testClientSecret}`,
     `REDIS_URL=redis://127.0.0.1:${env.REDIS_PUBLISHED_PORT}`,
     `DATABASE_URL=postgresql://sentra:${env.SENTRA_DB_PASSWORD}@127.0.0.1:${env.SENTRA_DB_PUBLISHED_PORT}/sentra`,
+    // Local dev sends invitation email to Mailpit (read it at http://localhost:${env.MAILPIT_UI_PUBLISHED_PORT}).
+    `SMTP_URL=smtp://127.0.0.1:${env.MAILPIT_SMTP_PUBLISHED_PORT}`,
     "",
   ].join("\n"),
 );
