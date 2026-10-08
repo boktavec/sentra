@@ -27,6 +27,11 @@ tasks:
       - 'if [ -f pyproject.toml ]; then uv run pyright; else echo "services/crawler has not been scaffolded yet; skipping."; fi'
 
   test:
-    desc: test services/crawler
+    desc: unit tests for services/crawler (no stack needed)
     cmds:
       - 'if [ -f pyproject.toml ]; then uv run pytest; else echo "services/crawler has not been scaffolded yet; skipping."; fi'
+
+  test:integration:
+    desc: Integration tests for services/crawler (needs `task stack:up`; uses a scratch database and bucket)
+    cmds:
+      - uv run pytest tests/integration
