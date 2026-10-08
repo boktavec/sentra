@@ -2,19 +2,21 @@
 
 import { useActionState, useState } from "react";
 import { slugify } from "@/lib/slugify";
-import { createOrganization, type FormState } from "./actions";
+import { createProject, type FormState } from "./actions";
 
-export function NewOrgForm() {
-  const [state, action, pending] = useActionState<FormState, FormData>(createOrganization, {});
+export function NewProjectForm({ orgId, orgSlug }: { orgId: string; orgSlug: string }) {
+  const [state, action, pending] = useActionState<FormState, FormData>(createProject, {});
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [slugEdited, setSlugEdited] = useState(false);
 
   return (
     <form action={action}>
+      <input type="hidden" name="orgId" value={orgId} />
+      <input type="hidden" name="orgSlug" value={orgSlug} />
       <p>
         <label>
-          Name <br />
+          Project name <br />
           <input
             name="name"
             value={name}
@@ -29,7 +31,7 @@ export function NewOrgForm() {
       </p>
       <p>
         <label>
-          Slug <br />
+          Project slug <br />
           <input
             name="slug"
             value={slug}
@@ -47,12 +49,12 @@ export function NewOrgForm() {
         <small>Used in the URL. It cannot be changed later.</small>
       </p>
       {state.error && (
-        <p role="alert" data-testid="form-error">
+        <p role="alert" data-testid="project-form-error">
           {state.error}
         </p>
       )}
       <button type="submit" disabled={pending}>
-        Create organization
+        Create project
       </button>
     </form>
   );
