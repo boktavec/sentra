@@ -1,6 +1,6 @@
 # SENTRA-11: Normalize vulnerability records
 
-- Status: Draft
+- Status: Approved (implemented; see Implementation notes)
 - YouTrack: http://localhost:8080/issue/SENTRA-11 ("[MVP] Normalize Vulnerability Records")
 - Owner: Sentra operator / project owner
 
@@ -48,7 +48,8 @@ OSV facts:
 - **Verified:** ID prefixes are `MAL` 11,812, `PYSEC` 7,822, `GHSA` 6,497, `OSV` 12. Almost half the records are malware reports, not CVEs.
 - **Verified:** range types `ECOSYSTEM` 26,047, `GIT` 1,589, `SEMVER` 134; event keys `introduced`, `fixed`, `last_affected` only. Severity types seen: `CVSS_V3` 9,940, `CVSS_V4` 4,086 (vector strings, no score).
 - **Verified:** 5,529 `affected` entries have no `ranges` and 7,213 have no `versions`, so both must be stored.
-- **Assumed:** npm has the same shape and a larger count (zip is about 208 MiB compressed). Validate by profiling the npm zip before setting limits.
+- **Verified (2026-10-08):** npm `all.zip` has 230,171 entries, 367.9 MiB uncompressed, largest entry 1.1 MiB; 222,368 are `MAL-`, 7,801 `GHSA-`. Range types: `SEMVER` 219,252, `ECOSYSTEM` 443, `GIT` 2. Same field set as PyPI, plus `schema_version` 1.7.3 to 1.9.0. Adapter and validator accepted all 256,314 records of both dumps with zero failures.
+- **Verified:** 47 advisories appear in both the PyPI and npm dumps; all 47 are byte-identical (each file carries the full `affected` list), so keying on `(source, source_id)` across ecosystems loses nothing.
 - **Assumed:** KEV and GHSA mappings below. Validate against real artifacts in SENTRA-8/9.
 
 ## Architecture and contracts
@@ -86,12 +87,12 @@ artifact.ingested -> validate event -> claim artifact (lease on sha256)
 | --- | --- | --- | --- |
 | Records per artifact | PyPI 26,143 | **Verified** 2026-10-08 | Profile npm zip before finalizing limits |
 | Uncompressed size | PyPI 73.2 MiB | **Verified** | Profile npm |
-| Zip limits | Max entries, per-entry bytes, total bytes: set to about 5x the measured npm values | **Assumed** | Profile npm; oversize tests |
-| Memory | Under 512 MiB: stream entries, never load the whole zip | **Assumed** | Measure peak memory on npm |
+| Zip limits | 1,000,000 entries (4.3x npm), 10 MiB per entry (9x), 2 GiB total (5.4x) | Set from the **Verified** npm profile; the multiples are **Assumed** headroom | Oversize tests; revisit when npm passes about half of a limit |
+| Memory | Under 512 MiB: stream entries, never load the whole zip | **Assumed** cap | **Measured** 2026-10-08: peak under 450 MiB on npm, including the test harness's own upload overhead |
 | Batch size | 500 records per transaction | **Assumed** | Measure run time and lock behavior |
 | Failure-rate abort | More than 1% once at least 1,000 records are seen | **Assumed** | Test with a broken adapter fixture; revisit after real runs |
 | Frequency | A handful of runs per day, one per ecosystem | **Assumed** (follows SENTRA-7) | Count events |
-| Latency or throughput | **Unknown**; no freshness SLO | Not invented | Record real npm run time; SENTRA-26 sets the SLO |
+| Latency or throughput | **Unknown** as an SLO | Not invented | **Measured** 2026-10-08 (laptop, local Postgres and storage): PyPI 8.7 s, npm 37.6 s per full run; re-running unchanged data 26 s for npm. SENTRA-26 sets the SLO |
 | Availability and recovery | **Unknown**; recovery is redelivery of `artifact.ingested` or reprocess task | Not invented | Crash-injection test |
 
 ## Edge cases and failure behavior
@@ -119,15 +120,15 @@ artifact.ingested -> validate event -> claim artifact (lease on sha256)
 
 ## Acceptance criteria
 
-- [ ] OSV records for npm and PyPI are normalized into the documented canonical model; KEV and GHSA mappings are documented (adapters follow in SENTRA-8/9).
-- [ ] The OSV adapter is separate from validation, persistence and the worker; none of those import OSV code.
-- [ ] Each row keeps `source`, `source_id`, artifact sha256 and zip entry.
-- [ ] Reprocessing the same artifact changes no rows.
-- [ ] Invalid records are validated out and never written to `vulnerabilities`.
-- [ ] Every quarantined record is traceable to its artifact sha256 and entry.
-- [ ] Rows carry `schema_version` and `adapter_version`, and an adapter bump migrates rows on reprocess.
-- [ ] Zip limits, sha256 check and failure-rate abort behave as specified.
-- [ ] `vulnerabilities.normalized` is published once per completed artifact.
+- [x] OSV records for npm and PyPI are normalized into the documented canonical model; KEV and GHSA mappings are documented (adapters follow in SENTRA-8/9).
+- [x] The OSV adapter is separate from validation, persistence and the worker; none of those import OSV code.
+- [x] Each row keeps `source`, `source_id`, artifact sha256 and zip entry.
+- [x] Reprocessing the same artifact changes no rows.
+- [x] Invalid records are validated out and never written to `vulnerabilities`.
+- [x] Every quarantined record is traceable to its artifact sha256 and entry.
+- [x] Rows carry `schema_version` and `adapter_version`, and an adapter bump migrates rows on reprocess.
+- [x] Zip limits, sha256 check and failure-rate abort behave as specified.
+- [x] `vulnerabilities.normalized` is published once per completed artifact.
 
 ## Verification
 
@@ -136,7 +137,18 @@ artifact.ingested -> validate event -> claim artifact (lease on sha256)
 
 ## Open questions and assumptions to validate
 
-- Exact zip limits and batch size: profile the npm zip, then fix the numbers (before implementation).
+- ~~Exact zip limits and batch size~~: set from the npm profile (see Workload). Batch size 500 stays **Assumed**; it was not tuned.
 - Failure-rate threshold: revisit after the first real npm and PyPI runs.
 - Does a stored `severity` vector need parsing to a score? Left raw here; decide in SENTRA-14 (risk priority).
 - MAL- (malware) advisories are about 45% of PyPI records. Stored as ordinary advisories for now; SENTRA-12/14 may want to treat them differently.
+
+## Implementation notes
+
+Differences from the draft, and what was learned:
+
+- **Own database role.** The normalizer uses `sentra_normalizer` (migration 009), not `sentra_pipeline`, so the process that opens untrusted zips cannot read tenant tables. A test asserts this.
+- **No `force` flag.** Reprocessing the same adapter version only finishes a failed run or re-sends a missing event; a new adapter version is a new run and rewrites rows. `task pipeline:normalize:reprocess` takes the newest artifact for an ecosystem or an explicit SHA-256.
+- **Dependency outages release the run.** A storage, Postgres or broker error marks the run `failed` (releasing the lease) and re-raises, so the offset stays uncommitted and the redelivered event retakes it at once. Unexpected errors retry 5 times in process, then fail the run and commit the offset.
+- **Object key is checked, not trusted.** An `artifact.ingested` whose key is not exactly `raw/<source>/<ecosystem>/<sha256>.zip` is dropped, and the SHA-256 of the downloaded bytes must match.
+- **zipfile enforces declared sizes.** A zip that declares a small entry and expands is stopped by `zipfile` itself (CRC failure) before our own byte count; both paths fail the run.
+- **Not covered:** GHSA `vulnerable_version_range` parsing and KEV content-hash updates are documented in `packages/contracts/models.md`, not built. Alerting on failed runs waits for SENTRA-23. Running two worker processes against a very large first import has only been tested with threads.
