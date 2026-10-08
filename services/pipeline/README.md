@@ -1,6 +1,6 @@
 # services/pipeline
 
-Python data pipeline. One job so far: validate tenant-uploaded SBOMs and parse their components into dependency records. Design: [SENTRA-5 spec](../../docs/features/SENTRA-5-upload-sbom/spec.md), [SENTRA-6 spec](../../docs/features/SENTRA-6-parse-sbom-dependencies/spec.md) and [ADR 0002](../../docs/adr/0002-event-conventions-for-async-ingestion.md).
+Python data pipeline with two jobs: validate tenant-uploaded SBOMs and parse their components into dependency records, and normalize raw vulnerability artifacts into the canonical model (below). Design: [SENTRA-5 spec](../../docs/features/SENTRA-5-upload-sbom/spec.md), [SENTRA-6 spec](../../docs/features/SENTRA-6-parse-sbom-dependencies/spec.md) and [ADR 0002](../../docs/adr/0002-event-conventions-for-async-ingestion.md); vulnerabilities: [SENTRA-11 spec](../../docs/features/SENTRA-11-normalize-vulnerabilities/spec.md) and the [canonical models](../../packages/contracts/models.md).
 
 ## Flow
 
@@ -38,6 +38,21 @@ task pipeline:run             # copies .env.example to .env on first run
 ```
 
 Metrics are on `127.0.0.1:9103/metrics` (`sbom_validation_total{outcome}`, `sbom_validation_duration_seconds`, `sbom_dependencies_per_import`, `sbom_validation_retries_total`, `pipeline_worker_errors_total`). Consumer lag: `rpk group describe pipeline-sbom`.
+
+## Vulnerability normalizer (SENTRA-11)
+
+A second process (`pipeline.normalize`, consumer group `normalizer-artifacts`) with its own Postgres role, `sentra_normalizer`, which cannot read any tenant table.
+
+`artifact.ingested` -> validate the event -> check the object key is exactly `raw/<source>/<ecosystem>/<sha256>.zip` -> claim the run -> download to a temp file and verify the SHA-256 -> stream the zip -> adapter -> validate against `vulnerability.v1.json` -> upsert in batches -> `vulnerabilities.normalized`.
+
+- The OSV adapter (`normalize/adapters/osv.py`) is the only code that knows OSV's shape. Validation, persistence and the worker see only the canonical record.
+- A row is rewritten only if the source's `modified` is newer or `ADAPTER_VERSION` is higher, so reprocessing the same artifact changes nothing. After changing what the adapter produces, bump `ADAPTER_VERSION` and run `task pipeline:normalize:reprocess -- <ecosystem>`: it rewrites every row from the raw artifact.
+- A record that fails normalization or validation is stored in `normalization_failures` (artifact SHA-256, zip entry, error) and the run continues. If more than 1% of at least 1,000 records fail (**assumed**), the run is marked `failed` and no event is sent.
+- Zip limits (entries, bytes per entry, total bytes) are checked on declared and actual sizes; a tripped limit fails the run before any later entry is read.
+- One run per artifact and adapter version in `normalization_runs`, with a lease renewed on every batch. A crash after the last batch and before the event is recovered when `artifact.ingested` is redelivered. An outage releases the run and the event is retried until it passes.
+- Measured 2026-10-08 on a laptop against the real dumps: PyPI (26,143 records) 8.7 s, npm (230,171 records) 37.6 s, peak memory under 450 MiB. Re-running either with different zip bytes and identical records rewrites zero rows.
+
+Metrics are on `127.0.0.1:9104/metrics` (`normalize_artifacts_total{outcome}`, `normalize_records_total{outcome}`, `normalize_run_duration_seconds`, `normalize_retries_total`, `normalizer_worker_errors_total`). Consumer lag: `rpk group describe normalizer-artifacts`. Run it with `task stack:normalizer-role` once, then `task pipeline:normalize:run`. Settings are the `NORMALIZER_*` variables in `.env.example`.
 
 ## Tests
 
