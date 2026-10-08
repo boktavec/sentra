@@ -157,3 +157,11 @@ def test_real_versions_only_advisory_has_no_range_to_evaluate():
     args = (entry["ecosystem"], entry["packageName"])
     assert decide(*args, "144.0", entry["versions"], entry["ranges"])
     assert decide(*args, "143.0", entry["versions"], entry["ranges"]) is None
+
+
+def test_listed_versions_tolerate_unparseable_entries_and_repeat_calls():
+    listed = ["1.0", "banana", "2.0.0rc1"]  # one entry is not a version at all; the rest still count
+    for _ in range(2):  # the second call is served from the cache and must agree
+        assert pypi("1.0.0", versions=listed)
+        assert pypi("2.0.0rc1", versions=listed)
+        assert pypi("3.0", versions=listed) is None

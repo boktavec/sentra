@@ -83,7 +83,9 @@ def load_advisories(conn: psycopg.Connection, dumps: list[tuple[str, str]]) -> d
     return boundaries
 
 
-def load_tenants(conn: psycopg.Connection, boundaries, orgs: int, projects: int, deps: int, share: float) -> list[str]:
+def load_tenants(
+    conn: psycopg.Connection, boundaries, orgs: int, projects: int, deps: int, share: float, dense: bool = False
+) -> list[str]:
     rng = random.Random(13)
     user = conn.execute("INSERT INTO users (issuer, subject) VALUES ('b', 'b') RETURNING id").fetchone()[0]  # type: ignore[index]
     org_ids = [
@@ -94,6 +96,9 @@ def load_tenants(conn: psycopg.Connection, boundaries, orgs: int, projects: int,
         for i in range(orgs)
     ]
     names = {eco: sorted(pkgs) for eco, pkgs in boundaries.items()}
+    # `dense` weights the choice by how many range boundaries a package has, which favours packages with
+    # hundreds of advisories and gives thousands of findings per project: a stress case, not a typical one.
+    weighted = {eco: [(n, v) for n, vs in pkgs.items() for v in vs] for eco, pkgs in boundaries.items()}
     # Projects and imports first: a COPY holds the connection, so nothing else may run while it streams.
     tenants = []
     for p in range(projects):
@@ -121,8 +126,11 @@ def load_tenants(conn: psycopg.Connection, boundaries, orgs: int, projects: int,
             seen: set[str] = set()  # one row per purl per import
             for i in range(deps):
                 if rng.random() < share and boundaries.get(eco):
-                    name = rng.choice(names[eco])  # uniform over packages, not weighted by advisory count
-                    version = rng.choice(boundaries[eco][name])
+                    if dense:
+                        name, version = rng.choice(weighted[eco])
+                    else:
+                        name = rng.choice(names[eco])  # uniform over packages, not weighted by advisory count
+                        version = rng.choice(boundaries[eco][name])
                 else:
                     name, version = (
                         f"pkg-{rng.randrange(10**6)}-{i}",
@@ -159,6 +167,7 @@ def main() -> None:
     ap.add_argument("--projects", type=int, default=1000)
     ap.add_argument("--deps", type=int, default=1500)
     ap.add_argument("--share", type=float, default=0.10, help="share of dependencies that have advisories")
+    ap.add_argument("--dense", action="store_true", help="stress case: weight packages by advisory count")
     args = ap.parse_args()
 
     name = f"correlate_bench_{uuid.uuid4().hex[:8]}"
@@ -174,7 +183,8 @@ def main() -> None:
                 "load advisories", lambda: load_advisories(conn, [(args.pypi, "PyPI"), (args.npm, "npm")])
             )
             projects = timed(
-                "load tenants", lambda: load_tenants(conn, boundaries, args.orgs, args.projects, args.deps, args.share)
+                "load tenants",
+                lambda: load_tenants(conn, boundaries, args.orgs, args.projects, args.deps, args.share, args.dense),
             )
             conn.execute("ANALYZE")
             counts = conn.execute(
@@ -222,6 +232,11 @@ def main() -> None:
         high = store.advisory_high_water() or store.now()
         affected = store.projects_affected_by(store.watermark(), high, deps.limits.watermark_overlap_seconds)
         print(f"  that advisory touches {len(affected)} of {len(projects)} projects")
+        timed(
+            "  affected-projects query",
+            lambda: store.projects_affected_by(store.watermark(), high, deps.limits.watermark_overlap_seconds),
+        )
+        timed("  reconcile those projects", lambda: [store.reconcile(p) for p in affected])
         timed(
             "steady: one advisory changes",
             lambda: handle_normalized(

@@ -6,7 +6,7 @@ Spec: [docs/features/SENTRA-13-match-dependencies/spec.md](../features/SENTRA-13
 
 A third pipeline process, the correlator, that turns "this project has these dependencies" and "these advisories exist" into **findings**. Three things wake it: an SBOM finished parsing (`sbom.parsed`), advisories changed (`vulnerabilities.normalized`), or a daily sweep. All three call one function, `reconcile(project)`, which recomputes the project's findings from its newest parsed import and the current advisories, writes only what changed, and resolves what is no longer true. The API gained one read route, `GET /v1/orgs/:orgId/projects/:slug/findings`.
 
-On the real PyPI and npm dumps (256,310 advisories) with 1,000 synthetic projects of about 1,500 dependencies: one project reconciles in 0.06 to 0.16 s, a re-run in 0.01 s with no writes, the first full load in 107 s, and a full sweep in 91 s.
+On the real PyPI and npm dumps (256,310 advisories) with 1,000 synthetic projects of about 1,500 dependencies: one project reconciles in about 0.06 s, a re-run in 0.01 s with no writes, the first full load in 58 s, and a full sweep in 35 s.
 
 ## Why it is designed this way
 
@@ -26,12 +26,14 @@ A finding per import (history for free, but findings multiply per upload and the
 - One real issue can appear as two findings (a GHSA and a PYSEC advisory) until SENTRA-12 consolidates advisories.
 - npm names match case-insensitively while OSV matches exactly: a legacy upper-case advisory name produces a finding OSV would not. Chosen because purl normalization lowercases npm names, so the alternative is a missed finding.
 - Leading-zero versions such as `2026.03.28` are `unverifiable` where OSV's lenient npm parser orders them. Surfacing it beats guessing.
-- A popular advisory reconciles every project that uses the package (41 of 1,000 in the benchmark, 8 s). Fine at lab scale, the first thing to revisit at 10x.
+- A popular advisory reconciles every project that uses the package (41 of 1,000 in the benchmark, 2.5 s). Fine at lab scale, the first thing to revisit at 10x.
 - The sweep lives inside the worker until SENTRA-10 provides a scheduler.
 
 ## Scaling implications
 
-Per project the cost is one set-based join (about D index probes plus the candidate rows), a decision per candidate in Python, and batched writes. The first version wrote one row per round trip and a dense project took about 5 s, nearly all of it writes; batching with `executemany` (pipeline mode) fixed that. Reverse work grows with the number of projects touched by a changed advisory, not with all projects, because it starts from the changed advisories' package names. Running more correlators is safe (leases and per-project locks) but untested beyond threads. The next step if needed is partitioning projects across workers, then a targeted reverse path.
+Per project the cost is one set-based join (about D index probes plus the candidate rows), a decision per candidate in Python, and batched writes. Cost follows the number of candidate rows and findings, not the number of dependencies: a dense stress project with about 90,000 candidates and 22,000 findings took 5 s at first and 1.9 s after tuning, while a typical one takes 0.06 s. Reverse work grows with the number of projects touched by a changed advisory, not with all projects, because it starts from the changed advisories' package names. Running more correlators is safe (leases and per-project locks) but untested beyond threads. A linear extrapolation (not measured) puts a sweep at about 6 minutes for 10x the projects and about an hour at 100x; the next steps would be partitioning projects across workers, then a targeted reverse path.
+
+**What the tuning taught.** I assumed the writes were slow and batched them: only 1.6x. Profiling a heavy project then showed the time was in version matching, which re-parsed the same strings millions of times (`packaging.Version` constructed about 4 million times for one project). Caching parsed versions gave another 1.8x. Measure the cost before choosing what to optimize, and re-measure on the same data after each change.
 
 ## Failure and security considerations
 
@@ -48,4 +50,5 @@ Per project the cost is one set-based join (about D index probes plus the candid
 - **Watermarks and their race**: a "since" marker based on a timestamp that is set at transaction start can miss rows that commit late; overlap or a sequence fixes it.
 - **OSV range semantics**: sort events, `introduced` turns "affected" on, `fixed` and `last_affected` turn it off; comparison uses the ecosystem's own ordering (PEP 440, semver).
 - **Generated columns**: a stored column computed by an immutable function, giving an indexable normalized key with automatic backfill.
+- **Profile before optimizing**: the first guess (database writes) was only part of the cost; a profiler found the real hotspot in a few minutes.
 - **Keyset pagination**: paging by `(timestamp, id)` so rows added between pages cannot cause skips or repeats.

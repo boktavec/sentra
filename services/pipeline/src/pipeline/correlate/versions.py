@@ -3,6 +3,7 @@ the matcher never guesses at a version it cannot parse."""
 
 import re
 from collections.abc import Callable
+from functools import lru_cache
 from typing import Any
 
 from packaging.version import InvalidVersion, Version
@@ -12,6 +13,9 @@ class Unparseable(ValueError):
     pass
 
 
+# The same few thousand version strings are parsed again and again across candidates; a failed parse
+# raises and is not cached, which is fine because unparseable versions are rare.
+@lru_cache(maxsize=1 << 16)
 def pep440(value: str) -> Any:
     try:
         return Version(value)
@@ -25,6 +29,7 @@ _SEMVER = re.compile(
 )
 
 
+@lru_cache(maxsize=1 << 16)
 def semver(value: str) -> Any:
     """Semantic Versioning 2.0.0 precedence: build metadata is ignored and a release outranks its prereleases."""
     m = _SEMVER.match(value)
