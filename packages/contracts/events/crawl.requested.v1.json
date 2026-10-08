@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentra.dev/contracts/events/crawl.requested.v1.json",
+  "title": "crawl.requested v1",
+  "description": "Ask the crawler to ingest one source + ecosystem. Carries no URL: the crawler maps source+ecosystem to its own allowlist. signature = lowercase hex HMAC-SHA256 over the canonical JSON (sorted keys, no whitespace, UTF-8) of this event without `signature`.",
+  "type": "object",
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "type": {
+      "const": "crawl.requested"
+    },
+    "version": {
+      "const": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "correlationId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,128}$"
+    },
+    "runId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "source": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+    },
+    "ecosystem": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "keyId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,64}$"
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "required": [
+    "eventId",
+    "type",
+    "version",
+    "timestamp",
+    "correlationId",
+    "runId",
+    "source",
+    "ecosystem",
+    "keyId",
+    "signature"
+  ],
+  "additionalProperties": false
+}

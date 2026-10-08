@@ -11,11 +11,11 @@ SENTRA-7 is the first story to put events on a broker. SENTRA-8, 9, 10 and 11 wi
 ## Decision
 
 - **Broker:** Redpanda locally, accessed only through the standard Kafka client API so Apache Kafka or a managed service can replace it by config.
-- **Delivery:** at-least-once. Producers publish only after the artifact is durably stored. Consumers are idempotent and dedupe by `event_id`.
-- **Envelope:** every event carries `event_id`, `type`, `version`, `timestamp`, `correlation_id`, plus stable references to artifacts, never payloads or URLs to fetch.
+- **Delivery:** at-least-once. Producers publish only after the artifact is durably stored. Consumers are idempotent and dedupe by `eventId`.
+- **Envelope:** every event carries `eventId`, `type`, `version`, `timestamp`, `correlationId`, plus stable references to artifacts, never payloads or URLs to fetch.
 - **Contracts:** versioned JSON Schema files in `packages/contracts/events/`. Consumers validate inbound events and producers are contract-tested. A breaking change means a new version.
-- **Requests are signed:** command-style events (`crawl.requested`) are HMAC-SHA256 signed with a `key_id` so keys can overlap during rotation.
-- **Run identity:** the requester assigns a `run_id`. Consumers insert it idempotently, so redelivery maps to the same run.
+- **Requests are signed:** command-style events (`crawl.requested`) are HMAC-SHA256 signed with a `keyId` so keys can overlap during rotation.
+- **Run identity:** the requester assigns a `runId`. Consumers insert it idempotently, so redelivery maps to the same run.
 - **Failure:** exhausted retries record a failed state and publish a failure event, then commit the offset so a poison message cannot block a partition. A retry is a new request.
 
 ## Alternatives considered

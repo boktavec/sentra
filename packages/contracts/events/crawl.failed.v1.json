@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentra.dev/contracts/events/crawl.failed.v1.json",
+  "title": "crawl.failed v1",
+  "description": "An ingestion run failed permanently (retries exhausted or non-retryable error). Retrying means a new crawl.requested with a new runId.",
+  "type": "object",
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "type": {
+      "const": "crawl.failed"
+    },
+    "version": {
+      "const": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "correlationId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,128}$"
+    },
+    "runId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "source": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+    },
+    "ecosystem": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "attempts": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "required": [
+    "eventId",
+    "type",
+    "version",
+    "timestamp",
+    "correlationId",
+    "runId",
+    "source",
+    "ecosystem",
+    "reason",
+    "attempts"
+  ],
+  "additionalProperties": false
+}

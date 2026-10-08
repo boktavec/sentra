@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentra.dev/contracts/events/artifact.ingested.v1.json",
+  "title": "artifact.ingested v1",
+  "description": "A raw source artifact is durably stored and ready for normalization. Consumers must dedupe by eventId.",
+  "type": "object",
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "type": {
+      "const": "artifact.ingested"
+    },
+    "version": {
+      "const": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "correlationId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,128}$"
+    },
+    "runId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "source": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+    },
+    "ecosystem": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bucket": {
+          "type": "string",
+          "minLength": 1
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "bucket",
+        "key",
+        "sha256",
+        "sizeBytes"
+      ]
+    },
+    "fetchedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "eventId",
+    "type",
+    "version",
+    "timestamp",
+    "correlationId",
+    "runId",
+    "source",
+    "ecosystem",
+    "artifact",
+    "fetchedAt"
+  ],
+  "additionalProperties": false
+}
