@@ -40,3 +40,12 @@ tasks:
         docker compose --env-file .env -f compose.yml exec -T sentra-postgres \
           psql -U sentra -d sentra -v ON_ERROR_STOP=1 \
           -c "ALTER ROLE sentra_crawler LOGIN PASSWORD '$CRAWLER_DB_PASSWORD'"
+
+  pipeline-role:
+    desc: Give the sentra_pipeline Postgres role (created by migration 007) a local login password
+    cmds:
+      - |
+        set -a; . ./.env; set +a
+        docker compose --env-file .env -f compose.yml exec -T sentra-postgres \
+          psql -U sentra -d sentra -v ON_ERROR_STOP=1 \
+          -c "ALTER ROLE sentra_pipeline LOGIN PASSWORD '$PIPELINE_DB_PASSWORD'"
