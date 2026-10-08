@@ -5,10 +5,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import contracts, validate
+from . import contracts, parse, validate
 from .config import Limits
 from .imports import Imports
-from .metrics import RETRIES, VALIDATION_SECONDS, VALIDATIONS
+from .metrics import DEPENDENCIES, RETRIES, VALIDATION_SECONDS, VALIDATIONS
 from .storage import read_capped
 
 log = logging.getLogger("pipeline")
@@ -31,15 +31,30 @@ def _attempt(import_id: str, deps: Deps) -> str:
         return "skipped_duplicate"
     # The object key comes from the row the API wrote, never from the event.
     fetched = read_capped(deps.s3, deps.bucket, row.object_key, deps.limits.max_bytes)
-    sha256 = None
     if fetched.data is None:
-        reason = "size"
-    else:
-        sha256 = hashlib.sha256(fetched.data).hexdigest()
-        reason = validate.check(fetched.data)
-    status = "rejected" if reason else "validated"
-    done = deps.imports.finish(import_id, status=status, reason=reason, size=fetched.size or None, sha256=sha256)
-    return status if done else "skipped_duplicate"
+        return _reject(deps, import_id, "size", fetched.size, None)
+    sha256 = hashlib.sha256(fetched.data).hexdigest()
+    doc, reason = validate.load(fetched.data)
+    if doc is None:
+        return _reject(deps, import_id, reason, fetched.size, sha256)
+    try:
+        parsed = parse.parse(doc, deps.limits.max_components)
+    except parse.TooManyComponents:
+        return _reject(deps, import_id, "too_many_components", fetched.size, sha256)
+    if not parsed.dependencies:
+        return _reject(deps, import_id, "no_components", fetched.size, sha256)
+    stored = deps.imports.store_parsed(
+        row, size=len(fetched.data), sha256=sha256, dependencies=parsed.dependencies, skipped=parsed.skipped
+    )
+    if not stored:
+        return "skipped_duplicate"
+    DEPENDENCIES.observe(len(parsed.dependencies))
+    return "parsed"
+
+
+def _reject(deps: Deps, import_id: str, reason: str | None, size: int | None, sha256: str | None) -> str:
+    done = deps.imports.finish(import_id, status="rejected", reason=reason, size=size or None, sha256=sha256)
+    return "rejected" if done else "skipped_duplicate"
 
 
 def _run(import_id: str, deps: Deps, extra: dict[str, str]) -> str:
@@ -60,7 +75,7 @@ def _run(import_id: str, deps: Deps, extra: dict[str, str]) -> str:
 
 def handle(event: dict[str, Any], deps: Deps) -> str:
     """Process one sbom.uploaded. Returns the outcome:
-    dropped_invalid | skipped_missing | skipped_duplicate | validated | rejected | failed.
+    dropped_invalid | skipped_missing | skipped_duplicate | parsed | rejected | failed.
     Exceptions only escape when the failure result itself could not be recorded, so the caller does
     not commit the offset and the event is redelivered."""
     try:

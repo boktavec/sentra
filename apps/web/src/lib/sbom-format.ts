@@ -2,7 +2,8 @@
 
 export const MAX_SBOM_BYTES = 10 * 1024 * 1024;
 
-export type SbomStatus = "pending_upload" | "uploaded" | "validated" | "rejected" | "expired";
+export type SbomStatus =
+  "pending_upload" | "uploaded" | "validated" | "parsed" | "rejected" | "expired";
 
 export interface SbomImport {
   id: string;
@@ -11,14 +12,17 @@ export interface SbomImport {
   reasonCode: string | null;
   sizeBytes: number | null;
   sha256: string | null;
+  dependencyCount: number | null;
+  skippedCount: number | null;
   createdAt: string;
   updatedAt: string;
 }
 
 export const STATUS_LABELS: Record<SbomStatus, string> = {
   pending_upload: "Uploading",
-  uploaded: "Validating",
+  uploaded: "Processing",
   validated: "Validated",
+  parsed: "Parsed",
   rejected: "Rejected",
   expired: "Expired",
 };
@@ -28,11 +32,23 @@ const REASONS: Record<string, string> = {
   not_json: "The file is not valid JSON.",
   not_cyclonedx: "The file is JSON but not a CycloneDX SBOM.",
   unsupported_version: "This CycloneDX version is not supported yet.",
+  no_components:
+    "The SBOM has no components with a package URL (purl) and a version, so there is nothing to check.",
+  too_many_components: "The SBOM has more components than Sentra supports (50,000).",
   processing_failed: "Sentra could not process the file. Upload it again.",
 };
 
 export const reasonMessage = (code: string | null) =>
   code ? (REASONS[code] ?? "The file was rejected.") : "";
+
+/** "12 dependencies, 3 skipped" for a parsed import; empty for any other state. */
+export function dependencySummary(
+  item: Pick<SbomImport, "status" | "dependencyCount" | "skippedCount">,
+): string {
+  if (item.status !== "parsed" || item.dependencyCount === null) return "";
+  const text = `${item.dependencyCount} dependencies`;
+  return item.skippedCount ? `${text}, ${item.skippedCount} skipped (no usable package URL)` : text;
+}
 
 /** Imports still moving through the pipeline; the list keeps refreshing while any exist. */
 export const isActive = (status: SbomStatus) =>

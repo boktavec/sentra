@@ -1,6 +1,6 @@
 # SENTRA-6: Parse SBOM dependencies into a normalized model
 
-- Status: Draft
+- Status: Implemented, in review
 - YouTrack: http://localhost:8080/issue/SENTRA-6 (Project & Asset Management, P1, size M)
 - Owner: Brian (author), pipeline service
 
@@ -35,7 +35,7 @@
 | Duplicates | One row per `(import_id, canonical_purl)` with `occurrences`; scope takes most-required (`required` over `optional`) | Keep `bom_refs[]`; one row per occurrence | Natural unique key gives idempotent insert and one match per package. Cost: graph position and `bom-ref` lost (known limitation). |
 | Size and writes | Cap 50,000 components (configurable), batched inserts (about 1,000) in one transaction; over cap is `rejected(too_many_components)` | No cap; per-batch commits with progress marker | Atomic: failure leaves zero rows. Cost: one long transaction in a rare background job. |
 | Exposure | Counts on existing `GET`s only | List endpoint; endpoint plus UI | Smallest isolation surface for an M story. Cost: parsed output not user-visible until later stories. |
-| Reprocess | Operator Task command `task sbom:reprocess IMPORT_ID=...` | Member endpoint; both | No new authorization surface; needed for replay after a parser fix. Cost: users re-upload to retry. |
+| Reprocess | Operator Task command `task api:sbom:reprocess IMPORT_ID=...` | Member endpoint; both | No new authorization surface; needed for replay after a parser fix. Cost: users re-upload to retry. |
 | Reprocess mechanism | Script (API/owner role) sets the import back to `uploaded` and inserts a new `sbom_outbox` row; the existing relay publishes; the consumer replaces that import's rows atomically (delete then insert in one transaction) | New event type; consumer accepts any status | Reuses the existing `WHERE status = 'uploaded'` guard, outbox, and relay unchanged. |
 | purl parsing | `packageurl-python` | Hand-rolled parser | purl canonicalization has many encoding edge cases; the library is the reference implementation. **Assumed**, confirm maintenance and version when implementing. New dependency, so it needs justification in the PR. |
 
@@ -61,6 +61,7 @@
 
 | Scenario | Expected behavior | Verification |
 | --- | --- | --- |
+| Component with a purl but no version | Counted in `skippedCount` (nothing to match against an affected range) | Unit and integration |
 | Valid SBOM with purls | `parsed`, rows and counts recorded | Integration test, real CycloneDX fixture |
 | Zero components, or none with a purl | `rejected(no_components)` | Unit and integration |
 | Component with malformed purl | Counted in `skippedCount`; others still stored | Unit |
@@ -80,23 +81,29 @@
 
 ## Acceptance criteria
 
-- [ ] A valid supported SBOM is parsed into normalized dependency records.
-- [ ] Each dependency stores canonical purl, type, namespace, name, version, and OSV ecosystem.
-- [ ] Duplicates within one import collapse deterministically to one row with `occurrences`.
-- [ ] Redelivered events create no duplicate rows (idempotent).
-- [ ] Parse failures keep the upload and show `rejected` with a reason.
-- [ ] Every dependency row references its source import, org, and project.
-- [ ] The operator reprocess command rebuilds an import's dependencies from the stored object with no re-upload.
-- [ ] Import `GET`s and the project page show dependency and skipped counts.
+- [x] A valid supported SBOM is parsed into normalized dependency records.
+- [x] Each dependency stores canonical purl, type, namespace, name, version, and OSV ecosystem.
+- [x] Duplicates within one import collapse deterministically to one row with `occurrences`.
+- [x] Redelivered events create no duplicate rows (idempotent).
+- [x] Parse failures keep the upload and show `rejected` with a reason.
+- [x] Every dependency row references its source import, org, and project.
+- [x] The operator reprocess command rebuilds an import's dependencies from the stored object with no re-upload.
+- [x] Import `GET`s and the project page show dependency and skipped counts.
 
 ## Verification
 
-- Manual: upload a real Syft or cdxgen SBOM in the web app, see `parsed` with counts; run `task sbom:reprocess`, see counts unchanged and no duplicate rows; upload a file with no purls, see the rejection reason.
+- Manual: upload a real Syft or cdxgen SBOM in the web app, see `parsed` with counts; run `task api:sbom:reprocess`, see counts unchanged and no duplicate rows; upload a file with no purls, see the rejection reason.
 - Automated: parser unit tests (purl canonicalization, dedupe, scope, nesting, skips); pipeline integration tests against real Postgres and SeaweedFS (parse, redelivery, mid-write failure, reprocess, cap); API test for counts and tenant scoping; Playwright for the UI counts.
 - Load: parse the largest real SBOM available and record time and memory.
 
+## Verified during implementation
+
+- **Verified:** `packageurl-python` 0.17.6 canonicalizes (lowercases `pypi` names, percent-encodes `@scope`), rejects junk with `ValueError`, and parses a versionless purl without error, so the version check is ours.
+- **Verified:** reprocess end to end against the real stack: the import returned to `parsed` with the same rows and no re-upload; the outbox gained one row.
+- The pipeline integration fixture sets a password on the cluster-wide `sentra_pipeline` role (existing behavior from SENTRA-5). Running it against a shared Postgres replaces the local dev password; restore with `task stack:pipeline-role`.
+
 ## Open questions and assumptions to validate
 
-- 50,000-component cap and 1,000-row batch size are **assumed**; validate with a large container SBOM before merge.
-- `packageurl-python` fit and purl-type to OSV-ecosystem mapping table (which types are supported at MVP): confirm during implementation, record any unmapped types as `ecosystem = null` (stored, unmatchable until mapped).
+- 50,000-component cap and 1,000-row batch size are **assumed** and still **not validated against a large real container SBOM**; tests cover 2,500 generated components across a batch boundary. Validate before relying on the cap.
+- The purl-type to OSV-ecosystem table covers ten common types; others (deb, apk, rpm, docker) are stored with `ecosystem = NULL`. SENTRA-13 decides whether to map distro types.
 - Whether `validated` should be backfilled to `parsed` by reprocessing in each environment.

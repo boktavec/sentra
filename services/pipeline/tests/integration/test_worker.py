@@ -66,14 +66,12 @@ def wait_for(check, timeout: float = 20):
     raise AssertionError("condition not reached in time")
 
 
-def test_an_uploaded_event_flows_through_the_broker_to_a_validated_import(
-    harness: Harness, valid_sbom: bytes, topic: str
-):
+def test_an_uploaded_event_flows_through_the_broker_to_a_parsed_import(harness: Harness, valid_sbom: bytes, topic: str):
     import_id = harness.add_import(valid_sbom)
 
     with Running(harness, topic) as running:
         produce(topic, harness.event(import_id))
-        wait_for(lambda: harness.row(import_id)["status"] == "validated")
+        wait_for(lambda: harness.row(import_id)["status"] == "parsed")
         wait_for(lambda: running.committed() == 1)
 
 
@@ -82,7 +80,7 @@ def test_garbage_and_invalid_events_are_committed_not_retried(harness: Harness, 
 
     with Running(harness, topic) as running:
         produce(topic, b"not json", b"[1]", harness.event(import_id, version=9), harness.event(import_id))
-        wait_for(lambda: harness.row(import_id)["status"] == "validated")
+        wait_for(lambda: harness.row(import_id)["status"] == "parsed")
         wait_for(lambda: running.committed() == 4)
 
 
@@ -96,7 +94,7 @@ def test_an_event_whose_failure_cannot_be_recorded_is_redelivered(harness: Harne
     try:
         with Running(harness, topic) as running:
             produce(topic, harness.event(import_id))
-            wait_for(lambda: harness.row(import_id)["status"] == "validated")
+            wait_for(lambda: harness.row(import_id)["status"] == "parsed")
             wait_for(lambda: running.committed() == 1)
     finally:
         harness.admin.execute("ALTER TABLE sbom_imports DROP CONSTRAINT hold")

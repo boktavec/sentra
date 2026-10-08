@@ -39,15 +39,16 @@ test("upload SBOMs, watch them validate or get rejected, and keep them private t
   await expect(page.getByTestId("no-sboms")).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/2-blocked-in-browser.png` });
 
-  // A real CycloneDX file ends validated, without a page reload.
+  // A real CycloneDX file ends parsed, without a page reload.
   await picker.setInputFiles(`${FIXTURES}valid-bom.cdx.json`);
   const rows = page.getByTestId("sbom-row");
   await expect(rows).toHaveCount(1);
-  await expect(rows.first().getByTestId("sbom-status")).toHaveText("Validated", {
+  await expect(rows.first().getByTestId("sbom-status")).toHaveText("Parsed", {
     timeout: 30_000,
   });
   await expect(rows.first()).toContainText("valid-bom.cdx.json");
-  await page.screenshot({ path: `${SHOTS}/3-validated.png` });
+  await expect(rows.first().getByTestId("sbom-dependencies")).toHaveText("2 dependencies");
+  await page.screenshot({ path: `${SHOTS}/3-parsed.png` });
 
   // JSON that is not an SBOM is rejected with a reason a person can act on.
   await picker.setInputFiles(`${FIXTURES}not-cyclonedx.json`);

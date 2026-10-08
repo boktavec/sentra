@@ -7,6 +7,7 @@ class Limits:
     """Processing limits. Defaults are assumptions from the SENTRA-5 spec."""
 
     max_bytes: int = 10 * 1024 * 1024
+    max_components: int = 50_000  # assumed; validate against a large real SBOM (SENTRA-6 spec)
     max_attempts: int = 5
     backoff_base: float = 1.0
     backoff_cap: float = 30.0
@@ -36,5 +37,8 @@ def load() -> Settings:
         s3_bucket=os.environ.get("PIPELINE_S3_BUCKET", "sentra-raw"),
         s3_access_key=_required("PIPELINE_S3_ACCESS_KEY"),
         s3_secret_key=_required("PIPELINE_S3_SECRET_KEY"),
-        limits=Limits(max_bytes=int(os.environ.get("PIPELINE_MAX_SBOM_BYTES", Limits.max_bytes))),
+        limits=Limits(
+            max_bytes=int(os.environ.get("PIPELINE_MAX_SBOM_BYTES", Limits.max_bytes)),
+            max_components=int(os.environ.get("PIPELINE_MAX_COMPONENTS", Limits.max_components)),
+        ),
     )

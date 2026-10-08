@@ -36,6 +36,13 @@ tasks:
     cmds:
       - pnpm run test:integration
 
+  sbom:reprocess:
+    desc: Re-parse a stored SBOM without re-uploading it (IMPORT_ID=<uuid>; needs the pipeline running)
+    requires:
+      vars: [IMPORT_ID]
+    cmds:
+      - pnpm run sbom:reprocess {{.IMPORT_ID}}
+
   dev:
     desc: Run apps/api with auto-reload against the local stack
     cmds:

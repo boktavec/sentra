@@ -20,6 +20,7 @@ import { migrate } from "./migrate.ts";
 import { createOrgStore } from "./orgs.ts";
 import { createProjectStore } from "./projects.ts";
 import { createSbomRelay, ensureDevTopic, type EventPublisher } from "./sbom-relay.ts";
+import { reprocess } from "./sbom-reprocess.ts";
 import { createSbomStorage } from "./sbom-storage.ts";
 import { createSbomStore } from "./sbom.ts";
 import { createUserStore } from "./users.ts";
@@ -401,9 +402,80 @@ describe("reading imports", () => {
     expect(one.json()).not.toHaveProperty("object_key");
   });
 
+  it("reports dependency counts once the pipeline has parsed an import", async () => {
+    const c = await newOrgWithProject();
+    const id = (await create(c, c.admin.headers)).json().id;
+    expect((await get(`${base(c)}/${id}`, c.member.headers)).json()).toMatchObject({
+      dependencyCount: null,
+      skippedCount: null,
+    });
+    await pool.query(
+      "UPDATE sbom_imports SET status = 'parsed', dependency_count = 12, skipped_count = 3 WHERE id = $1",
+      [id],
+    );
+    const one = await get(`${base(c)}/${id}`, c.member.headers);
+    expect(one.json()).toMatchObject({ status: "parsed", dependencyCount: 12, skippedCount: 3 });
+    const listed = await get(base(c), c.member.headers);
+    expect(listed.json().items[0]).toMatchObject({ dependencyCount: 12, skippedCount: 3 });
+  });
+
   it("rejects a bad cursor", async () => {
     const c = await newOrgWithProject();
     expect((await get(`${base(c)}?cursor=garbage`, c.admin.headers)).statusCode).toBe(400);
+  });
+});
+
+describe("reprocessing a stored import", () => {
+  async function parsedImport() {
+    const c = await newOrgWithProject();
+    const id = (await create(c, c.admin.headers)).json().id;
+    await pool.query(
+      "UPDATE sbom_imports SET status = 'parsed', size_bytes = 25, dependency_count = 1, skipped_count = 0 WHERE id = $1",
+      [id],
+    );
+    await pool.query(
+      `INSERT INTO sbom_dependencies (import_id, org_id, project_id, purl, purl_type, name, version, scope, occurrences)
+       VALUES ($1, $2, $3, 'pkg:npm/a@1', 'npm', 'a', '1', 'required', 1)`,
+      [id, c.org.id, c.projectId],
+    );
+    return { c, id };
+  }
+
+  it("clears the old result and queues one sbom.uploaded for the same object", async () => {
+    const { c, id } = await parsedImport();
+
+    expect(await reprocess(pool, id, "sentra-raw")).toBe(true);
+
+    const row = (await pool.query("SELECT * FROM sbom_imports WHERE id = $1", [id])).rows[0];
+    expect(row).toMatchObject({ status: "uploaded", reason_code: null, dependency_count: null });
+    expect(
+      (await pool.query("SELECT 1 FROM sbom_dependencies WHERE import_id = $1", [id])).rowCount,
+    ).toBe(0);
+    const outbox = (await pool.query("SELECT payload FROM sbom_outbox WHERE import_id = $1", [id]))
+      .rows;
+    expect(outbox).toHaveLength(1);
+    expect(outbox[0].payload).toMatchObject({
+      type: "sbom.uploaded",
+      importId: id,
+      orgId: c.org.id,
+      projectId: c.projectId,
+      artifact: { key: row.object_key },
+    });
+  });
+
+  it("leaves imports that are unknown or still in flight alone", async () => {
+    const c = await newOrgWithProject();
+    const pending = (await create(c, c.admin.headers)).json().id;
+
+    expect(await reprocess(pool, pending, "sentra-raw")).toBe(false);
+    expect(await reprocess(pool, randomUUID(), "sentra-raw")).toBe(false);
+
+    const row = (await pool.query("SELECT status FROM sbom_imports WHERE id = $1", [pending]))
+      .rows[0];
+    expect(row.status).toBe("pending_upload");
+    expect(
+      (await pool.query("SELECT 1 FROM sbom_outbox WHERE import_id = $1", [pending])).rowCount,
+    ).toBe(0);
   });
 });
 

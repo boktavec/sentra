@@ -1,7 +1,11 @@
-from dataclasses import dataclass
+from dataclasses import astuple, dataclass
 
 import psycopg
 from psycopg.rows import class_row
+
+from .parse import Dependency
+
+BATCH = 1000
 
 
 @dataclass(frozen=True)
@@ -9,6 +13,8 @@ class Import:
     id: str
     status: str
     object_key: str
+    org_id: str
+    project_id: str
 
 
 class Imports:
@@ -30,7 +36,10 @@ class Imports:
 
     def get(self, import_id: str) -> Import | None:
         with self.conn.cursor(row_factory=class_row(Import)) as cur:
-            cur.execute("SELECT id::text, status, object_key FROM sbom_imports WHERE id = %s", (import_id,))
+            cur.execute(
+                "SELECT id::text, status, object_key, org_id::text, project_id::text FROM sbom_imports WHERE id = %s",
+                (import_id,),
+            )
             return cur.fetchone()
 
     def finish(self, import_id: str, *, status: str, reason: str | None, size: int | None, sha256: str | None) -> bool:
@@ -41,6 +50,36 @@ class Imports:
             (status, reason, size, sha256, import_id),
         )
         return cur.rowcount == 1
+
+    def store_parsed(
+        self, imp: Import, *, size: int, sha256: str, dependencies: list[Dependency], skipped: int
+    ) -> bool:
+        """Replace the import's dependencies and mark it parsed, all or nothing.
+
+        False means the import was no longer `uploaded` (a duplicate delivery): nothing was written.
+        Tenant IDs come from the import row, not from the event or the file.
+        """
+        with self.conn.transaction():
+            moved = self.conn.execute(
+                "UPDATE sbom_imports SET status = 'parsed', reason_code = NULL, size_bytes = %s, sha256 = %s, "
+                "dependency_count = %s, skipped_count = %s, updated_at = now() WHERE id = %s AND status = 'uploaded'",
+                (size, sha256, len(dependencies), skipped, imp.id),
+            )
+            if moved.rowcount != 1:
+                return False
+            self.conn.execute("DELETE FROM sbom_dependencies WHERE import_id = %s", (imp.id,))
+            with self.conn.cursor() as cur:
+                for start in range(0, len(dependencies), BATCH):
+                    cur.executemany(
+                        "INSERT INTO sbom_dependencies "
+                        "(import_id, org_id, project_id, purl, purl_type, namespace, name, version, ecosystem, "
+                        "scope, occurrences) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                        [
+                            (imp.id, imp.org_id, imp.project_id, *astuple(d))
+                            for d in dependencies[start : start + BATCH]
+                        ],
+                    )
+        return True
 
     def close(self) -> None:
         if self._conn is not None:
