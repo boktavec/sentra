@@ -27,6 +27,17 @@ tasks:
       - 'if [ -f pyproject.toml ]; then uv run pyright; else echo "services/pipeline has not been scaffolded yet; skipping."; fi'
 
   test:
-    desc: test services/pipeline
+    desc: unit tests for services/pipeline (no stack needed)
     cmds:
       - 'if [ -f pyproject.toml ]; then uv run pytest; else echo "services/pipeline has not been scaffolded yet; skipping."; fi'
+
+  test:integration:
+    desc: Integration tests for services/pipeline (needs `task stack:up`; uses a scratch database and bucket)
+    cmds:
+      - uv run pytest tests/integration
+
+  run:
+    desc: Run the SBOM validator against the local stack (needs `task stack:up`, migrations applied and `task stack:pipeline-role`)
+    cmds:
+      - "[ -f .env ] || cp .env.example .env"
+      - uv run --env-file .env python -m pipeline
