@@ -41,3 +41,15 @@ tasks:
     cmds:
       - "[ -f .env ] || cp .env.example .env"
       - uv run --env-file .env python -m pipeline
+
+  normalize:run:
+    desc: Run the vulnerability normalizer against the local stack (needs `task stack:up`, migrations applied and `task stack:normalizer-role`)
+    cmds:
+      - "[ -f .env ] || cp .env.example .env"
+      - uv run --env-file .env python -m pipeline.normalize
+
+  normalize:reprocess:
+    desc: "Re-run normalization from the raw artifact: task pipeline:normalize:reprocess -- PyPI [--sha256 <hex>]"
+    cmds:
+      - "[ -f .env ] || cp .env.example .env"
+      - uv run --env-file .env python -m pipeline.normalize.reprocess {{.CLI_ARGS}}

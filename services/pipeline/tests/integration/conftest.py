@@ -13,6 +13,7 @@ from typing import Any
 
 import psycopg
 import pytest
+from normalize_support import Env
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
@@ -27,11 +28,12 @@ ADMIN_URL = os.environ.get("TEST_ADMIN_DATABASE_URL", "postgresql://sentra:sentr
 S3_ENDPOINT = os.environ.get("TEST_S3_ENDPOINT", "http://localhost:8333")
 S3_KEYS = ("sentra-dev", "sentra-dev-secret")
 PIPELINE_PASSWORD = "pipeline-test-pw"
+NORMALIZER_PASSWORD = "normalizer-test-pw"
 
 
 @pytest.fixture(scope="session")
 def database():
-    """A scratch database with every migration applied; yields (admin_url, pipeline_role_url)."""
+    """A scratch database with every migration applied; yields (admin_url, pipeline_role_url, normalizer_role_url)."""
     name = f"pipeline_test_{uuid.uuid4().hex[:8]}"
     with psycopg.connect(ADMIN_URL, autocommit=True) as admin:
         admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
@@ -40,7 +42,12 @@ def database():
         for file in sorted(MIGRATIONS.glob("*.sql")):
             conn.execute(file.read_text())  # type: ignore[arg-type]
         conn.execute(sql.SQL("ALTER ROLE sentra_pipeline LOGIN PASSWORD {}").format(sql.Literal(PIPELINE_PASSWORD)))
-    yield admin_url, make_conninfo(admin_url, user="sentra_pipeline", password=PIPELINE_PASSWORD)
+        conn.execute(sql.SQL("ALTER ROLE sentra_normalizer LOGIN PASSWORD {}").format(sql.Literal(NORMALIZER_PASSWORD)))
+    yield (
+        admin_url,
+        make_conninfo(admin_url, user="sentra_pipeline", password=PIPELINE_PASSWORD),
+        make_conninfo(admin_url, user="sentra_normalizer", password=NORMALIZER_PASSWORD),
+    )
     with psycopg.connect(ADMIN_URL, autocommit=True) as admin:
         admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
 
@@ -182,3 +189,16 @@ def sha256(data: bytes) -> str:
 
 
 Factory = Callable[..., Harness]
+
+
+@pytest.fixture
+def env(database, clean_bucket):
+    """Normalizer harness over a clean set of vulnerability tables."""
+    e = Env(database, clean_bucket)
+    e.q(
+        "TRUNCATE vulnerability_ranges, vulnerability_affected, vulnerabilities, normalization_runs, "
+        "normalization_failures"
+    )
+    yield e
+    for store in e.stores:
+        store.close()
