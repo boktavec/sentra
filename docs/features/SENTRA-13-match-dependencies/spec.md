@@ -65,7 +65,14 @@ Claims about third-party behavior are labeled **Verified** (how) or **Assumed** 
 - Comparator: `ECOSYSTEM` ranges use the ecosystem's order (PyPI: PEP 440; npm: semver). `SEMVER` ranges use semver for any ecosystem. Versions in `versions[]` compare as equal after the ecosystem's normalization.
 - `unverifiable` reasons (`match_reason`): `version_unparseable` (dependency version does not parse under the needed comparator), `no_version_data` (matching entry has neither versions nor usable ranges), `range_malformed` (events that cannot be evaluated), `ecosystem_unsupported` (no comparator). Everything else that matches is `confirmed`; everything that does not match produces no finding.
 - When several affected entries of one advisory match the same dependency, one finding is kept; `confirmed` beats `unverifiable`, and `evidence` records the deciding entry.
-- Validation: unit tests drawn from real PyPI and npm advisories; compare our verdict with OSV's own `osv-scanner` or API on a sample of packages, and record agreement.
+- Validation: unit tests drawn from real PyPI and npm advisories, and a one-off comparison with `api.osv.dev` (below).
+
+### Verified against real data (2026-10-08, PR 2)
+
+- **Verified (agreement with OSV):** 629 package/version cases (60 random PyPI and 60 random npm packages with at least 3 advisories, versions taken from their range boundaries and listed versions) were checked against `api.osv.dev/v1/querybatch` using the current PyPI and npm `all.zip` dumps. Our confirmed set matched OSV's exactly in 624 cases. The 5 differences all involve one package, `openclaw`, and show two deliberate behaviors:
+  - An advisory names the package `Openclaw` (capital O). We compare npm names case-insensitively (purl normalization lowercases npm names, so a legacy upper-case package cannot be told apart); OSV compares exactly. We report a finding where OSV does not. Accepted: a missed finding is worse than a rare extra one.
+  - Another advisory's `ECOSYSTEM` range ends at `fixed: 2026.03.28`, which is not valid semver (leading zero). OSV's lenient npm parser orders it; we mark the range `range_malformed` and the finding `unverifiable` instead of guessing. Four of the five differences are this case (we surface it, OSV confirms it).
+- **Verified (noise):** advisory entries with neither versions nor usable ranges: 13 of 31,145 PyPI entries and 1 of 232,647 npm entries (no `MAL-` ones). `no_version_data` findings are therefore negligible and need no cap.
 
 ## Architecture and contracts
 
@@ -193,8 +200,8 @@ Each PR is branched off the previous one and independently green. Merge bottom t
 
 ## Open questions and assumptions to validate
 
-- OSV range-evaluation algorithm and `versions[]` semantics: confirm against OSV's schema and real advisories while building slice 2 (library docs via context7 for `packaging`). Owner: me; before slice 2 merges.
-- `unverifiable` noise: count how many real advisory entries have no version data and how many packages would produce them. If excessive, discuss a cap or a UI default. Owner: me; before slice 2 merges.
+- ~~OSV range-evaluation algorithm and `versions[]` semantics~~ **Verified** against OSV's own answers (see above).
+- ~~`unverifiable` noise~~ **Verified** negligible (see above).
 - ~~Does `GENERATED ALWAYS AS (...) STORED` accept the function as IMMUTABLE, and how long does the migration take on 256k advisories?~~ **Verified (2026-10-08):** it applies, and migration 010 took about 1 s on a scratch database with 256,000 advisories and as many affected rows (laptop, local Postgres).
 - 24h sweep default and batch size: tune from measured sweep time. Owner: operator; after slice 3.
 - First-draft API shape: SENTRA-15 and 16 may need changes; keep fields additive.

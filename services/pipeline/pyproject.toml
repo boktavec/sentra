@@ -8,6 +8,7 @@ dependencies = [
   "confluent-kafka>=2.16.0",
   "jsonschema>=4.25",
   "packageurl-python>=0.17.6",
+  "packaging>=26.3",
   "prometheus-client>=0.26.0",
   "psycopg[binary]>=3.2",
   "rfc3339-validator>=0.1.4",
