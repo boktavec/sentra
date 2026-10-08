@@ -7,6 +7,7 @@ Events are JSON documents on Kafka-API topics (Redpanda locally). Each has a ver
 | `crawl.requested` | [`crawl.requested.v1.json`](events/crawl.requested.v1.json) | Signed request to ingest one source + ecosystem |
 | `artifact.ingested` | [`artifact.ingested.v1.json`](events/artifact.ingested.v1.json) | A raw artifact is stored and ready for normalization |
 | `sbom.uploaded` | [`sbom.uploaded.v1.json`](events/sbom.uploaded.v1.json) | A tenant's SBOM upload was accepted and is ready for validation |
+| `vulnerabilities.normalized` | [`vulnerabilities.normalized.v1.json`](events/vulnerabilities.normalized.v1.json) | A raw artifact was normalized into the vulnerability tables |
 | `crawl.failed` | [`crawl.failed.v1.json`](events/crawl.failed.v1.json) | A run failed permanently |
 
 ## Envelope

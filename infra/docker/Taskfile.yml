@@ -49,3 +49,12 @@ tasks:
         docker compose --env-file .env -f compose.yml exec -T sentra-postgres \
           psql -U sentra -d sentra -v ON_ERROR_STOP=1 \
           -c "ALTER ROLE sentra_pipeline LOGIN PASSWORD '$PIPELINE_DB_PASSWORD'"
+
+  normalizer-role:
+    desc: Give the sentra_normalizer Postgres role (created by migration 009) a local login password
+    cmds:
+      - |
+        set -a; . ./.env; set +a
+        docker compose --env-file .env -f compose.yml exec -T sentra-postgres \
+          psql -U sentra -d sentra -v ON_ERROR_STOP=1 \
+          -c "ALTER ROLE sentra_normalizer LOGIN PASSWORD '$NORMALIZER_DB_PASSWORD'"

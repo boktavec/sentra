@@ -46,3 +46,48 @@ def test_a_missing_field_is_rejected():
     del e["orgId"]
     with pytest.raises(contracts.InvalidEvent):
         contracts.validate("sbom.uploaded", e)
+
+
+def normalized(**over: object) -> dict:
+    base = {
+        "eventId": str(uuid.uuid4()),
+        "type": "vulnerabilities.normalized",
+        "version": 1,
+        "timestamp": "2026-10-08T09:00:00Z",
+        "correlationId": "corr-1",
+        "source": "osv",
+        "ecosystem": "PyPI",
+        "artifactSha256": "a" * 64,
+        "adapterVersion": 1,
+        "counts": {"upserted": 1, "unchanged": 0, "quarantined": 0},
+    }
+    return {**base, **over}
+
+
+def test_a_vulnerabilities_normalized_event_is_accepted():
+    contracts.validate("vulnerabilities.normalized", normalized())
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"artifactSha256": "short"},
+        {"adapterVersion": 0},
+        {"counts": {"upserted": -1, "unchanged": 0, "quarantined": 0}},
+        {"counts": {"upserted": 1, "unchanged": 0}},
+        {"unexpected": "field"},
+    ],
+)
+def test_a_malformed_vulnerabilities_normalized_event_is_rejected(over: dict):
+    with pytest.raises(contracts.InvalidEvent):
+        contracts.validate("vulnerabilities.normalized", normalized(**over))
+
+
+def test_the_canonical_model_rejects_unknown_fields():
+    doc = {
+        "source": "osv", "sourceId": "X-1", "aliases": [], "summary": None, "details": None, "publishedAt": None,
+        "modifiedAt": "2026-10-08T09:00:00Z", "withdrawnAt": None, "severity": [], "references": [], "affected": [],
+    }  # fmt: skip
+    contracts.validate_model("vulnerability", doc)
+    with pytest.raises(contracts.InvalidEvent):
+        contracts.validate_model("vulnerability", {**doc, "extra": 1})
