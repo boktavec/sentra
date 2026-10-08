@@ -195,6 +195,6 @@ Each PR is branched off the previous one and independently green. Merge bottom t
 
 - OSV range-evaluation algorithm and `versions[]` semantics: confirm against OSV's schema and real advisories while building slice 2 (library docs via context7 for `packaging`). Owner: me; before slice 2 merges.
 - `unverifiable` noise: count how many real advisory entries have no version data and how many packages would produce them. If excessive, discuss a cap or a UI default. Owner: me; before slice 2 merges.
-- Does `GENERATED ALWAYS AS (match_name(...)) STORED` accept the function as IMMUTABLE, and how long does the migration take on 256k advisories? Owner: me; slice 1.
+- ~~Does `GENERATED ALWAYS AS (...) STORED` accept the function as IMMUTABLE, and how long does the migration take on 256k advisories?~~ **Verified (2026-10-08):** it applies, and migration 010 took about 1 s on a scratch database with 256,000 advisories and as many affected rows (laptop, local Postgres).
 - 24h sweep default and batch size: tune from measured sweep time. Owner: operator; after slice 3.
 - First-draft API shape: SENTRA-15 and 16 may need changes; keep fields additive.

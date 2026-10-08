@@ -1,10 +1,10 @@
 import json
 import logging
 import threading
-from typing import Any
 
-from confluent_kafka import Consumer, KafkaError, KafkaException, Message, Producer, TopicPartition
+from confluent_kafka import Consumer, KafkaError, Message, TopicPartition
 
+from ..publisher import Publisher
 from .metrics import ARTIFACTS, WORKER_ERRORS
 from .process import Deps, handled
 
@@ -12,28 +12,6 @@ log = logging.getLogger("pipeline")
 
 TOPIC = "artifact.ingested"
 GROUP = "normalizer-artifacts"
-
-
-class Publisher:
-    """Synchronous Kafka producer: publish() returns only once the broker acknowledged, else raises."""
-
-    def __init__(self, bootstrap: str):
-        self.producer = Producer({"bootstrap.servers": bootstrap, "enable.idempotence": True, "acks": "all"})
-
-    def publish(self, event: dict[str, Any]) -> None:
-        error: list[Exception] = []
-
-        def done(err: Any, _msg: Any) -> None:
-            if err is not None:
-                error.append(KafkaException(err))
-
-        self.producer.produce(
-            event["type"], key=event["artifactSha256"], value=json.dumps(event).encode(), on_delivery=done
-        )
-        if self.producer.flush(30) > 0:
-            raise TimeoutError("broker did not acknowledge the event in 30s")
-        if error:
-            raise error[0]
 
 
 class Worker:
@@ -57,7 +35,7 @@ class Worker:
                 "max.poll.interval.ms": 30 * 60 * 1000,
             }
         )
-        deps.publish = Publisher(bootstrap).publish
+        deps.publish = Publisher(bootstrap, "artifactSha256").publish
 
     def _process(self, msg: Message) -> None:
         try:

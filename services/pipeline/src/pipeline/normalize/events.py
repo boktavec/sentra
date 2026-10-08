@@ -3,10 +3,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from .. import contracts
-
-# Fixed namespace: eventId = uuid5(namespace, "<runId>:<type>"), so republishing after a crash
-# produces the same eventId and consumers can dedupe on it.
-_NS = uuid.UUID("5f0b1f3e-3c5d-4c7e-9a52-6d6a4f1d2b10")
+from ..events import EVENT_NS
 
 
 def vulnerabilities_normalized(
@@ -21,7 +18,7 @@ def vulnerabilities_normalized(
     quarantined: int,
 ) -> dict[str, Any]:
     event = {
-        "eventId": str(uuid.uuid5(_NS, f"{run_id}:vulnerabilities.normalized")),
+        "eventId": str(uuid.uuid5(EVENT_NS, f"{run_id}:vulnerabilities.normalized")),
         "type": "vulnerabilities.normalized",
         "version": 1,
         "timestamp": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
