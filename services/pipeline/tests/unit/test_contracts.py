@@ -91,3 +91,37 @@ def test_the_canonical_model_rejects_unknown_fields():
     contracts.validate_model("vulnerability", doc)
     with pytest.raises(contracts.InvalidEvent):
         contracts.validate_model("vulnerability", {**doc, "extra": 1})
+
+
+def parsed(**over: object) -> dict:
+    base = {
+        "eventId": str(uuid.uuid4()),
+        "type": "sbom.parsed",
+        "version": 1,
+        "timestamp": "2026-10-08T09:00:00Z",
+        "correlationId": "corr-1",
+        "importId": str(uuid.uuid4()),
+        "orgId": str(uuid.uuid4()),
+        "projectId": str(uuid.uuid4()),
+        "dependencyCount": 12,
+    }
+    return {**base, **over}
+
+
+def test_a_well_formed_sbom_parsed_event_is_accepted():
+    contracts.validate("sbom.parsed", parsed())
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"importId": "not-a-uuid"},
+        {"version": 2},
+        {"dependencyCount": -1},
+        {"dependencyCount": "12"},
+        {"artifact": {"bucket": "b", "key": "k", "sizeBytes": 1}},
+    ],
+)
+def test_a_malformed_sbom_parsed_event_is_rejected(over: dict):
+    with pytest.raises(contracts.InvalidEvent):
+        contracts.validate("sbom.parsed", parsed(**over))

@@ -15,6 +15,7 @@ class Import:
     object_key: str
     org_id: str
     project_id: str
+    dependency_count: int | None = None
 
 
 class Imports:
@@ -37,7 +38,8 @@ class Imports:
     def get(self, import_id: str) -> Import | None:
         with self.conn.cursor(row_factory=class_row(Import)) as cur:
             cur.execute(
-                "SELECT id::text, status, object_key, org_id::text, project_id::text FROM sbom_imports WHERE id = %s",
+                "SELECT id::text, status, object_key, org_id::text, project_id::text, dependency_count "
+                "FROM sbom_imports WHERE id = %s",
                 (import_id,),
             )
             return cur.fetchone()

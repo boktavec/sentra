@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentra.dev/contracts/events/sbom.parsed.v1.json",
+  "title": "sbom.parsed v1",
+  "description": "An SBOM import was parsed and its dependencies are committed. A wake-up for correlation: consumers must dedupe by eventId and read the sbom_imports row, not this event, for tenant and project.",
+  "type": "object",
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "type": {
+      "const": "sbom.parsed"
+    },
+    "version": {
+      "const": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "correlationId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,128}$"
+    },
+    "importId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "orgId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "projectId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "dependencyCount": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "eventId",
+    "type",
+    "version",
+    "timestamp",
+    "correlationId",
+    "importId",
+    "orgId",
+    "projectId",
+    "dependencyCount"
+  ],
+  "additionalProperties": false
+}

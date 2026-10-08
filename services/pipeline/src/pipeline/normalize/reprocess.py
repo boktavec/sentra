@@ -13,11 +13,11 @@ import sys
 import uuid
 
 from .. import log
+from ..publisher import Publisher
 from ..storage import make_client
 from . import config
 from .process import Deps, handle
 from .store import Store
-from .worker import Publisher
 
 
 def main() -> int:
@@ -37,7 +37,7 @@ def main() -> int:
         store=store,
         s3=make_client(settings.s3_endpoint, settings.s3_access_key, settings.s3_secret_key),
         bucket=settings.s3_bucket,
-        publish=Publisher(os.environ.get("NORMALIZER_KAFKA_BOOTSTRAP", "127.0.0.1:19092")).publish,
+        publish=Publisher(os.environ.get("NORMALIZER_KAFKA_BOOTSTRAP", "127.0.0.1:19092"), "artifactSha256").publish,
         limits=settings.limits,
     )
     event = {

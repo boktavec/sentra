@@ -5,7 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import contracts, parse, validate
+from . import contracts, events, parse, validate
 from .config import Limits
 from .imports import Imports
 from .metrics import DEPENDENCIES, RETRIES, VALIDATION_SECONDS, VALIDATIONS
@@ -21,6 +21,8 @@ class Deps:
     bucket: str
     limits: Limits = field(default_factory=Limits)
     sleep: Callable[[float], None] = time.sleep
+    # Sends sbom.parsed; None in tools that only validate.
+    publish: Callable[[dict[str, Any]], None] | None = None
 
 
 def _attempt(import_id: str, deps: Deps) -> str:
@@ -73,11 +75,23 @@ def _run(import_id: str, deps: Deps, extra: dict[str, str]) -> str:
     return "failed" if done else "skipped_duplicate"
 
 
+def _announce(import_id: str, correlation_id: str, deps: Deps) -> None:
+    """Publish sbom.parsed for a parsed import. Called after the parse commit and again on every
+    redelivery of an already-parsed import, so a crash between commit and publish is recovered; the eventId
+    is stable, so consumers dedupe the repeat."""
+    if deps.publish is None:
+        return
+    row = deps.imports.get(import_id)
+    if row is None or row.status != "parsed":
+        return
+    deps.publish(events.sbom_parsed(row.id, row.org_id, row.project_id, correlation_id, row.dependency_count or 0))
+
+
 def handle(event: dict[str, Any], deps: Deps) -> str:
     """Process one sbom.uploaded. Returns the outcome:
     dropped_invalid | skipped_missing | skipped_duplicate | parsed | rejected | failed.
-    Exceptions only escape when the failure result itself could not be recorded, so the caller does
-    not commit the offset and the event is redelivered."""
+    Exceptions only escape when the failure result itself could not be recorded, or sbom.parsed could not
+    be published, so the caller does not commit the offset and the event is redelivered."""
     try:
         contracts.validate("sbom.uploaded", event)
     except contracts.InvalidEvent as e:
@@ -87,6 +101,8 @@ def handle(event: dict[str, Any], deps: Deps) -> str:
     extra = {"correlationId": event["correlationId"], "importId": event["importId"]}
     started = time.monotonic()
     outcome = _run(event["importId"], deps, extra)
+    if outcome in ("parsed", "skipped_duplicate"):
+        _announce(event["importId"], event["correlationId"], deps)
     VALIDATION_SECONDS.observe(time.monotonic() - started)
     VALIDATIONS.labels(outcome).inc()
     log.info("sbom handled", extra={**extra, "outcome": outcome})
