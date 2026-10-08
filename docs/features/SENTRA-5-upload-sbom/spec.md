@@ -1,6 +1,6 @@
 # SENTRA-5: Upload an SBOM to a project
 
-- Status: Draft (planning complete, awaiting review)
+- Status: Implemented, in review
 - YouTrack: http://localhost:8080/issue/SENTRA-5 (Project & Asset Management, P1, size L)
 - Owner: Brian Oktavec
 
@@ -28,9 +28,9 @@
   - Per-org upload rate limit (existing limiter covers failed auth only).
   - Dedupe by content hash (SENTRA-6 may skip repeated work by `sha256`).
 - Dependencies and related stories:
+  - New dependencies: `@platformatic/kafka` (pure TypeScript Kafka client for the relay; `kafkajs` has had no release since 2023 and the Confluent client needs a native addon), `@aws-sdk/client-s3` and `@aws-sdk/s3-presigned-post` (HEAD, delete, bucket setup and the presigned POST; no smaller maintained option signs POST policies).
   - Depends on SENTRA-4 (done): projects, `TenantContext`, `scopeTo`, audit events.
-  - **Depends on SENTRA-7's infrastructure PR** (SeaweedFS and Redpanda in `compose.yml`, ADR 0002 event conventions, broker client choices). Planning and this spec do not wait; implementation starts after that PR merges and this branch rebases onto it.
-  - SENTRA-7's worktree has an untracked `006_ingestion_runs.sql`. Main already has `006_projects.sql`, so the SENTRA-7 migration must be renumbered. This story takes `007`; whichever merges second renumbers.
+  - **Builds on SENTRA-7's infrastructure** (SeaweedFS and Redpanda in `compose.yml`, ADR 0002 event conventions), now merged. Main has two `006_*` migrations (`006_ingestion_runs.sql`, `006_projects.sql`); the runner tracks them by filename so both apply, and this story takes `007`.
   - SENTRA-6 extends the pipeline consumer built here. SENTRA-20 reads the audit event; SENTRA-21 adds SBOM imports to the cross-tenant suite.
 
 ## Decisions and alternatives
@@ -57,8 +57,10 @@ Claims about SeaweedFS were checked on 2026-10-07 against a throwaway `chrislusf
 Other behavior verified against the running probe:
 
 - **Verified:** SeaweedFS accepts `put_bucket_cors` and answers a preflight from an allowed origin with the matching `Access-Control-Allow-Origin`, so browser upload from the web origin is feasible locally.
-- **Assumed:** Seaweed's POST-policy enforcement of fields beyond `content-length-range` (for example a key `eq` condition) works the same way. Validate with a test that a form with a different key is rejected.
-- **Assumed:** Seaweed S3 does not emit bucket event notifications we could use instead of `complete`; we do not depend on them either way.
+- **Verified (integration test, `sbom.integration.test.ts`):** a form whose `key` field was changed after signing is rejected by storage, so a client can write only to the key the server chose.
+- **Verified (probe against Redpanda v25.1.1):** `@platformatic/kafka` does not auto-create topics (`Unknown topic`), unlike librdkafka. The API creates `sbom.uploaded` itself only when `SBOM_DEV_BOOTSTRAP=1` (single replica, local only); deployed environments provision topics.
+- **Verified (documentation via context7, CycloneDX spec):** JSON serialization exists from spec 1.2. The pipeline accepts `specVersion` 1.4 to 1.7 and rejects 1.2 and 1.3 as `unsupported_version`. A real `uv export --format cyclonedx1.5` file validates.
+- **Verified (running stack):** the bucket needs a CORS rule for the web origin, which the API applies at startup when `SBOM_DEV_BOOTSTRAP=1`. A deployed bucket must be configured by its operator.
 
 ## Architecture and contracts
 
@@ -106,7 +108,7 @@ Other behavior verified against the running probe:
   | `GET /v1/orgs/:orgId/projects/:slug/sboms?limit&cursor` | `200` `{items, nextCursor}` | `400`, `401`, `404` |
   | `GET /v1/orgs/:orgId/projects/:slug/sboms/:id` | `200` `{id, filename, status, reasonCode, sizeBytes, sha256, createdAt, updatedAt}` | `401`, `404` |
 
-- **Event contract:** `sbom.uploaded` v1 with ADR 0002's envelope (`event_id`, `type`, `version`, `timestamp`, `correlation_id`) plus `import_id`, `org_id`, `project_id`, and `artifact` (`bucket`, `key`, `size_bytes`). References only, no payload and no URL. Tenant IDs in the event are for routing and logging; the pipeline loads the import row by `import_id` and treats the row as authoritative.
+- **Event contract:** `sbom.uploaded` v1 with ADR 0002's envelope (`eventId`, `type`, `version`, `timestamp`, `correlationId`) plus `importId`, `orgId`, `projectId`, and `artifact` (`bucket`, `key`, `sizeBytes`). Field names are camelCase like the other events; the topic is `sbom.uploaded`, keyed by `importId`. References only, no payload and no URL. Tenant IDs in the event are for routing and logging; the pipeline loads the import row by `import_id` and treats the row as authoritative.
 - **Compatibility and migration:** additive tables and an additive event; no existing contract changes. The audit `AuditEvent.targetType` union gains `"sbom_import"`.
 
 ## Workload and targets
@@ -168,16 +170,16 @@ Other behavior verified against the running probe:
 
 ## Acceptance criteria
 
-- [ ] A member (`admin` or `member`) can upload a CycloneDX JSON SBOM to a project through the web UI and the API.
-- [ ] The upload cap is enforced by storage (signed policy), the declared filename and size are validated, and non-CycloneDX or malformed content ends as `rejected` with an understandable reason.
-- [ ] The raw artifact is stored in object storage at a server-chosen tenant-scoped key.
-- [ ] Each import records the correct organization and project and returns a stable import ID.
-- [ ] Processing happens asynchronously after `complete`: an `sbom.uploaded` event is published through a transactional outbox and consumed by the pipeline.
-- [ ] A duplicate `complete` or duplicate event produces one import transition, one audit event, and no state regression.
-- [ ] A user cannot create, complete, list, or get imports in an org or project they do not belong to, and cannot reference another tenant's import ID; responses are the same `404` as a nonexistent resource.
-- [ ] Pending imports expire after the configured window and their orphaned objects are removed; a project cannot hold more than the configured number of pending imports.
-- [ ] Import state transitions and outbox and validation health are observable through logs and metrics.
-- [ ] An `sbom.upload_completed` audit event is written in the same transaction as the `uploaded` transition.
+- [x] A member (`admin` or `member`) can upload a CycloneDX JSON SBOM to a project through the web UI and the API.
+- [x] The upload cap is enforced by storage (signed policy), the declared filename and size are validated, and non-CycloneDX or malformed content ends as `rejected` with an understandable reason.
+- [x] The raw artifact is stored in object storage at a server-chosen tenant-scoped key.
+- [x] Each import records the correct organization and project and returns a stable import ID.
+- [x] Processing happens asynchronously after `complete`: an `sbom.uploaded` event is published through a transactional outbox and consumed by the pipeline.
+- [x] A duplicate `complete` or duplicate event produces one import transition, one audit event, and no state regression.
+- [x] A user cannot create, complete, list, or get imports in an org or project they do not belong to, and cannot reference another tenant's import ID; responses are the same `404` as a nonexistent resource.
+- [x] Pending imports expire after the configured window and their orphaned objects are removed; a project cannot hold more than the configured number of pending imports.
+- [x] Import state transitions and outbox and validation health are observable through logs and metrics.
+- [x] An `sbom.upload_completed` audit event is written in the same transaction as the `uploaded` transition.
 
 ## Verification
 
@@ -199,10 +201,10 @@ Other behavior verified against the running probe:
 
 ## Open questions and assumptions to validate
 
-- Real SBOM size distribution and the 10 MiB cap: validate with Syft and cdxgen output before merge (owner: Brian, before the PR).
+- Real SBOM size distribution and the 10 MiB cap: **partly validated.** Syft, Trivy and cdxgen were not installed here. A real `uv export --format cyclonedx1.5` of the pipeline's runtime dependencies (18 components, pretty-printed) is 59 KB, roughly 3 KB per component, so 10 MiB holds on the order of 3,000 components. A large container image can exceed that. Re-check with Syft output on a real image before relying on the cap (owner: Brian).
 - TTL (15 min), pending cap (10), and sweep interval are guesses: measure in SENTRA-26/27.
-- Seaweed POST-policy key-condition enforcement: confirmed only for `content-length-range`; test the key condition during implementation.
-- Supported CycloneDX `specVersion` list: check against the current spec and the Syft and cdxgen defaults (use context7 or the CycloneDX docs and record the finding here).
+- Supported CycloneDX `specVersion` list (1.4 to 1.7): confirm against what Syft and cdxgen emit by default.
 - Retention for raw SBOM objects and old imports: follow-up once growth is measured.
 - Per-org upload rate limit: follow-up if abuse appears.
-- Sequencing and migration numbers with SENTRA-7: confirm the SENTRA-7 infra PR merge order (owner: Brian).
+- Local credentials: the API identity in `seaweedfs-s3.json` has `Admin` so it can create the bucket and its CORS rule locally; deployed environments should scope it to read, write and list on the one bucket (owner: Brian, before any shared environment).
+- `PIPELINE_MAX_SBOM_BYTES` must be at least `SBOM_MAX_BYTES`; the two are configured separately.
