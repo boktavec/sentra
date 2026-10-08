@@ -28,8 +28,8 @@ def main() -> None:
         osv_base_url=settings.osv_base_url,
         limits=settings.limits,
     )
-    worker = Worker(deps, os.environ.get("CRAWLER_KAFKA_BOOTSTRAP", "127.0.0.1:19092"))
-    start_http_server(int(os.environ.get("CRAWLER_METRICS_PORT", "9102")), addr="127.0.0.1")
+    worker = Worker(deps, settings.kafka_bootstrap)
+    start_http_server(settings.metrics_port, addr=settings.metrics_host)
     stop = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())
@@ -37,4 +37,5 @@ def main() -> None:
     worker.run(stop)
 
 
-main()
+if __name__ == "__main__":
+    main()

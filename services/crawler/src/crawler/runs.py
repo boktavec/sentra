@@ -25,12 +25,25 @@ _COLUMNS = "run_id::text, source, ecosystem, status, artifact_key, sha256, etag,
 class Runs:
     """ingestion_runs access. Autocommit: every statement is its own atomic step."""
 
-    def __init__(self, conn: psycopg.Connection):
-        self.conn = conn
+    def __init__(self, database_url: str):
+        self._url = database_url
+        self._conn = psycopg.connect(database_url, autocommit=True)
 
     @classmethod
     def connect(cls, database_url: str) -> Runs:
-        return cls(psycopg.connect(database_url, autocommit=True))
+        return cls(database_url)
+
+    @property
+    def conn(self) -> psycopg.Connection:
+        """The connection, replaced if it died (restart, failover, idle kill). The call that hit the dead
+        connection still fails and is retried by the worker; the next one uses a fresh connection."""
+        if self._conn.closed or self._conn.broken:
+            try:
+                self._conn.close()
+            except psycopg.Error:
+                pass
+            self._conn = psycopg.connect(self._url, autocommit=True)
+        return self._conn
 
     def claim(self, run_id: str, source: str, ecosystem: str, correlation_id: str, lease_seconds: int) -> Run | None:
         """Create the run if new, then take a lease on it. None means: already finished, or another

@@ -9,13 +9,22 @@ class Limits:
 
     connect_timeout: float = 10.0
     read_timeout: float = 60.0
+    # Budget for the whole download: every attempt and the backoff sleeps between them.
     total_timeout: float = 15 * 60.0
     max_bytes: int = 1024**3
     max_attempts: int = 5
     backoff_base: float = 1.0
     backoff_cap: float = 60.0
-    # Longer than total_timeout plus upload, so a live worker never loses its claim mid-run.
-    claim_lease_seconds: int = 30 * 60
+
+    @property
+    def claim_lease_seconds(self) -> int:
+        """Outlasts the download budget plus upload and database time, so a live worker keeps its claim."""
+        return int(self.total_timeout) + 10 * 60
+
+    @property
+    def poll_interval_ms(self) -> int:
+        """Kafka max.poll.interval.ms: one request can legitimately run for the whole lease."""
+        return (self.claim_lease_seconds + 5 * 60) * 1000
 
 
 @dataclass(frozen=True)
@@ -28,6 +37,10 @@ class Settings:
     signing_keys: dict[str, bytes]
     osv_base_url: str = "https://osv-vulnerabilities.storage.googleapis.com"
     limits: Limits = Limits()
+    kafka_bootstrap: str = "127.0.0.1:19092"
+    # Loopback by default; set CRAWLER_METRICS_HOST=0.0.0.0 in a container so Prometheus can scrape it.
+    metrics_host: str = "127.0.0.1"
+    metrics_port: int = 9102
 
 
 def _required(name: str) -> str:
@@ -56,6 +69,13 @@ def check_source_url(url: str) -> str:
     raise RuntimeError("OSV base URL must be https (http only for loopback)")
 
 
+def _port(name: str, default: int) -> int:
+    raw = os.environ.get(name, str(default))
+    if not raw.isdigit() or not 0 < int(raw) < 65536:
+        raise RuntimeError(f"{name} must be a port number, got {raw!r}")
+    return int(raw)
+
+
 def load() -> Settings:
     base = check_source_url(os.environ.get("CRAWLER_OSV_BASE_URL", Settings.osv_base_url))
     return Settings(
@@ -66,4 +86,7 @@ def load() -> Settings:
         s3_secret_key=_required("CRAWLER_S3_SECRET_KEY"),
         signing_keys=parse_signing_keys(_required("CRAWLER_SIGNING_KEYS")),
         osv_base_url=base,
+        kafka_bootstrap=os.environ.get("CRAWLER_KAFKA_BOOTSTRAP", Settings.kafka_bootstrap),
+        metrics_host=os.environ.get("CRAWLER_METRICS_HOST", Settings.metrics_host),
+        metrics_port=_port("CRAWLER_METRICS_PORT", Settings.metrics_port),
     )

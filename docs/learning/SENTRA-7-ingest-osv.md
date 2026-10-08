@@ -32,13 +32,13 @@
 - **Recovery waits for redelivery.** If the crawler crashes between storing and publishing, the event goes out on the next delivery or request, not instantly. A stuck-run sweep is a documented follow-up.
 - **A shared HMAC secret** means anything that can verify can also forge. That is acceptable for one team and a handful of services.
 - **Keep everything.** Every changed upstream zip stays in the bucket. Retention is deferred until growth is measured.
-- **A lease, not fencing.** A worker that outlives its 30 minute lease could race a second worker. State transitions are guarded, but not fenced by owner.
+- **A lease, not fencing.** A worker that outlives its lease (the download budget plus 10 minutes) could race a second worker. State transitions are guarded, but not fenced by owner.
 
 ## Scaling implications
 
 - **Measured, not guessed:** npm is 217,953,791 bytes and downloaded in 6.0 s, PyPI is 35,674,361 bytes in 1.4 s, and an unchanged repeat costs one 304 in about 0.1 s. The 15 minute timeout and 1 GiB cap are therefore very generous.
 - Data volume is small. Growth will come from more ecosystems and sources, which is configuration plus a source adapter, not new architecture.
-- Workers scale horizontally by adding consumers to the group. The lease keeps two workers off the same run, and `max.poll.interval.ms` is raised to an hour so a long download doesn't trigger a rebalance.
+- Workers scale horizontally by adding consumers to the group. The lease keeps two workers off the same run, and `max.poll.interval.ms` is derived from the lease so a long download doesn't trigger a rebalance.
 - The first thing to measure is the pipeline's unzip-and-normalize time, not the download.
 
 ## Important failure and security considerations
@@ -59,3 +59,13 @@
 - **Leases versus locks:** a lease expires on its own, so a dead worker can't hold a run forever.
 - **The dual-write problem:** writing to storage and a broker can't be atomic, so we make the sequence recoverable instead.
 - **Conditional requests (ETag / 304):** ask "has this changed?" before paying to download.
+
+## Hardening after review (SENTRA-30)
+
+A code review of the merged crawler found ways to stop ingestion that the happy-path tests could not see. Each was reproduced first, then fixed:
+
+- **Poison messages must never wedge the partition.** A string that is valid JSON but cannot be UTF-8 encoded made signature checking raise, and the worker retried it forever. The lesson is to separate *dependency failures* (retry for as long as the outage lasts) from *everything else* (retry a few times, then abandon). An outage must never be mistaken for a bad message, and a bad message must never be mistaken for an outage, so the worker classifies errors and tests both directions.
+- **Abandoning a request is itself a security decision.** Recording the failure (failing the run, publishing `crawl.failed`) is only done for a validly signed request, otherwise an unsigned message could fail someone else's run.
+- **One deadline for the whole fetch.** The 15 minute timeout used to apply per attempt, so five attempts could run for over an hour and outlive the claim lease. Now it covers all attempts and the sleeps between them, and the lease and Kafka poll interval are derived from it so they cannot drift apart.
+- **Connections die.** The database connection is replaced on next use after a restart or idle kill, and commit/seek errors are retried instead of killing the worker.
+- **A test can pass for the wrong reason.** The nested-JSON reproduction first passed on the old code because `RecursionError` depends on the thread's stack size; the worker's test thread parsed 100,000 levels as a plain `JSONDecodeError` while the main thread (production) raised `RecursionError`. The test needed a thread-faithful payload before it proved anything. Always run a regression test against the unfixed code.

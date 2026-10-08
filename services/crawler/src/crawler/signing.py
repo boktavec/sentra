@@ -19,4 +19,8 @@ def verify(event: dict[str, Any], keys: dict[str, bytes]) -> bool:
     secret = keys.get(str(event.get("keyId")))
     if secret is None:
         return False
-    return hmac.compare_digest(sign(event, secret), str(event.get("signature")))
+    try:
+        expected = sign(event, secret)
+    except UnicodeEncodeError:  # e.g. a lone surrogate: valid JSON, unsignable, so never a valid request
+        return False
+    return hmac.compare_digest(expected, str(event.get("signature")))

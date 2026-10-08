@@ -44,10 +44,11 @@ class NotModified:
     attempts: int
 
 
-def _once(client: httpx.Client, url: str, etag: str | None, limits: Limits, tmp_dir: str | None):
+def _once(client: httpx.Client, url: str, etag: str | None, limits: Limits, tmp_dir: str | None, deadline: float):
     headers = {"If-None-Match": etag} if etag else {}
-    started = time.monotonic()
-    with client.stream("GET", url, headers=headers) as r:
+    remaining = max(deadline - time.monotonic(), 0.001)
+    timeout = httpx.Timeout(min(limits.read_timeout, remaining), connect=min(limits.connect_timeout, remaining))
+    with client.stream("GET", url, headers=headers, timeout=timeout) as r:
         if r.status_code == 304:
             return None
         if r.status_code == 429 or r.status_code >= 500:
@@ -67,7 +68,7 @@ def _once(client: httpx.Client, url: str, etag: str | None, limits: Limits, tmp_
                     size += len(chunk)
                     if size > limits.max_bytes:
                         raise _Fatal(f"artifact larger than {limits.max_bytes} bytes")
-                    if time.monotonic() - started > limits.total_timeout:
+                    if time.monotonic() > deadline:
                         raise _Retryable("total download timeout")
                     head = (head + chunk)[:4]
                     digest.update(chunk)
@@ -90,14 +91,17 @@ def fetch(
     sleep: Callable[[float], None] = time.sleep,
     rand: Callable[[], float] = random.random,
 ) -> Downloaded | NotModified:
-    """Conditional GET with bounded retries (exponential backoff, full jitter) and a size cap."""
-    timeout = httpx.Timeout(limits.read_timeout, connect=limits.connect_timeout)
+    """Conditional GET with bounded retries (exponential backoff, full jitter) and a size cap.
+
+    `limits.total_timeout` is one deadline for everything: all attempts plus the sleeps between them.
+    """
+    deadline = time.monotonic() + limits.total_timeout
     own_client = client is None
-    client = client or httpx.Client(timeout=timeout, follow_redirects=False)
+    client = client or httpx.Client(follow_redirects=False)
     try:
         for attempt in range(1, limits.max_attempts + 1):
             try:
-                result = _once(client, url, etag, limits, tmp_dir)
+                result = _once(client, url, etag, limits, tmp_dir, deadline)
             except _Fatal as e:
                 raise FetchFailed(str(e), attempt) from e
             except (_Retryable, httpx.TransportError) as e:
@@ -107,6 +111,11 @@ def fetch(
                 delay = rand() * min(limits.backoff_cap, limits.backoff_base * 2 ** (attempt - 1))
                 if isinstance(e, _Retryable) and e.retry_after is not None:
                     delay = max(delay, min(e.retry_after, limits.backoff_cap))
+                if time.monotonic() + delay >= deadline:
+                    raise FetchFailed(
+                        f"{reason}; total timeout of {limits.total_timeout:g}s exhausted after {attempt} attempts",
+                        attempt,
+                    ) from e
                 sleep(delay)
                 continue
             if result is None:

@@ -15,7 +15,7 @@ task stack:crawler-role       # gives that role its local password
 task crawler:run              # copies .env.example to .env on first run
 ```
 
-Create the request topic once (`rpk topic create crawl.requested` in the Redpanda container) and publish a signed event (see `signing.sign`). Metrics are on `127.0.0.1:9102/metrics`; consumer lag via `rpk group describe sentra-crawler`.
+Create the request topic once (`rpk topic create crawl.requested` in the Redpanda container) and publish a signed event (see `signing.sign`). Metrics are on `127.0.0.1:9102/metrics` (set `CRAWLER_METRICS_HOST=0.0.0.0` in a container so Prometheus can scrape it); consumer lag via `rpk group describe sentra-crawler`.
 
 ## Tests
 
