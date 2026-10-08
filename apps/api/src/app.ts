@@ -14,6 +14,8 @@ import { registerMemberRoutes } from "./member-routes.ts";
 import type { MemberStore } from "./members.ts";
 import { registerOrgRoutes } from "./org-routes.ts";
 import { registerProjectRoutes } from "./project-routes.ts";
+import { registerSbomRoutes } from "./sbom-routes.ts";
+import type { SbomStore } from "./sbom.ts";
 import type { OrgStore, TenantContext } from "./orgs.ts";
 import type { ProjectStore } from "./projects.ts";
 import type { AuthUser } from "./users.ts";
@@ -32,6 +34,9 @@ interface Deps {
   orgs: OrgStore;
   members: MemberStore;
   projects: ProjectStore;
+  /** Undefined when object storage is not configured. */
+  sbom?: SbomStore | undefined;
+  sbomMaxBytes?: number;
   invitations: InvitationStore;
   ready: () => Promise<boolean>;
   trustedProxies: string[] | false;
@@ -43,6 +48,8 @@ export function buildApp({
   orgs,
   members,
   projects,
+  sbom,
+  sbomMaxBytes,
   invitations,
   ready,
   trustedProxies,
@@ -90,6 +97,7 @@ export function buildApp({
     registerOrgRoutes(protectedRoutes, { logger, orgs });
     registerMemberRoutes(protectedRoutes, { logger, orgs, members });
     registerProjectRoutes(protectedRoutes, { logger, orgs, projects });
+    registerSbomRoutes(protectedRoutes, { logger, orgs, sbom, maxBytes: sbomMaxBytes ?? 0 });
     registerInvitationRoutes(protectedRoutes, { logger, orgs, invitations });
   });
 

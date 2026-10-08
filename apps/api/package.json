@@ -25,6 +25,9 @@
     "vitest": "^5.0.3"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1147.0",
+    "@aws-sdk/s3-presigned-post": "^3.1147.0",
+    "@platformatic/kafka": "^2.13.0",
     "@sentra/ts-platform": "workspace:*",
     "fastify": "^5.12.5",
     "ioredis": "^6.0.0",

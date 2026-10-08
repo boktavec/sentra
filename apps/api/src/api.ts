@@ -1,3 +1,4 @@
+import { Producer, stringSerializers } from "@platformatic/kafka";
 import { Redis } from "ioredis";
 import { createTransport } from "nodemailer";
 import { Pool } from "pg";
@@ -14,6 +15,9 @@ import { createInvitationStore } from "./invitations.ts";
 import { createMemberStore } from "./members.ts";
 import { createOrgStore } from "./orgs.ts";
 import { createProjectStore } from "./projects.ts";
+import { createSbomRelay, ensureDevTopic, type EventPublisher } from "./sbom-relay.ts";
+import { createSbomStorage } from "./sbom-storage.ts";
+import { createSbomStore } from "./sbom.ts";
 import { createProfileFetcher } from "./profile.ts";
 import { createUserStore } from "./users.ts";
 import { createVerifier } from "./verifier.ts";
@@ -34,6 +38,28 @@ function startEmailSender(smtpUrl: string, config: Config, pool: Pool, logger: L
   });
   sender.start(config.emailPollSeconds * 1000);
   return sender;
+}
+
+function startSbomRelay(brokers: string[], config: Config, pool: Pool, logger: Logger) {
+  const producer = new Producer({
+    clientId: "sentra-api",
+    bootstrapBrokers: brokers,
+    serializers: stringSerializers,
+  });
+  const publisher: EventPublisher = {
+    async publish(topic, key, value) {
+      await producer.send({ messages: [{ topic, key, value }] });
+    },
+  };
+  const relay = createSbomRelay(pool, {
+    publisher,
+    logger,
+    topic: "sbom.uploaded",
+    leaseSeconds: 60,
+    backoffBaseSeconds: 5,
+  });
+  relay.start(config.sbomRelayPollSeconds * 1000);
+  return { relay, close: () => producer.close(true) };
 }
 
 /** Wires the real dependencies. Used by the server and by integration tests. */
@@ -68,12 +94,28 @@ export async function createApi(config: Config, logger: Logger) {
     limiter,
   });
 
+  const storage = config.sbomStorage ? createSbomStorage(config.sbomStorage) : undefined;
+  if (storage && config.sbomDevBootstrap) await storage.ensureDevBucket(config.webUrl);
+  const sbom = storage
+    ? createSbomStore(pool, {
+        storage,
+        limits: {
+          maxBytes: config.sbomMaxBytes,
+          uploadTtlSeconds: config.sbomUploadTtlSeconds,
+          maxPendingPerProject: config.sbomMaxPendingPerProject,
+        },
+      })
+    : undefined;
+  if (!sbom) logger.warn({}, "sbom_disabled_no_s3_endpoint");
+
   const app = buildApp({
     logger,
     authenticate,
     orgs: createOrgStore(pool, { maxOrgsPerUser: config.maxOrgsPerUser }),
     members: createMemberStore(pool),
     projects: createProjectStore(pool),
+    sbom,
+    sbomMaxBytes: config.sbomMaxBytes,
     invitations: createInvitationStore(pool, {
       fetchProfile: createProfileFetcher(config.issuer),
       webUrl: config.webUrl,
@@ -102,12 +144,36 @@ export async function createApi(config: Config, logger: Logger) {
     : undefined;
   if (!sender) logger.warn({}, "email_disabled_no_smtp_url");
 
+  // ponytail: in-process relay and sweep, safe across replicas (SKIP LOCKED); move to a worker if load grows.
+  if (config.kafkaBootstrap && config.sbomDevBootstrap) {
+    await ensureDevTopic(config.kafkaBootstrap, "sbom.uploaded");
+  }
+  const relay = config.kafkaBootstrap
+    ? startSbomRelay(config.kafkaBootstrap, config, pool, logger)
+    : undefined;
+  if (!relay) logger.warn({}, "sbom_relay_disabled_no_kafka_bootstrap");
+  const sweep = sbom
+    ? setInterval(() => {
+        sbom.expirePending().catch((err: unknown) => {
+          metrics.inc("sbom_sweep_errors_total");
+          logger.error({ err: String(err) }, "sbom_sweep_error");
+        });
+      }, config.sbomSweepSeconds * 1000)
+    : undefined;
+  sweep?.unref();
+
   return {
     app,
+    sbom,
+    relay: relay?.relay,
     pool,
     redis,
     async close() {
+      clearInterval(sweep);
       await sender?.stop();
+      await relay?.relay.stop();
+      await relay?.close();
+      storage?.destroy();
       await app.close();
       await pool.end();
       redis.disconnect();

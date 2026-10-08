@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentra.dev/contracts/events/sbom.uploaded.v1.json",
+  "title": "sbom.uploaded v1",
+  "description": "A tenant's SBOM upload was accepted and its raw file is in object storage, ready for validation. Consumers must dedupe by eventId and treat the sbom_imports row as authoritative for tenant and project.",
+  "type": "object",
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "type": {
+      "const": "sbom.uploaded"
+    },
+    "version": {
+      "const": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "correlationId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,128}$"
+    },
+    "importId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "orgId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "projectId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bucket": {
+          "type": "string",
+          "minLength": 1
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "bucket",
+        "key",
+        "sizeBytes"
+      ]
+    }
+  },
+  "required": [
+    "eventId",
+    "type",
+    "version",
+    "timestamp",
+    "correlationId",
+    "importId",
+    "orgId",
+    "projectId",
+    "artifact"
+  ],
+  "additionalProperties": false
+}

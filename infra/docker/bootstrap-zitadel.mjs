@@ -223,6 +223,12 @@ writeFileSync(
     `ZITADEL_TEST_CLIENT_SECRET=${testClientSecret}`,
     `REDIS_URL=redis://127.0.0.1:${env.REDIS_PUBLISHED_PORT}`,
     `DATABASE_URL=postgresql://sentra:${env.SENTRA_DB_PASSWORD}@127.0.0.1:${env.SENTRA_DB_PUBLISHED_PORT}/sentra`,
+    // Local dev SBOM uploads: the API signs uploads for SeaweedFS and publishes events to Redpanda.
+    `S3_ENDPOINT=http://localhost:${env.SEAWEEDFS_S3_PUBLISHED_PORT}`,
+    "S3_ACCESS_KEY=sentra-api-dev",
+    "S3_SECRET_KEY=sentra-api-dev-secret",
+    "SBOM_DEV_BOOTSTRAP=1",
+    `KAFKA_BOOTSTRAP=127.0.0.1:${env.REDPANDA_KAFKA_PORT}`,
     // Local dev sends invitation email to Mailpit (read it at http://localhost:${env.MAILPIT_UI_PUBLISHED_PORT}).
     `SMTP_URL=smtp://127.0.0.1:${env.MAILPIT_SMTP_PUBLISHED_PORT}`,
     "",

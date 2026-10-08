@@ -1,0 +1,45 @@
+[project]
+name = "sentra-pipeline"
+version = "0.1.0"
+description = "Sentra data pipeline: validates tenant-uploaded SBOMs and, in later stories, normalizes them."
+requires-python = ">=3.14"
+dependencies = [
+  "boto3>=1.40",
+  "confluent-kafka>=2.16.0",
+  "jsonschema>=4.25",
+  "prometheus-client>=0.26.0",
+  "psycopg[binary]>=3.2",
+  "rfc3339-validator>=0.1.4",
+]
+
+[dependency-groups]
+dev = ["pyright>=1.1.400", "pytest>=8.4", "ruff>=0.12"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pipeline"]
+
+[tool.ruff]
+line-length = 120
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]
+# The column list is a code constant; every value is a bound parameter.
+"src/pipeline/imports.py" = ["S608"]
+
+[tool.pyright]
+include = ["src", "tests"]
+typeCheckingMode = "standard"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+pythonpath = ["src"]

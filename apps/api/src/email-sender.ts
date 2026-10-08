@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 import type { Logger } from "@sentra/ts-platform";
 import * as metrics from "./metrics.ts";
+import { createPoller } from "./poller.ts";
 
 /** What nodemailer's transporter offers; tests pass a real transporter pointed at Mailpit. */
 export interface MailTransport {
@@ -151,20 +152,5 @@ export function createEmailSender(pool: Pool, options: EmailSenderOptions) {
     return handled;
   }
 
-  let timer: NodeJS.Timeout | undefined;
-  let running: Promise<number> | undefined;
-  return {
-    tick,
-    start(intervalMs: number) {
-      timer = setInterval(() => {
-        // Skip a beat rather than overlap with a tick that is still sending.
-        running ??= tick().finally(() => (running = undefined));
-      }, intervalMs);
-      timer.unref();
-    },
-    async stop() {
-      clearInterval(timer);
-      await running;
-    },
-  };
+  return { tick, ...createPoller(tick) };
 }

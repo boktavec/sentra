@@ -1,0 +1,78 @@
+import hashlib
+import logging
+import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+from . import contracts, validate
+from .config import Limits
+from .imports import Imports
+from .metrics import RETRIES, VALIDATION_SECONDS, VALIDATIONS
+from .storage import read_capped
+
+log = logging.getLogger("pipeline")
+
+
+@dataclass
+class Deps:
+    imports: Imports
+    s3: Any
+    bucket: str
+    limits: Limits = field(default_factory=Limits)
+    sleep: Callable[[float], None] = time.sleep
+
+
+def _attempt(import_id: str, deps: Deps) -> str:
+    row = deps.imports.get(import_id)
+    if row is None:
+        return "skipped_missing"
+    if row.status != "uploaded":
+        return "skipped_duplicate"
+    # The object key comes from the row the API wrote, never from the event.
+    fetched = read_capped(deps.s3, deps.bucket, row.object_key, deps.limits.max_bytes)
+    sha256 = None
+    if fetched.data is None:
+        reason = "size"
+    else:
+        sha256 = hashlib.sha256(fetched.data).hexdigest()
+        reason = validate.check(fetched.data)
+    status = "rejected" if reason else "validated"
+    done = deps.imports.finish(import_id, status=status, reason=reason, size=fetched.size or None, sha256=sha256)
+    return status if done else "skipped_duplicate"
+
+
+def _run(import_id: str, deps: Deps, extra: dict[str, str]) -> str:
+    """Retry storage and database failures with backoff, then record processing_failed (ADR 0002)."""
+    limits = deps.limits
+    for attempt in range(1, limits.max_attempts + 1):
+        try:
+            return _attempt(import_id, deps)
+        except Exception as e:
+            log.warning("validation attempt failed", extra={**extra, "reason": f"{type(e).__name__}: {e}"})
+            if attempt < limits.max_attempts:
+                RETRIES.inc()
+                deps.sleep(min(limits.backoff_base * 2 ** (attempt - 1), limits.backoff_cap))
+    # If recording the failure also raises, it propagates and the offset stays uncommitted.
+    done = deps.imports.finish(import_id, status="rejected", reason="processing_failed", size=None, sha256=None)
+    return "failed" if done else "skipped_duplicate"
+
+
+def handle(event: dict[str, Any], deps: Deps) -> str:
+    """Process one sbom.uploaded. Returns the outcome:
+    dropped_invalid | skipped_missing | skipped_duplicate | validated | rejected | failed.
+    Exceptions only escape when the failure result itself could not be recorded, so the caller does
+    not commit the offset and the event is redelivered."""
+    try:
+        contracts.validate("sbom.uploaded", event)
+    except contracts.InvalidEvent as e:
+        log.warning("event dropped", extra={"outcome": "dropped_invalid", "reason": str(e)})
+        VALIDATIONS.labels("dropped_invalid").inc()
+        return "dropped_invalid"
+    extra = {"correlationId": event["correlationId"], "importId": event["importId"]}
+    started = time.monotonic()
+    outcome = _run(event["importId"], deps, extra)
+    VALIDATION_SECONDS.observe(time.monotonic() - started)
+    VALIDATIONS.labels(outcome).inc()
+    log.info("sbom handled", extra={**extra, "outcome": outcome})
+    return outcome

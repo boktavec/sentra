@@ -4,6 +4,16 @@
       "name": "crawler",
       "credentials": [{ "accessKey": "sentra-dev", "secretKey": "sentra-dev-secret" }],
       "actions": ["Admin", "Read", "Write", "List"]
+    },
+    {
+      "name": "api",
+      "credentials": [{ "accessKey": "sentra-api-dev", "secretKey": "sentra-api-dev-secret" }],
+      "actions": ["Admin", "Read", "Write", "List"]
+    },
+    {
+      "name": "pipeline",
+      "credentials": [{ "accessKey": "sentra-pipeline-dev", "secretKey": "sentra-pipeline-dev-secret" }],
+      "actions": ["Read", "List"]
     }
   ]
 }

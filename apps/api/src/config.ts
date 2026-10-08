@@ -27,6 +27,18 @@ export interface Config {
   emailFrom: string;
   emailMaxAttempts: number;
   emailPollSeconds: number;
+  /** Object storage for SBOM uploads; unset disables the SBOM routes (503). */
+  sbomStorage:
+    { endpoint: string; bucket: string; accessKey: string; secretKey: string } | undefined;
+  /** Local development only: create the bucket, its CORS rule and the topic at startup. */
+  sbomDevBootstrap: boolean;
+  sbomMaxBytes: number;
+  sbomUploadTtlSeconds: number;
+  sbomMaxPendingPerProject: number;
+  /** Kafka-API brokers; unset disables publishing `sbom.uploaded` (events wait in the outbox). */
+  kafkaBootstrap: string[] | undefined;
+  sbomRelayPollSeconds: number;
+  sbomSweepSeconds: number;
   /** Fastify `trustProxy` value; unset means use the socket address and ignore X-Forwarded-For. */
   trustedProxies: string[] | false;
 }
@@ -52,6 +64,21 @@ export function loadConfig(): Config {
     emailFrom: process.env["EMAIL_FROM"] ?? "Sentra <no-reply@sentra.local>",
     emailMaxAttempts: int("EMAIL_MAX_ATTEMPTS", 5),
     emailPollSeconds: int("EMAIL_POLL_SECONDS", 5),
+    sbomStorage: process.env["S3_ENDPOINT"]
+      ? {
+          endpoint: process.env["S3_ENDPOINT"],
+          bucket: process.env["S3_BUCKET"] ?? "sentra-raw",
+          accessKey: required("S3_ACCESS_KEY"),
+          secretKey: required("S3_SECRET_KEY"),
+        }
+      : undefined,
+    sbomDevBootstrap: process.env["SBOM_DEV_BOOTSTRAP"] === "1",
+    sbomMaxBytes: int("SBOM_MAX_BYTES", 10 * 1024 * 1024),
+    sbomUploadTtlSeconds: int("SBOM_UPLOAD_TTL_SECONDS", 15 * 60),
+    sbomMaxPendingPerProject: int("SBOM_MAX_PENDING_PER_PROJECT", 10),
+    kafkaBootstrap: process.env["KAFKA_BOOTSTRAP"]?.split(","),
+    sbomRelayPollSeconds: int("SBOM_RELAY_POLL_SECONDS", 2),
+    sbomSweepSeconds: int("SBOM_SWEEP_SECONDS", 60),
     trustedProxies: process.env["TRUSTED_PROXIES"]
       ? process.env["TRUSTED_PROXIES"].split(",")
       : false,
