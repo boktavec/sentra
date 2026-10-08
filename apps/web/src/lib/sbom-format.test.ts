@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   apiErrorMessage,
   checkFile,
+  dependencySummary,
   formatBytes,
   isActive,
   MAX_SBOM_BYTES,
@@ -25,12 +26,17 @@ describe("checkFile", () => {
 });
 
 describe("reasonMessage", () => {
-  it.each(["size", "not_json", "not_cyclonedx", "unsupported_version", "processing_failed"])(
-    "explains %s",
-    (code) => {
-      expect(reasonMessage(code).length).toBeGreaterThan(10);
-    },
-  );
+  it.each([
+    "size",
+    "not_json",
+    "not_cyclonedx",
+    "unsupported_version",
+    "no_components",
+    "too_many_components",
+    "processing_failed",
+  ])("explains %s", (code) => {
+    expect(reasonMessage(code).length).toBeGreaterThan(10);
+  });
   it("has a safe fallback and no text without a reason", () => {
     expect(reasonMessage("something_new")).toBe("The file was rejected.");
     expect(reasonMessage(null)).toBe("");
@@ -41,7 +47,7 @@ describe("isActive", () => {
   it("is true only while the import is still moving", () => {
     expect(isActive("pending_upload")).toBe(true);
     expect(isActive("uploaded")).toBe(true);
-    for (const done of ["validated", "rejected", "expired"] as const) {
+    for (const done of ["validated", "parsed", "rejected", "expired"] as const) {
       expect(isActive(done)).toBe(false);
     }
   });
@@ -62,5 +68,24 @@ describe("formatBytes", () => {
     expect(formatBytes(2048)).toBe("2.0 KiB");
     expect(formatBytes(3 * 1024 * 1024)).toBe("3.0 MiB");
     expect(formatBytes(null)).toBe("");
+  });
+});
+
+describe("dependencySummary", () => {
+  it("counts dependencies and mentions skipped components", () => {
+    expect(dependencySummary({ status: "parsed", dependencyCount: 2, skippedCount: 0 })).toBe(
+      "2 dependencies",
+    );
+    expect(dependencySummary({ status: "parsed", dependencyCount: 2, skippedCount: 3 })).toBe(
+      "2 dependencies, 3 skipped (no usable package URL)",
+    );
+  });
+  it("says nothing for an import that is not parsed", () => {
+    expect(
+      dependencySummary({ status: "uploaded", dependencyCount: null, skippedCount: null }),
+    ).toBe("");
+    expect(
+      dependencySummary({ status: "rejected", dependencyCount: null, skippedCount: null }),
+    ).toBe("");
   });
 });

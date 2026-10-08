@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   checkFile,
+  dependencySummary,
   formatBytes,
   isActive,
   reasonMessage,
@@ -63,6 +64,12 @@ function ImportsTable({ imports }: { imports: SbomImport[] }) {
             <td>{formatBytes(item.sizeBytes)}</td>
             <td>
               <strong data-testid="sbom-status">{STATUS_LABELS[item.status]}</strong>
+              {item.status === "parsed" && (
+                <>
+                  {" "}
+                  <span data-testid="sbom-dependencies">{dependencySummary(item)}</span>
+                </>
+              )}
               {item.status === "rejected" && (
                 <>
                   {" "}

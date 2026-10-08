@@ -7,6 +7,7 @@
     "dev": "node --watch --env-file-if-exists=../../infra/docker/.env.sentra src/server.ts",
     "start": "node --env-file-if-exists=../../infra/docker/.env.sentra src/server.ts",
     "migrate": "node --env-file-if-exists=../../infra/docker/.env.sentra src/migrate.ts",
+    "sbom:reprocess": "node --env-file-if-exists=../../infra/docker/.env.sentra src/sbom-reprocess.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "lint": "eslint src",
