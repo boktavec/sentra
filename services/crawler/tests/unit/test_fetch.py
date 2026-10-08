@@ -105,3 +105,18 @@ def test_truncated_body_is_retried_not_stored(osv, tmp_path):
     assert isinstance(result, Downloaded) and result.attempts == 2
     os.unlink(result.path)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_total_timeout_bounds_the_whole_fetch_not_each_attempt(osv):
+    # Every attempt dies by read timeout after 0.3s. Five attempts used to be allowed to run for
+    # 5 x total_timeout; the budget has to cover all attempts and the sleeps between them.
+    import time
+
+    osv.serve(PATH, Response(delay=2.0, body=make_zip()))
+    limits = Limits(
+        read_timeout=0.3, connect_timeout=1, max_attempts=5, backoff_base=0.1, backoff_cap=0.1, total_timeout=1.0
+    )
+    started = time.monotonic()
+    with pytest.raises(FetchFailed, match="total"):
+        fetch(osv.base_url + PATH, etag=None, limits=limits)
+    assert time.monotonic() - started < 1.0 + 0.6

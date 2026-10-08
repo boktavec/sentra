@@ -5,7 +5,7 @@ import time
 import uuid
 
 import pytest
-from confluent_kafka import Consumer, Producer, TopicPartition
+from confluent_kafka import Consumer, KafkaError, KafkaException, Producer, TopicPartition
 from confluent_kafka.admin import AdminClient, NewTopic  # pyright: ignore[reportPrivateImportUsage]
 from prometheus_client import REGISTRY
 
@@ -158,3 +158,197 @@ def test_dependency_outage_leaves_the_message_uncommitted_then_redelivers(harnes
         (event,) = read(topics.ingested, 1)
         wait_for(lambda: w.committed() == 1)
     assert event["runId"] == req["runId"] and len(calls) == 3  # two failures, then success on redelivery
+
+
+# --- SENTRA-30: poison messages and dependency failures must never wedge or kill the worker ---
+
+
+class FlakyConsumer:
+    """Wraps the real consumer and raises on the first commit() or seek(): the only fake here, because a
+    broker-side rebalance cannot be triggered on demand. Everything else is the real client."""
+
+    def __init__(self, real, fail: str):
+        self._real, self._fail = real, fail
+
+    def __getattr__(self, name):
+        attr = getattr(self._real, name)
+        if name == self._fail:
+
+            def once(*a, **kw):
+                self._fail = ""
+                raise KafkaException(KafkaError(KafkaError._TRANSPORT))
+
+            return once
+        return attr
+
+
+def good_request(harness, ecosystem="npm"):
+    harness.osv.serve(f"/{ecosystem}/all.zip", Response(body=make_zip(), etag='"v1"'))
+    return make_request(ecosystem=ecosystem)
+
+
+def test_unencodable_string_in_a_signed_looking_request_does_not_block_the_partition(harness, topics):
+    good = good_request(harness)
+    keyed_poison = json.dumps({**make_request(), "ecosystem": "\ud800"}).encode()  # ensure_ascii: stays \ud800
+    with Running(harness, topics) as w:
+        produce(topics.requested, keyed_poison, good)
+        (event,) = read(topics.ingested, 1)
+        wait_for(lambda: w.committed() == 2)
+    assert event["runId"] == good["runId"]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"[" * 900_000,
+        json.dumps({**make_request(), "ecosystem": [[]]}).encode().replace(b"[[]]", b"[" * 900 + b"]" * 900),
+    ],
+    ids=["unparseable-nesting", "deeply-nested-field"],
+)
+def test_pathologically_nested_json_is_dropped_not_retried_forever(harness, topics, payload):
+    good = good_request(harness)
+    with Running(harness, topics) as w:
+        produce(topics.requested, payload, good)
+        (event,) = read(topics.ingested, 1)
+        wait_for(lambda: w.committed() == 2)
+    assert event["runId"] == good["runId"]
+
+
+def test_deterministic_failure_is_given_up_after_a_bounded_number_of_attempts(harness, topics, admin):
+    harness.osv.serve(NPM, Response(body=make_zip(), etag='"v1"'))
+    deps = harness.deps()
+    real_put, calls = deps.store.put, []
+    bad = make_request()
+
+    def broken_for_the_bad_run(*args, **kwargs):
+        if kwargs["run_id"] != bad["runId"]:
+            return real_put(*args, **kwargs)
+        calls.append(1)
+        raise ValueError("a bug, not an outage")
+
+    deps.store.put = broken_for_the_bad_run  # type: ignore[method-assign]
+    good = good_request(harness, "PyPI")
+    before = sample("dropped_poison")
+    with Running(harness, topics, deps) as w:
+        produce(topics.requested, bad, good)
+        (failed,) = read(topics.failed, 1)
+        (event,) = read(topics.ingested, 1)
+        wait_for(lambda: w.committed() == 2)
+    assert failed["runId"] == bad["runId"] and event["runId"] == good["runId"]
+    assert len(calls) == 3  # bounded, then committed
+    assert (
+        admin.execute("SELECT status FROM ingestion_runs WHERE run_id = %s", (bad["runId"],)).fetchone()[0] == "failed"
+    )
+    assert sample("dropped_poison") == before + 1
+
+
+def test_dependency_outages_are_retried_beyond_the_poison_bound(harness, topics):
+    harness.osv.serve(NPM, Response(body=make_zip(), etag='"v1"'))
+    deps = harness.deps()
+    real_put, calls = deps.store.put, []
+
+    def flaky_put(*args, **kwargs):
+        calls.append(1)
+        if len(calls) <= 6:  # more than the poison bound: an outage must never be mistaken for a bad message
+            raise OSError("object store unavailable")
+        return real_put(*args, **kwargs)
+
+    deps.store.put = flaky_put  # type: ignore[method-assign]
+    req = make_request()
+    with Running(harness, topics, deps) as w:
+        produce(topics.requested, req)
+        (event,) = read(topics.ingested, 1)
+        wait_for(lambda: w.committed() == 1)
+    assert event["runId"] == req["runId"] and len(calls) == 7
+
+
+@pytest.mark.parametrize("failing_call", ["commit", "seek"])
+def test_commit_and_seek_errors_do_not_kill_the_worker(harness, topics, failing_call):
+    deps = harness.deps()
+    if failing_call == "seek":  # seek is only reached on the error path
+        harness.osv.serve(NPM, Response(body=make_zip(), etag='"v1"'))
+        real_put, calls = deps.store.put, []
+
+        def flaky_put(*a, **kw):
+            calls.append(1)
+            if len(calls) == 1:
+                raise OSError("object store unavailable")
+            return real_put(*a, **kw)
+
+        deps.store.put = flaky_put  # type: ignore[method-assign]
+        req = make_request()
+    else:
+        req = good_request(harness)
+    running = Running(harness, topics, deps)
+    running.worker.consumer = FlakyConsumer(running.worker.consumer, failing_call)  # pyright: ignore[reportAttributeAccessIssue]
+    with running as w:
+        produce(topics.requested, req)
+        (event,) = read(topics.ingested, 1)
+        wait_for(lambda: w.committed() == 1)
+        assert w.thread.is_alive(), "the worker died"
+    assert event["runId"] == req["runId"]
+
+
+def test_worker_recovers_when_its_database_connection_is_killed(harness, topics, admin):
+    first = good_request(harness, "npm")
+    second = good_request(harness, "PyPI")
+    with Running(harness, topics) as w:
+        produce(topics.requested, first)
+        read(topics.ingested, 1)
+        wait_for(lambda: w.committed() == 1)
+        # A restart, failover or idle-timeout kill on the database side:
+        admin.execute(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+            "WHERE usename = 'sentra_crawler' AND pid <> pg_backend_pid()"
+        )
+        produce(topics.requested, second)
+        events = read(topics.ingested, 2)
+        wait_for(lambda: w.committed() == 2)
+    assert {e["runId"] for e in events} == {first["runId"], second["runId"]}
+
+
+class FakeMsg:
+    """The one thing a Kafka Message is asked for by _give_up: its payload."""
+
+    def __init__(self, value: bytes):
+        self._value = value
+
+    def value(self) -> bytes:
+        return self._value
+
+
+def status(admin, run_id):
+    row = admin.execute("SELECT status FROM ingestion_runs WHERE run_id = %s", (run_id,)).fetchone()
+    return row[0] if row else None
+
+
+def test_abandoning_a_validly_signed_request_fails_its_run_and_announces_it(harness, topics, admin):
+    req = make_request()
+    admin.execute(
+        "INSERT INTO ingestion_runs (run_id, source, ecosystem, correlation_id) VALUES (%s, 'osv', 'npm', 'c')",
+        (req["runId"],),
+    )
+    worker = Worker(harness.deps(), BOOTSTRAP, topics, group=f"test-{uuid.uuid4().hex[:8]}")
+    worker._give_up(FakeMsg(json.dumps(req).encode()), "ValueError: boom")  # type: ignore[arg-type]
+    worker.consumer.close()
+    (event,) = read(topics.failed, 1)
+    assert event["runId"] == req["runId"] and status(admin, req["runId"]) == "failed"
+
+
+@pytest.mark.parametrize("tamper", ["bad-signature", "unknown-key", "not-json"])
+def test_abandoning_an_unverified_message_never_touches_anyone_elses_run(harness, topics, admin, tamper):
+    victim = make_request()
+    admin.execute(
+        "INSERT INTO ingestion_runs (run_id, source, ecosystem, correlation_id) VALUES (%s, 'osv', 'npm', 'c')",
+        (victim["runId"],),
+    )
+    payload = {
+        "bad-signature": json.dumps({**victim, "signature": "0" * 64}).encode(),
+        "unknown-key": json.dumps(make_request(run_id=victim["runId"], key_id="nobody")).encode(),
+        "not-json": b"\xff\xfe garbage",
+    }[tamper]
+    worker = Worker(harness.deps(), BOOTSTRAP, topics, group=f"test-{uuid.uuid4().hex[:8]}")
+    worker._give_up(FakeMsg(payload), "ValueError: boom")  # type: ignore[arg-type]
+    worker.consumer.close()
+    assert status(admin, victim["runId"]) == "fetching"
+    assert read(topics.failed, 1, timeout=2) == []

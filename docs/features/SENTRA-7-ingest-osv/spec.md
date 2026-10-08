@@ -90,7 +90,7 @@ operator/scheduler --signed crawl.requested--> Redpanda --> crawler worker
 | Concurrent users or jobs | One download per ecosystem at a time | **Assumed** | Concurrency test: duplicate requests produce one run |
 | Data size and growth | npm ~208 MiB, PyPI ~34 MiB per changed zip | **Verified** 2026-10-07 | Track `sizeBytes` and bucket size; set retention later |
 | Download size cap | 1 GiB per artifact (about 5x current npm) | **Assumed** | Covered by an oversize test. Current npm is about 21% of the cap; revisit when it passes about 50% |
-| Timeouts | 10 s connect, 60 s read, 15 min total | **Assumed** | **Measured 2026-10-08** (local, residential link): npm 217,953,791 B in 6.0 s, PyPI 35,674,361 B in 1.4 s, repeat run 304 in 0.1 s. The 15 min total is about 150x headroom; kept deliberately generous for slower networks and growth, tune once deployed |
+| Timeouts | 10 s connect, 60 s read, 15 min total for the whole fetch (all attempts and the backoff between them; SENTRA-30) | **Assumed** | **Measured 2026-10-08** (local, residential link): npm 217,953,791 B in 6.0 s, PyPI 35,674,361 B in 1.4 s, repeat run 304 in 0.1 s. The 15 min total is about 150x headroom; kept deliberately generous for slower networks and growth, tune once deployed |
 | Retries | Max 5 attempts, exponential backoff with full jitter, 1 s base, 60 s cap; retry network errors, 5xx, 429; other 4xx fail immediately | **Assumed** | Fault-injection tests against the fake OSV server |
 | Latency or throughput target | **Unknown** (no end-to-end freshness target set) | Not invented | Measure run duration from metrics before setting an SLO (SENTRA-26) |
 | Availability and recovery | **Unknown**; recovery is by re-publishing `crawl.requested` or the next scheduled run | Not invented | Crash-injection test between `stored` and `published` |
@@ -108,7 +108,7 @@ operator/scheduler --signed crawl.requested--> Redpanda --> crawler worker
 | Crash after `stored`, before `published` | Next delivery or request finds `stored` and publishes; consumers dedupe by `eventId` | Kill-and-restart test |
 | Crash mid-download | Partial object is never visible at the final key (write to temp key, then copy/rename after hash check); run resumes from `fetching` | Kill test mid-stream |
 | Two workers pick up the same `runId` | Row-level claim via the `claimed_until` lease so only one worker fetches | Concurrency test |
-| Poison message | Offset committed after the run is recorded `failed`; partition is not blocked | Test with malformed payload |
+| Poison message | Offset committed after the run is recorded `failed`; partition is not blocked. Unparseable, pathologically nested, unencodable or unsigned payloads are dropped; a request that keeps raising a non-dependency error is abandoned after 3 attempts, and only a validly signed one fails its run and publishes `crawl.failed` (SENTRA-30). Dependency outages are retried for as long as they last | Test with malformed payload; SENTRA-30 tests |
 | SeaweedFS (S3 API), Postgres or Redpanda unavailable | Worker does not commit the offset; message is redelivered; health metric reflects the outage | Stop each dependency in integration test |
 | Tenant boundary | Not applicable: global public data, no tenant data in runs, artifacts or events | Review; schema has no `tenant_id` |
 

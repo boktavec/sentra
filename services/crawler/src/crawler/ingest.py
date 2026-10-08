@@ -41,8 +41,8 @@ def handle(event: dict[str, Any], deps: Deps) -> str:
     Exceptions (storage, database or broker down) propagate so the caller does not commit the offset."""
     try:
         contracts.validate("crawl.requested", event)
-    except contracts.InvalidEvent as e:
-        return _drop("dropped_invalid", str(e), event)
+    except (contracts.InvalidEvent, RecursionError) as e:  # RecursionError: absurdly nested field values
+        return _drop("dropped_invalid", str(e)[:300], event)
     if not signing.verify(event, deps.signing_keys):
         return _drop("dropped_signature", "bad signature or unknown keyId", event)
     if event["source"] != "osv" or event["ecosystem"] not in OSV_ECOSYSTEMS:
@@ -64,7 +64,10 @@ def handle(event: dict[str, Any], deps: Deps) -> str:
     try:
         return _process(run, deps)
     except BaseException:
-        deps.runs.release(run.run_id)  # a redelivery may resume immediately
+        try:
+            deps.runs.release(run.run_id)  # a redelivery may resume immediately
+        except Exception:  # noqa: BLE001 - the original error matters more; the lease simply lapses
+            log.warning("could not release the claim; it will lapse", extra={"runId": run.run_id})
         raise
 
 

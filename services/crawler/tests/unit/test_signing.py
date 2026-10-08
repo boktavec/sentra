@@ -49,3 +49,10 @@ def test_schema_rejects_smuggled_url_and_bad_fields():
         except contracts.InvalidEvent:
             continue
         raise AssertionError(f"accepted {bad}")
+
+
+def test_unencodable_string_is_just_a_bad_signature_not_an_exception():
+    # A lone surrogate is valid JSON and passes the schema, but cannot be encoded as UTF-8. A hostile
+    # publisher only needs a (non-secret) configured keyId to reach canonical().
+    event = {**request(), "ecosystem": "\ud800"}
+    assert signing.verify(event, KEYS) is False
