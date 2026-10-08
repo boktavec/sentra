@@ -13,6 +13,7 @@
     "lint": "eslint src",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "test:isolation": "sh -c 'set -a; . ../../infra/docker/.env.sentra; set +a; INTEGRATION=1 exec vitest run tenant-isolation'",
     "test:integration": "sh -c 'set -a; . ../../infra/docker/.env.sentra; set +a; INTEGRATION=1 exec vitest run'"
   },
   "devDependencies": {
