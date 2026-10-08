@@ -3,6 +3,7 @@ advisories say (ADR 0003). One transaction per project, serialized by a Postgres
 concurrent triggers and workers cannot undo each other and re-running changes nothing."""
 
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -36,6 +37,7 @@ class Result:
     resolved: int = 0
     unchanged: int = 0
     unmatchable: int = 0  # dependencies in the latest import with no ecosystem mapping
+    lock_wait: float = 0.0  # seconds spent waiting for the project's advisory lock
     import_id: str | None = None
     # Decisions by (quality, reason) for the metrics; counts findings, not candidates.
     quality: dict[tuple[str, str | None], int] = field(default_factory=dict)
@@ -93,10 +95,12 @@ def _package(purl: str) -> tuple[str, str | None, str]:
 
 
 def reconcile(conn: psycopg.Connection, project_id: str) -> Result:
-    """Reconcile one project. `conn` must not be in autocommit mode or inside another transaction."""
+    """Reconcile one project in its own transaction. `conn` must not already be inside one."""
     result = Result()
     with conn.transaction():
+        waited = time.monotonic()
         conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"findings:{project_id}",))
+        result.lock_wait = time.monotonic() - waited
         latest = conn.execute(
             "SELECT id, org_id FROM sbom_imports WHERE project_id = %s AND status = 'parsed' "
             "ORDER BY created_at DESC, id DESC LIMIT 1",
@@ -138,17 +142,17 @@ def reconcile(conn: psycopg.Connection, project_id: str) -> Result:
 def _write(
     conn, project_id, org_id, import_id, desired, existing, withdrawn, present: _Present, result: Result
 ) -> None:
+    inserts: list[tuple] = []
+    updates: list[tuple] = []
+    resolves: list[tuple] = []
     for key, d in desired.items():
         row = existing.get(key)
         evidence = Jsonb(d.decision.evidence)
         fields = (d.version, d.scope, import_id, d.decision.quality, d.decision.reason, MATCHER_VERSION)
         if row is None:
-            conn.execute(
-                "INSERT INTO findings (org_id, project_id, vulnerability_id, purl, version, ecosystem, scope, "
-                "import_id, match_quality, match_reason, matcher_version, evidence) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            inserts.append(
                 (org_id, project_id, d.vulnerability_id, d.purl, d.version, d.ecosystem, d.scope, import_id)
-                + (d.decision.quality, d.decision.reason, MATCHER_VERSION, evidence),
+                + (d.decision.quality, d.decision.reason, MATCHER_VERSION, evidence)
             )
             result.created += 1
             continue
@@ -160,26 +164,34 @@ def _write(
         if same:
             result.unchanged += 1
             continue
-        conn.execute(
-            "UPDATE findings SET status = 'open', resolved_at = NULL, resolved_reason = NULL, version = %s, "
-            "scope = %s, import_id = %s, match_quality = %s, match_reason = %s, matcher_version = %s, "
-            "evidence = %s, last_seen_at = now(), updated_at = now() WHERE id = %s",
-            (*fields, evidence, row[10]),
-        )
+        updates.append((*fields, evidence, row[10]))
         if row[2] == "resolved":
             result.reopened += 1
         else:
             result.updated += 1
     for key, row in existing.items():
-        if key in desired or row[2] != "open":
-            continue
-        reason = _resolved_reason(key, withdrawn, present)
-        conn.execute(
+        if key not in desired and row[2] == "open":
+            resolves.append((_resolved_reason(key, withdrawn, present), row[10]))
+            result.resolved += 1
+    # executemany runs in psycopg's pipeline mode: one round trip per batch, not per row.
+    with conn.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO findings (org_id, project_id, vulnerability_id, purl, version, ecosystem, scope, "
+            "import_id, match_quality, match_reason, matcher_version, evidence) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            inserts,
+        )
+        cur.executemany(
+            "UPDATE findings SET status = 'open', resolved_at = NULL, resolved_reason = NULL, version = %s, "
+            "scope = %s, import_id = %s, match_quality = %s, match_reason = %s, matcher_version = %s, "
+            "evidence = %s, last_seen_at = now(), updated_at = now() WHERE id = %s",
+            updates,
+        )
+        cur.executemany(
             "UPDATE findings SET status = 'resolved', resolved_reason = %s, resolved_at = now(), updated_at = now() "
             "WHERE id = %s",
-            (reason, row[10]),
+            resolves,
         )
-        result.resolved += 1
 
 
 def _resolved_reason(key: tuple[str, str], withdrawn: set[str], present: _Present) -> str:

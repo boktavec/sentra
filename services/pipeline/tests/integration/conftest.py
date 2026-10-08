@@ -13,6 +13,7 @@ from typing import Any
 
 import psycopg
 import pytest
+from correlate_support import World
 from normalize_support import Env
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
@@ -215,3 +216,10 @@ def env(database, clean_bucket):
     yield e
     for store in e.stores:
         store.close()
+
+
+@pytest.fixture
+def world(database, admin):
+    w = World(database, admin)
+    yield w
+    w.close()

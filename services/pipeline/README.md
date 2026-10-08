@@ -63,6 +63,18 @@ task pipeline:test:integration  # needs the stack; uses a scratch database and b
 
 Integration tests default to the compose ports; set `TEST_ADMIN_DATABASE_URL`, `TEST_S3_ENDPOINT` or `TEST_KAFKA_BOOTSTRAP` if yours differ.
 
+## Correlator (SENTRA-13)
+
+A third process (`pipeline.correlate`, consumer group `correlator`) with its own Postgres role, `sentra_correlator`: it reads dependencies and advisories and writes only `findings`, `match_runs` and `correlation_state`. Design: [SENTRA-13 spec](../../docs/features/SENTRA-13-match-dependencies/spec.md) and [ADR 0003](../../docs/adr/0003-findings-as-derived-state-reconciled-per-project.md).
+
+Three triggers, one function. `reconcile(project)` takes a per-project advisory lock, recomputes the project's findings from its newest `parsed` import and the current advisories, writes only rows that changed, and resolves the rest with a reason.
+
+- `sbom.parsed` -> reconcile that import's project (tenant and project come from the `sbom_imports` row, never the event).
+- `vulnerabilities.normalized` -> reconcile every project whose latest import names a package of an advisory changed since the watermark.
+- A sweep every `CORRELATOR_SWEEP_INTERVAL_SECONDS` (default 24h) reconciles every project, in batches between Kafka polls. It heals lost events. `task pipeline:correlate:sweep` runs one now (after a matcher change or an outage).
+
+Run it with `task pipeline:correlate:run` after `task stack:correlator-role`. Metrics are on `CORRELATOR_METRICS_PORT` (9105). `task pipeline:correlate:bench` times matching on real advisories and synthetic tenants.
+
 ## Configuration
 
 See `.env.example`. `PIPELINE_MAX_SBOM_BYTES` must be at least the API's upload cap.

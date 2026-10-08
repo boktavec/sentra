@@ -120,12 +120,29 @@ Design target (agreed 2026-10-08): lab scale. All numbers below are **Assumed** 
 | Advisories | About 256k today (npm + PyPI) | **Verified** in SENTRA-11 | Query row counts |
 | Import frequency | About 1 per project per day | **Assumed** | Count `sbom.parsed` events |
 | Advisory batches | A few per day | **Assumed** (follows SENTRA-7) | Count `vulnerabilities.normalized` |
-| Forward match (one import) | Cost about O(D · (log A + k · r)); one set-based candidate query, not D queries | Analysis | EXPLAIN plus timing on 2,000 deps |
-| Reverse match, first full load | Whole-project reconcile for up to all 1,000 projects | Worst case under the target | Time a full sweep on synthetic data; sets the sweep default |
+| Forward match (one import) | Cost about O(D · (log A + k · r)); one set-based candidate query, not D queries. **Measured:** 0.06 to 0.16 s per 1,500-dependency project; a re-run takes 0.01 s and writes nothing | Analysis, then measured (see below) | `task pipeline:correlate:bench` |
+| Reverse match, first full load | Whole-project reconcile for up to all 1,000 projects. **Measured:** 107 s (about 0.11 s per project); one changed advisory touched 41 of 1,000 projects and took 8 s | Worst case under the target, then measured | `task pipeline:correlate:bench` |
 | Idempotent re-run | Zero rows written when nothing changed | Design rule | Integration test compares rows and `updated_at` |
 | Latency (upload to findings; advisory to findings) | **Unknown** | Not invented; SENTRA-26 sets SLOs | Record measured values in the PR |
 | Availability and recovery | **Unknown**; recovery is redelivery plus the sweep | Not invented | Crash-injection tests |
-| Sweep interval | 24h | **Assumed**; bounds how long a lost event leaves findings stale | Tune after measuring a full sweep |
+| Sweep interval | 24h. A full sweep of 1,000 projects **measured** 91 s, so the interval is limited by staleness tolerance, not cost | **Assumed**; bounds how long a lost event leaves findings stale | Revisit with SENTRA-26 |
+
+### Measured (2026-10-08, PR 3)
+
+Laptop, local Postgres, one process. `task pipeline:correlate:bench` loads the real PyPI and npm OSV dumps into a scratch database (256,310 advisories, 264,992 affected entries) and adds 100 synthetic orgs and 1,000 projects with about 1,500 dependencies each (1,496,828 rows). About 10% of each project's dependencies are packages that have advisories, chosen uniformly by package, at a version taken from one of that package's range boundaries.
+
+| Step | Result |
+| --- | --- |
+| Forward match, one project | 0.06 s cold; median 0.158 s over five more |
+| Re-run of the same project | 0.01 s; zero rows written (`unchanged` only) |
+| First reverse run, no watermark (every project) | 106.8 s, creating 366,010 findings (3,431 `unverifiable`) |
+| One advisory changes | touches 41 of 1,000 projects; 8.05 s |
+| Full sweep | 90.7 s with 25 projects per step |
+
+- The first version wrote one finding per round trip. On a first, deliberately dense data set (packages weighted by their number of advisory events: 3,000 to 30,000 findings per project) a project took about 5 s, nearly all of it writes. Batching the writes with `executemany` (psycopg pipeline mode) fixed that. That data set was not realistic and is not reported above.
+- The sampled data is synthetic: real SBOMs may be denser or sparser in vulnerable packages. The numbers show the mechanism scales to the lab target, not what production will see.
+- Watermark overlap (5 minutes) re-reconciles recently changed advisories' projects once more as a no-op. Right after a bulk load, every advisory is inside the overlap, so the next event re-reconciles every project. The benchmark ages the loaded rows to measure the steady state.
+- Latency from event to findings is still **Unknown** as an SLO (SENTRA-26).
 
 ## Edge cases and failure behavior
 
@@ -203,5 +220,5 @@ Each PR is branched off the previous one and independently green. Merge bottom t
 - ~~OSV range-evaluation algorithm and `versions[]` semantics~~ **Verified** against OSV's own answers (see above).
 - ~~`unverifiable` noise~~ **Verified** negligible (see above).
 - ~~Does `GENERATED ALWAYS AS (...) STORED` accept the function as IMMUTABLE, and how long does the migration take on 256k advisories?~~ **Verified (2026-10-08):** it applies, and migration 010 took about 1 s on a scratch database with 256,000 advisories and as many affected rows (laptop, local Postgres).
-- 24h sweep default and batch size: tune from measured sweep time. Owner: operator; after slice 3.
+- 24h sweep default and batch size: a full sweep took 91 s at the lab target, so 24h is a staleness choice, not a cost one. Owner: operator; revisit with SENTRA-26.
 - First-draft API shape: SENTRA-15 and 16 may need changes; keep fields additive.
