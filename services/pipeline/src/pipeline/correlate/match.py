@@ -5,6 +5,7 @@ affect the version. A version we cannot judge is `unverifiable` with a reason, n
 """
 
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 from .versions import COMPARATORS, Unparseable, comparator_name
@@ -49,15 +50,29 @@ def _in_range(parse: Any, key: Any, events: list[dict[str, str]]) -> bool:
     return affected
 
 
-def _same(ecosystem: str, a: str, b: str) -> bool:
-    """Equal as strings, or equal under the ecosystem's ordering when both parse (PyPI `1.0` is `1.0.0`)."""
-    if a == b:
+@lru_cache(maxsize=4096)
+def _version_keys(comparator: str, versions: tuple[str, ...]) -> frozenset[Any]:
+    """The parsed keys of an advisory entry's listed versions, once per distinct list. Entries repeat across
+    every dependency that names the package, and a list can hold hundreds of versions."""
+    keys = set()
+    for v in versions:
+        try:
+            keys.add(COMPARATORS[comparator](v))
+        except Unparseable:
+            pass
+    return frozenset(keys)
+
+
+def _listed(ecosystem: str, version: str, versions: list[str]) -> bool:
+    """In the explicit list: equal as strings, or equal under the ecosystem's ordering when both parse
+    (PyPI `1.0` is `1.0.0`)."""
+    if version in versions:
         return True
     name = comparator_name("ECOSYSTEM", ecosystem)
-    if name is None:
+    if name is None or not versions:
         return False
     try:
-        return COMPARATORS[name](a) == COMPARATORS[name](b)
+        return COMPARATORS[name](version) in _version_keys(name, tuple(versions))
     except Unparseable:
         return False
 
@@ -66,7 +81,7 @@ def decide(
     ecosystem: str, package: str, version: str, versions: list[str], ranges: list[dict[str, Any]]
 ) -> Decision | None:
     base = {"package": package, "dependencyVersion": version}
-    if any(_same(ecosystem, version, v) for v in versions):
+    if _listed(ecosystem, version, versions):
         return Decision("confirmed", None, {**base, "rule": "explicit_version", "comparator": None})
     unverifiable: dict[str, dict[str, Any]] = {}
     for r in ranges:

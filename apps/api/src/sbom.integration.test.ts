@@ -18,6 +18,7 @@ import { createInvitationStore } from "./invitations.ts";
 import { createMemberStore } from "./members.ts";
 import { migrate } from "./migrate.ts";
 import { createOrgStore } from "./orgs.ts";
+import { createFindingStore } from "./findings.ts";
 import { createProjectStore } from "./projects.ts";
 import { createSbomRelay, ensureDevTopic, type EventPublisher } from "./sbom-relay.ts";
 import { reprocess } from "./sbom-reprocess.ts";
@@ -135,6 +136,7 @@ beforeAll(async () => {
     orgs: createOrgStore(pool, { maxOrgsPerUser: 100 }),
     members: createMemberStore(pool),
     projects: createProjectStore(pool),
+    findings: createFindingStore(pool),
     sbom: sbomStore,
     sbomMaxBytes: MAX,
     invitations: createInvitationStore(pool, {
