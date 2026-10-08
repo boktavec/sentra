@@ -13,7 +13,7 @@ The data platform should support:
 
 ## Data Layers
 
-### Raw Data — MinIO
+### Raw Data — S3-compatible object storage (SeaweedFS locally)
 
 Raw external and tenant-provided artifacts should be preserved before transformation.
 

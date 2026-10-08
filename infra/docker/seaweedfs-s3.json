@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "crawler",
+      "credentials": [{ "accessKey": "sentra-dev", "secretKey": "sentra-dev-secret" }],
+      "actions": ["Admin", "Read", "Write", "List"]
+    }
+  ]
+}

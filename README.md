@@ -60,7 +60,7 @@ This is a **planned stack**, not an inventory of implemented or deployed softwar
 | pgvector | Initial vector storage and retrieval |
 | Redis | Caching and selected transient workloads |
 | Redpanda/Kafka | Event streaming |
-| MinIO | Raw object storage |
+| SeaweedFS (S3 API) | Raw object storage |
 | ClickHouse | Analytical warehouse |
 | dbt | Analytical transformation and modeling |
 | OpenTelemetry | Traces, metrics, and logs instrumentation |

@@ -31,7 +31,7 @@ PostgreSQL         Event Stream
       Python        Python         Python
           |            |             |
           v            v             v
-        MinIO      PostgreSQL     AI Models
+       S3 store    PostgreSQL     AI Models
                     / later
                   ClickHouse
 ```
@@ -117,7 +117,7 @@ Models must not receive unrestricted database access. Tenant-aware tools sit bet
 MVP infrastructure should remain small:
 
 - PostgreSQL — operational state
-- MinIO — raw and large object storage
+- S3-compatible object storage (SeaweedFS locally; official MinIO images are no longer published) — raw and large object storage
 - Redpanda/Kafka — asynchronous events
 - Redis — caching/rate limiting only when justified
 - OpenTelemetry — telemetry

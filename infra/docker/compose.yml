@@ -30,6 +30,43 @@ services:
     volumes:
       - sentra-postgres-data:/var/lib/postgresql/data:rw
 
+  redpanda:
+    image: ${REDPANDA_IMAGE}
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --memory=512M
+      - --kafka-addr=0.0.0.0:${REDPANDA_KAFKA_PORT}
+      - --advertise-kafka-addr=127.0.0.1:${REDPANDA_KAFKA_PORT}
+    ports:
+      - 127.0.0.1:${REDPANDA_KAFKA_PORT}:${REDPANDA_KAFKA_PORT}
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data:rw
+
+  # S3-compatible raw artifact store (official MinIO images are no longer published).
+  seaweedfs:
+    image: ${SEAWEEDFS_IMAGE}
+    restart: unless-stopped
+    command: ["server", "-dir=/data", "-s3", "-s3.config=/etc/seaweedfs/s3.json", "-ip.bind=0.0.0.0"]
+    ports:
+      - 127.0.0.1:${SEAWEEDFS_S3_PUBLISHED_PORT}:8333
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9333/cluster/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - ./seaweedfs-s3.json:/etc/seaweedfs/s3.json:ro
+      - seaweedfs-data:/data:rw
+
   mailpit:
     image: ${MAILPIT_IMAGE}
     restart: unless-stopped
@@ -245,5 +282,7 @@ networks:
 
 volumes:
   sentra-postgres-data:
+  redpanda-data:
+  seaweedfs-data:
   postgres-data:
   zitadel-bootstrap:
