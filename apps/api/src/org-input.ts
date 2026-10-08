@@ -59,6 +59,23 @@ export function encodeCursor(createdAt: string, orgId: string): string {
   return Buffer.from(JSON.stringify([createdAt, orgId])).toString("base64url");
 }
 
+/**
+ * One page of a keyset-paged query that fetched `limit + 1` rows: the extra row only says there is more.
+ * Rows carry their sort timestamp as text (`cursor_ts`) so the cursor round-trips exactly.
+ */
+export function toPage<R extends { id: string; cursor_ts: string }, T>(
+  rows: R[],
+  limit: number,
+  map: (row: R) => T,
+) {
+  const page = rows.slice(0, limit);
+  const last = page.at(-1);
+  return {
+    items: page.map(map),
+    nextCursor: rows.length > limit && last ? encodeCursor(last.cursor_ts, last.id) : null,
+  };
+}
+
 export function decodeCursor(cursor: string): { createdAt: string; orgId: string } {
   try {
     const [createdAt, orgId] = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as [

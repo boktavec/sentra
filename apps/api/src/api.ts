@@ -14,6 +14,7 @@ import { createEmailSender } from "./email-sender.ts";
 import { createInvitationStore } from "./invitations.ts";
 import { createMemberStore } from "./members.ts";
 import { createOrgStore } from "./orgs.ts";
+import { createFindingStore } from "./findings.ts";
 import { createProjectStore } from "./projects.ts";
 import { createSbomRelay, ensureDevTopic, type EventPublisher } from "./sbom-relay.ts";
 import { createSbomStorage } from "./sbom-storage.ts";
@@ -114,6 +115,7 @@ export async function createApi(config: Config, logger: Logger) {
     orgs: createOrgStore(pool, { maxOrgsPerUser: config.maxOrgsPerUser }),
     members: createMemberStore(pool),
     projects: createProjectStore(pool),
+    findings: createFindingStore(pool),
     sbom,
     sbomMaxBytes: config.sbomMaxBytes,
     invitations: createInvitationStore(pool, {

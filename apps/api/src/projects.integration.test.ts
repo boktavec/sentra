@@ -11,6 +11,7 @@ import { createInvitationStore } from "./invitations.ts";
 import { createMemberStore } from "./members.ts";
 import { migrate } from "./migrate.ts";
 import { createOrgStore } from "./orgs.ts";
+import { createFindingStore } from "./findings.ts";
 import { createProjectStore } from "./projects.ts";
 import { createUserStore } from "./users.ts";
 
@@ -81,6 +82,7 @@ beforeAll(async () => {
     orgs: createOrgStore(pool, { maxOrgsPerUser: 100 }),
     members: createMemberStore(pool),
     projects: createProjectStore(pool),
+    findings: createFindingStore(pool),
     invitations: createInvitationStore(pool, {
       fetchProfile: async () => ({ emailVerified: false }),
       webUrl: "http://localhost:3000",

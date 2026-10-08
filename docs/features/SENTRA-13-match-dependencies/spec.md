@@ -1,6 +1,6 @@
 # SENTRA-13: Match dependencies to vulnerabilities
 
-- Status: Draft (for review)
+- Status: Approved (implemented; see Implementation notes)
 - YouTrack: http://localhost:8080/issue/SENTRA-13 ("[MVP] Match Dependencies to Vulnerabilities")
 - Owner: Sentra operator / project owner
 
@@ -17,7 +17,7 @@
   - Version comparison (PEP 440 via `packaging`; semver ordering) and OSV range evaluation.
   - New event `sbom.parsed.v1`, published by the SBOM parse worker after its commit; the matcher also consumes `vulnerabilities.normalized`.
   - Scheduled sweep (worker-internal interval loop) and an operator task.
-  - `GET /v1/orgs/:orgId/projects/:projectId/findings` (read-only, paginated) with SENTRA-21 isolation cases.
+  - `GET /v1/orgs/:orgId/projects/:slug/findings` (read-only, paginated) with SENTRA-21 isolation cases.
   - Metrics, structured logs, learning note, ADR 0003.
 - Out of scope (documented, not built):
   - Cross-source dedup (SENTRA-12). One finding per advisory row; the same real issue can show as two findings until SENTRA-12 lands. **Known limitation.**
@@ -106,7 +106,7 @@ sweep timer (lease) ------------------------------------------------+||
   - New `sbom.parsed.v1`: ADR 0002 envelope plus `importId`, `orgId`, `projectId`, `dependencyCount`. The matcher reads `org_id` and `project_id` from the database, not the event.
   - Published by the parse worker after its commit; a crash before publish is recovered by redelivery of `sbom.uploaded`, as in SENTRA-11.
   - Existing `vulnerabilities.normalized` is only a wake-up; its counts are ignored.
-- API: `GET /v1/orgs/:orgId/projects/:projectId/findings?limit&cursor`. Any org member. Keyset pagination on `(first_seen_at DESC, id)`. Returns finding fields plus `vulnerability {source, sourceId, aliases, summary, severity}`. Both open and resolved findings appear, with `status`; SENTRA-15 adds filters. Uses the existing org and project scoping, and the error shape in `packages/contracts/error-response.md`.
+- API: `GET /v1/orgs/:orgId/projects/:slug/findings?limit&cursor` (projects are addressed by slug, like the SBOM routes). Any org member. Keyset pagination on `(first_seen_at DESC, id)`. Returns finding fields plus `vulnerability {source, sourceId, aliases, summary, severity}`. Both open and resolved findings appear, with `status`; SENTRA-15 adds filters. Uses the existing org and project scoping, and the error shape in `packages/contracts/error-response.md`.
 - Compatibility: additive. The `match_name` generated columns rewrite two tables once. Rollback: stop the worker and drop the new tables; the columns are harmless.
 
 ## Workload and targets
@@ -191,15 +191,15 @@ Each PR is branched off the previous one and independently green. Merge bottom t
 
 ## Acceptance criteria
 
-- [ ] Parsed project dependencies are correlated with normalized vulnerabilities, on SBOM parsed, on advisory changes, and by the sweep.
-- [ ] Ecosystem, normalized package name and version are all considered, including scoped npm, Maven and Go names.
-- [ ] Matches produce findings with `org_id` and `project_id` taken from the dependency row.
-- [ ] Re-running changes nothing (no writes, `updated_at` untouched).
-- [ ] Each finding records the dependency identity, import, advisory and the rule that matched (`evidence`).
-- [ ] Unparseable versions, missing version data and unsupported ecosystems are `unverifiable` with a reason, or counted; never guessed.
-- [ ] Findings resolve (with a reason) when the dependency or advisory no longer applies, and reopen if they come back.
-- [ ] A tenant cannot read another tenant's findings; cases are in the SENTRA-21 suite.
-- [ ] Measured forward and full-sweep times on lab-scale synthetic data are recorded here.
+- [x] Parsed project dependencies are correlated with normalized vulnerabilities, on SBOM parsed, on advisory changes, and by the sweep.
+- [x] Ecosystem, normalized package name and version are all considered, including scoped npm, Maven and Go names.
+- [x] Matches produce findings with `org_id` and `project_id` taken from the dependency row.
+- [x] Re-running changes nothing (no writes, `updated_at` untouched).
+- [x] Each finding records the dependency identity, import, advisory and the rule that matched (`evidence`).
+- [x] Unparseable versions, missing version data and unsupported ecosystems are `unverifiable` with a reason, or counted; never guessed.
+- [x] Findings resolve (with a reason) when the dependency or advisory no longer applies, and reopen if they come back.
+- [x] A tenant cannot read another tenant's findings; cases are in the SENTRA-21 suite.
+- [x] Measured forward and full-sweep times on lab-scale synthetic data are recorded here.
 
 ## Verification
 
@@ -222,3 +222,16 @@ Each PR is branched off the previous one and independently green. Merge bottom t
 - ~~Does `GENERATED ALWAYS AS (...) STORED` accept the function as IMMUTABLE, and how long does the migration take on 256k advisories?~~ **Verified (2026-10-08):** it applies, and migration 010 took about 1 s on a scratch database with 256,000 advisories and as many affected rows (laptop, local Postgres).
 - 24h sweep default and batch size: a full sweep took 91 s at the lab target, so 24h is a staleness choice, not a cost one. Owner: operator; revisit with SENTRA-26.
 - First-draft API shape: SENTRA-15 and 16 may need changes; keep fields additive.
+
+## Implementation notes
+
+Differences from the draft, and what was learned:
+
+- **Route addressing.** The route uses the project slug (`/projects/:slug/findings`), matching the SBOM routes, not a project ID. `findProject` moved from `sbom.ts` to `projects.ts` so both share it.
+- **Reverse path also looks at open findings.** Besides projects whose latest import names a changed advisory's package, it reconciles projects holding an open finding for a changed advisory. Without it, an advisory that drops a package would never close its old findings.
+- **Watermark overlap.** `vulnerabilities.updated_at` is the normalizer's transaction start time, so a late-committing batch can carry an older timestamp than rows already seen. The reverse query looks back 5 minutes (tested); the re-reconcile is a no-op.
+- **Unexpected errors.** An event that keeps failing is retried 5 times and then given up on; the sweep covers whatever it would have done. Infrastructure outages leave the offset uncommitted.
+- **Batched writes.** The first version wrote one finding per round trip; a dense project took about 5 s. `executemany` fixed it.
+- **First sweep runs at once.** With no recorded sweep the lease is claimable immediately, so a fresh deploy reconciles every project, which is the backfill the rollout relies on.
+- **npm name case.** One legacy advisory names `Openclaw`; we match npm case-insensitively, OSV exactly (see "Verified against real data").
+- **Not built:** targeted reverse updates, partitioning projects across workers, alerting on a stale sweep (SENTRA-23), and everything listed under Out of scope.

@@ -2,9 +2,10 @@ import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { AppError } from "@sentra/ts-platform";
 import * as metrics from "./metrics.ts";
-import { decodeCursor, encodeCursor } from "./org-input.ts";
+import { toPage } from "./org-input.ts";
 import { recordAudit } from "./org-tx.ts";
 import { inTransaction, type TenantContext } from "./orgs.ts";
+import { findProject, projectPageParams } from "./projects.ts";
 import type { SbomStorage } from "./sbom-storage.ts";
 
 export interface SbomLimits {
@@ -63,16 +64,6 @@ const notFound = (reason: string) => new AppError("not_found", 404, "Not found",
 
 const objectKey = (orgId: string, projectId: string, importId: string) =>
   `sbom/${orgId}/${projectId}/${importId}.json`;
-
-/** Resolves the project inside the caller's org; a slug from another org is simply not found. */
-async function findProject(db: Pick<Pool, "query">, tenant: TenantContext, slug: string) {
-  const { rows } = await db.query<{ id: string }>(
-    "SELECT id FROM projects WHERE org_id = $1 AND slug = $2",
-    [tenant.orgId, slug],
-  );
-  if (!rows[0]) throw notFound("project_not_found");
-  return rows[0].id;
-}
 
 async function findImport(
   db: Pick<Pool, "query">,
@@ -203,23 +194,15 @@ export function createSbomStore(
     },
 
     async list(tenant: TenantContext, slug: string, limit: number, cursor?: string) {
-      const projectId = await findProject(pool, tenant, slug);
-      const after = cursor ? decodeCursor(cursor) : undefined;
-      // The cursor's second field is an import ID here; `decodeCursor` only checks it is a UUID.
       const { rows } = await pool.query<ImportRow & { cursor_ts: string }>(
         `SELECT ${COLUMNS}, created_at::text AS cursor_ts FROM sbom_imports
          WHERE org_id = $1 AND project_id = $2
            AND ($3::timestamptz IS NULL OR (created_at, id) < ($3::timestamptz, $4::uuid))
          ORDER BY created_at DESC, id DESC
          LIMIT $5`,
-        [tenant.orgId, projectId, after?.createdAt ?? null, after?.orgId ?? null, limit + 1],
+        await projectPageParams(pool, tenant, slug, limit, cursor),
       );
-      const page = rows.slice(0, limit);
-      const last = page.at(-1);
-      return {
-        items: page.map(toImport),
-        nextCursor: rows.length > limit && last ? encodeCursor(last.cursor_ts, last.id) : null,
-      };
+      return toPage(rows, limit, toImport);
     },
 
     async get(tenant: TenantContext, slug: string, id: string) {

@@ -8,6 +8,8 @@ import {
 } from "@sentra/ts-platform";
 import { createAuthenticator } from "./auth.ts";
 import * as metrics from "./metrics.ts";
+import { registerFindingsRoutes } from "./findings-routes.ts";
+import type { FindingStore } from "./findings.ts";
 import { registerInvitationRoutes } from "./invitation-routes.ts";
 import type { InvitationStore } from "./invitations.ts";
 import { registerMemberRoutes } from "./member-routes.ts";
@@ -34,6 +36,7 @@ interface Deps {
   orgs: OrgStore;
   members: MemberStore;
   projects: ProjectStore;
+  findings: FindingStore;
   /** Undefined when object storage is not configured. */
   sbom?: SbomStore | undefined;
   sbomMaxBytes?: number;
@@ -48,6 +51,7 @@ export function buildApp({
   orgs,
   members,
   projects,
+  findings,
   sbom,
   sbomMaxBytes,
   invitations,
@@ -97,6 +101,7 @@ export function buildApp({
     registerOrgRoutes(protectedRoutes, { logger, orgs });
     registerMemberRoutes(protectedRoutes, { logger, orgs, members });
     registerProjectRoutes(protectedRoutes, { logger, orgs, projects });
+    registerFindingsRoutes(protectedRoutes, { logger, orgs, findings });
     registerSbomRoutes(protectedRoutes, { logger, orgs, sbom, maxBytes: sbomMaxBytes ?? 0 });
     registerInvitationRoutes(protectedRoutes, { logger, orgs, invitations });
   });
