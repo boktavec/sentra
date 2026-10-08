@@ -48,6 +48,8 @@ Test cross-tenant access for:
 
 Tenant isolation regressions should fail automated checks.
 
+The suite is `apps/api/src/tenant-isolation.integration.test.ts` (`task api:test:isolation`, also run by `task test:integration`). Cross-tenant access must be indistinguishable from asking for something that does not exist (404, same body), and must change nothing. Every `/v1` route needs a case there or a reasoned exemption, or the suite fails. Add cases for each new tenant-scoped route, including the AI tools.
+
 ## AI Trust Boundary
 
 The model is untrusted orchestration logic.

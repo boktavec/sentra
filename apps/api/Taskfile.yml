@@ -36,6 +36,11 @@ tasks:
     cmds:
       - pnpm run test:integration
 
+  test:isolation:
+    desc: Tenant isolation regression suite (needs `task stack:up` and `task stack:bootstrap`)
+    cmds:
+      - pnpm run test:isolation
+
   sbom:reprocess:
     desc: Re-parse a stored SBOM without re-uploading it (IMPORT_ID=<uuid>; needs the pipeline running)
     requires:
