@@ -13,6 +13,7 @@ import { createEmailSender } from "./email-sender.ts";
 import { createInvitationStore } from "./invitations.ts";
 import { createMemberStore } from "./members.ts";
 import { createOrgStore } from "./orgs.ts";
+import { createProjectStore } from "./projects.ts";
 import { createProfileFetcher } from "./profile.ts";
 import { createUserStore } from "./users.ts";
 import { createVerifier } from "./verifier.ts";
@@ -72,6 +73,7 @@ export async function createApi(config: Config, logger: Logger) {
     authenticate,
     orgs: createOrgStore(pool, { maxOrgsPerUser: config.maxOrgsPerUser }),
     members: createMemberStore(pool),
+    projects: createProjectStore(pool),
     invitations: createInvitationStore(pool, {
       fetchProfile: createProfileFetcher(config.issuer),
       webUrl: config.webUrl,

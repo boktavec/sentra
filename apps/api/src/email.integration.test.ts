@@ -13,6 +13,7 @@ import { createEmailSender, type MailTransport } from "./email-sender.ts";
 import { createInvitationStore } from "./invitations.ts";
 import { createMemberStore } from "./members.ts";
 import { migrate } from "./migrate.ts";
+import { createProjectStore } from "./projects.ts";
 import { createOrgStore } from "./orgs.ts";
 import type { Profile } from "./profile.ts";
 import { createUserStore } from "./users.ts";
@@ -157,6 +158,7 @@ beforeAll(async () => {
     logger,
     orgs: createOrgStore(pool, { maxOrgsPerUser: 100 }),
     members: createMemberStore(pool),
+    projects: createProjectStore(pool),
     invitations: createInvitationStore(pool, {
       limits: { ttlHours: 168, maxPending: 50, maxPerDay: 50, maxMembers: 100 },
       webUrl: WEB_URL,
