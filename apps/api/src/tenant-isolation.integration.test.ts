@@ -21,6 +21,7 @@ import { createInvitationStore } from "./invitations.ts";
 import { createMemberStore } from "./members.ts";
 import { migrate } from "./migrate.ts";
 import { createOrgStore } from "./orgs.ts";
+import { createFindingStore } from "./findings.ts";
 import { createProjectStore } from "./projects.ts";
 import { createSbomStorage } from "./sbom-storage.ts";
 import { createSbomStore } from "./sbom.ts";
@@ -145,6 +146,11 @@ const CASES: Case[] = [
     build: (t) => ({ url: `${sbom(t, t.sharedProject)}/${t.importId}` }),
   },
   {
+    // The shared project exists in both orgs, so the swapped-URL check resolves to a real, empty project.
+    route: "GET /v1/orgs/:orgId/projects/:slug/findings",
+    build: (t) => ({ url: `${org(t)}/projects/${t.sharedProject}/findings` }),
+  },
+  {
     route: "POST /v1/orgs/:orgId/projects/:slug/sboms/:importId/complete",
     build: (t) => ({ url: `${sbom(t, t.sharedProject)}/${t.importId}/complete` }),
   },
@@ -213,6 +219,29 @@ interface World {
 }
 let world: World;
 
+/** The purl of the finding seeded into the victim's shared-app project. */
+const FINDING_PURL = `pkg:pypi/isolation-${run}@1.0.0`;
+
+/** Findings come from the correlator, not the API, so the victim's is inserted with SQL. */
+async function seedFinding(orgId: string, importId: string) {
+  const project = await pool.query("SELECT id FROM projects WHERE org_id = $1 AND slug = $2", [
+    orgId,
+    "shared-app",
+  ]);
+  const vuln = await pool.query(
+    `INSERT INTO vulnerabilities (source, source_id, modified_at, source_artifact_sha256, source_entry,
+       schema_version, adapter_version)
+     VALUES ('osv', $1, now(), $2, 'e', 1, 1) RETURNING id`,
+    [`ISO-${run}`, "a".repeat(64)],
+  );
+  await pool.query(
+    `INSERT INTO findings (org_id, project_id, vulnerability_id, purl, version, ecosystem, scope, import_id,
+       match_quality, matcher_version, evidence)
+     VALUES ($1, $2, $3, $4, '1.0.0', 'PyPI', 'required', $5, 'confirmed', 1, '{"rule":"explicit_version"}')`,
+    [orgId, project.rows[0].id, vuln.rows[0].id, FINDING_PURL, importId],
+  );
+}
+
 async function seed(): Promise<World> {
   const victimAdmin = await newUser();
   const outsider = await newUser(); // admin of A only
@@ -235,6 +264,7 @@ async function seed(): Promise<World> {
     payload: { filename: "bom.json", size_bytes: 10 },
   });
   expect(imp.statusCode).toBe(201);
+  await seedFinding(victimOrg.id, imp.json().id as string);
   const inv = await call(victimAdmin, "POST", {
     url: `/v1/orgs/${victimOrg.id}/invitations`,
     payload: { email: `victim-${run}@example.com`, role: "member" },
@@ -309,6 +339,7 @@ beforeAll(async () => {
     orgs: createOrgStore(pool, { maxOrgsPerUser: 100 }),
     members: createMemberStore(pool),
     projects: createProjectStore(pool),
+    findings: createFindingStore(pool),
     sbom: createSbomStore(pool, { storage, limits }),
     sbomMaxBytes: limits.maxBytes,
     invitations: createInvitationStore(pool, {
@@ -413,10 +444,34 @@ describe("GET /v1/orgs", () => {
   });
 });
 
+describe("findings", () => {
+  const url = (orgId: string, project = "shared-app") =>
+    `/v1/orgs/${orgId}/projects/${project}/findings`;
+
+  it("are readable by a member of the owning org (so the 404s above are not a broken route)", async () => {
+    const res = await call(world.member, "GET", { url: url(world.victim.orgId) });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().items.map((i: { purl: string }) => i.purl)).toEqual([FINDING_PURL]);
+  });
+
+  it("do not leak through a same-named project in another org, or to an outsider", async () => {
+    const { outsider, dual, home, victim } = world;
+    const ownProject = await call(outsider, "GET", { url: url(home.id) });
+    expect(ownProject.statusCode).toBe(200);
+    expect(ownProject.json()).toEqual({ items: [], nextCursor: null });
+    const viaHome = await call(dual, "GET", { url: url(home.id) });
+    expect(viaHome.body).not.toContain(FINDING_PURL);
+    const reach = await call(outsider, "GET", { url: url(victim.orgId) });
+    expect(reach.statusCode).toBe(404);
+    expect(reach.body).not.toContain(FINDING_PURL);
+  });
+
+  it.todo("detail route: cross-tenant read (SENTRA-16)");
+});
+
 // Not built yet. Each story that adds one of these registers its routes in CASES (the coverage
 // test fails until it does) and replaces the todo.
 describe("pending resources", () => {
-  it.todo("findings: cross-tenant read (SENTRA-15, SENTRA-16)");
   it.todo("investigations: cross-tenant read and start (SENTRA-17)");
   it.todo("audit records: cross-tenant read (SENTRA-20)");
 });

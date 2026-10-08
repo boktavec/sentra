@@ -8,6 +8,7 @@ dependencies = [
   "confluent-kafka>=2.16.0",
   "jsonschema>=4.25",
   "packageurl-python>=0.17.6",
+  "packaging>=26.3",
   "prometheus-client>=0.26.0",
   "psycopg[binary]>=3.2",
   "rfc3339-validator>=0.1.4",
@@ -32,6 +33,8 @@ select = ["E", "F", "I", "B", "UP", "S"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106"]
+# A throwaway scratch database and seeded synthetic data; nothing here is a secret or needs real randomness.
+"bench/**" = ["S105", "S311"]
 # The column list is a code constant; every value is a bound parameter.
 "src/pipeline/imports.py" = ["S608"]
 

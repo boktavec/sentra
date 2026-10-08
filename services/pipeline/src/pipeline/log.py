@@ -18,7 +18,17 @@ class JsonFormatter(logging.Formatter):
             "service": self.service,
             "message": record.getMessage(),
         }
-        for field in ("correlationId", "importId", "artifactSha256", "ecosystem", "outcome", "reason"):
+        for field in (
+            "correlationId",
+            "importId",
+            "artifactSha256",
+            "ecosystem",
+            "outcome",
+            "reason",
+            "tenantId",
+            "projectId",
+            "trigger",
+        ):
             if hasattr(record, field):
                 entry[field] = getattr(record, field)
         return json.dumps(entry)

@@ -53,3 +53,20 @@ tasks:
     cmds:
       - "[ -f .env ] || cp .env.example .env"
       - uv run --env-file .env python -m pipeline.normalize.reprocess {{.CLI_ARGS}}
+
+  correlate:run:
+    desc: Run the correlator (findings) against the local stack (needs `task stack:up`, migrations applied and `task stack:correlator-role`)
+    cmds:
+      - "[ -f .env ] || cp .env.example .env"
+      - uv run --env-file .env python -m pipeline.correlate
+
+  correlate:sweep:
+    desc: Re-match every project now, ignoring the sweep interval (needs the same setup as correlate:run)
+    cmds:
+      - "[ -f .env ] || cp .env.example .env"
+      - uv run --env-file .env python -m pipeline.correlate.sweep_now
+
+  correlate:bench:
+    desc: Time matching on a scratch database of real advisories and synthetic tenants (needs `task stack:up` and OSV dumps; see bench/correlate_bench.py)
+    cmds:
+      - uv run python bench/correlate_bench.py {{.CLI_ARGS}}

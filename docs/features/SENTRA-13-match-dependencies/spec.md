@@ -1,6 +1,6 @@
 # SENTRA-13: Match dependencies to vulnerabilities
 
-- Status: Draft (for review)
+- Status: Approved (implemented; see Implementation notes)
 - YouTrack: http://localhost:8080/issue/SENTRA-13 ("[MVP] Match Dependencies to Vulnerabilities")
 - Owner: Sentra operator / project owner
 
@@ -17,7 +17,7 @@
   - Version comparison (PEP 440 via `packaging`; semver ordering) and OSV range evaluation.
   - New event `sbom.parsed.v1`, published by the SBOM parse worker after its commit; the matcher also consumes `vulnerabilities.normalized`.
   - Scheduled sweep (worker-internal interval loop) and an operator task.
-  - `GET /v1/orgs/:orgId/projects/:projectId/findings` (read-only, paginated) with SENTRA-21 isolation cases.
+  - `GET /v1/orgs/:orgId/projects/:slug/findings` (read-only, paginated) with SENTRA-21 isolation cases.
   - Metrics, structured logs, learning note, ADR 0003.
 - Out of scope (documented, not built):
   - Cross-source dedup (SENTRA-12). One finding per advisory row; the same real issue can show as two findings until SENTRA-12 lands. **Known limitation.**
@@ -65,7 +65,14 @@ Claims about third-party behavior are labeled **Verified** (how) or **Assumed** 
 - Comparator: `ECOSYSTEM` ranges use the ecosystem's order (PyPI: PEP 440; npm: semver). `SEMVER` ranges use semver for any ecosystem. Versions in `versions[]` compare as equal after the ecosystem's normalization.
 - `unverifiable` reasons (`match_reason`): `version_unparseable` (dependency version does not parse under the needed comparator), `no_version_data` (matching entry has neither versions nor usable ranges), `range_malformed` (events that cannot be evaluated), `ecosystem_unsupported` (no comparator). Everything else that matches is `confirmed`; everything that does not match produces no finding.
 - When several affected entries of one advisory match the same dependency, one finding is kept; `confirmed` beats `unverifiable`, and `evidence` records the deciding entry.
-- Validation: unit tests drawn from real PyPI and npm advisories; compare our verdict with OSV's own `osv-scanner` or API on a sample of packages, and record agreement.
+- Validation: unit tests drawn from real PyPI and npm advisories, and a one-off comparison with `api.osv.dev` (below).
+
+### Verified against real data (2026-10-08, PR 2)
+
+- **Verified (agreement with OSV):** 629 package/version cases (60 random PyPI and 60 random npm packages with at least 3 advisories, versions taken from their range boundaries and listed versions) were checked against `api.osv.dev/v1/querybatch` using the current PyPI and npm `all.zip` dumps. Our confirmed set matched OSV's exactly in 624 cases. The 5 differences all involve one package, `openclaw`, and show two deliberate behaviors:
+  - An advisory names the package `Openclaw` (capital O). We compare npm names case-insensitively (purl normalization lowercases npm names, so a legacy upper-case package cannot be told apart); OSV compares exactly. We report a finding where OSV does not. Accepted: a missed finding is worse than a rare extra one.
+  - Another advisory's `ECOSYSTEM` range ends at `fixed: 2026.03.28`, which is not valid semver (leading zero). OSV's lenient npm parser orders it; we mark the range `range_malformed` and the finding `unverifiable` instead of guessing. Four of the five differences are this case (we surface it, OSV confirms it).
+- **Verified (noise):** advisory entries with neither versions nor usable ranges: 13 of 31,145 PyPI entries and 1 of 232,647 npm entries (no `MAL-` ones). `no_version_data` findings are therefore negligible and need no cap.
 
 ## Architecture and contracts
 
@@ -99,7 +106,7 @@ sweep timer (lease) ------------------------------------------------+||
   - New `sbom.parsed.v1`: ADR 0002 envelope plus `importId`, `orgId`, `projectId`, `dependencyCount`. The matcher reads `org_id` and `project_id` from the database, not the event.
   - Published by the parse worker after its commit; a crash before publish is recovered by redelivery of `sbom.uploaded`, as in SENTRA-11.
   - Existing `vulnerabilities.normalized` is only a wake-up; its counts are ignored.
-- API: `GET /v1/orgs/:orgId/projects/:projectId/findings?limit&cursor`. Any org member. Keyset pagination on `(first_seen_at DESC, id)`. Returns finding fields plus `vulnerability {source, sourceId, aliases, summary, severity}`. Both open and resolved findings appear, with `status`; SENTRA-15 adds filters. Uses the existing org and project scoping, and the error shape in `packages/contracts/error-response.md`.
+- API: `GET /v1/orgs/:orgId/projects/:slug/findings?limit&cursor` (projects are addressed by slug, like the SBOM routes). Any org member. Keyset pagination on `(first_seen_at DESC, id)`. Returns finding fields plus `vulnerability {source, sourceId, aliases, summary, severity}`. Both open and resolved findings appear, with `status`; SENTRA-15 adds filters. Uses the existing org and project scoping, and the error shape in `packages/contracts/error-response.md`.
 - Compatibility: additive. The `match_name` generated columns rewrite two tables once. Rollback: stop the worker and drop the new tables; the columns are harmless.
 
 ## Workload and targets
@@ -113,12 +120,40 @@ Design target (agreed 2026-10-08): lab scale. All numbers below are **Assumed** 
 | Advisories | About 256k today (npm + PyPI) | **Verified** in SENTRA-11 | Query row counts |
 | Import frequency | About 1 per project per day | **Assumed** | Count `sbom.parsed` events |
 | Advisory batches | A few per day | **Assumed** (follows SENTRA-7) | Count `vulnerabilities.normalized` |
-| Forward match (one import) | Cost about O(D · (log A + k · r)); one set-based candidate query, not D queries | Analysis | EXPLAIN plus timing on 2,000 deps |
-| Reverse match, first full load | Whole-project reconcile for up to all 1,000 projects | Worst case under the target | Time a full sweep on synthetic data; sets the sweep default |
+| Forward match (one import) | Cost about O(D · (log A + k · r)); one set-based candidate query, not D queries. **Measured:** about 0.06 s per 1,500-dependency project; a re-run takes 0.01 s and writes nothing | Analysis, then measured (see below) | `task pipeline:correlate:bench` |
+| Reverse match, first full load | Whole-project reconcile for up to all 1,000 projects. **Measured:** 58 s (about 0.06 s per project); one changed advisory touched 41 of 1,000 projects and took 2.5 s | Worst case under the target, then measured | `task pipeline:correlate:bench` |
 | Idempotent re-run | Zero rows written when nothing changed | Design rule | Integration test compares rows and `updated_at` |
 | Latency (upload to findings; advisory to findings) | **Unknown** | Not invented; SENTRA-26 sets SLOs | Record measured values in the PR |
 | Availability and recovery | **Unknown**; recovery is redelivery plus the sweep | Not invented | Crash-injection tests |
-| Sweep interval | 24h | **Assumed**; bounds how long a lost event leaves findings stale | Tune after measuring a full sweep |
+| Sweep interval | 24h. A full sweep of 1,000 projects **measured** 35 s, so the interval is limited by staleness tolerance, not cost | **Assumed**; bounds how long a lost event leaves findings stale | Revisit with SENTRA-26 |
+
+### Measured (2026-10-08, final code)
+
+Laptop, local Postgres, one process. `task pipeline:correlate:bench` loads the real PyPI and npm OSV dumps into a scratch database (256,310 advisories, 264,992 affected entries) and adds 100 synthetic orgs and 1,000 projects with about 1,500 dependencies each (1,496,828 rows). About 10% of each project's dependencies are packages that have advisories, chosen uniformly by package, at a version taken from one of that package's range boundaries.
+
+| Step | Result |
+| --- | --- |
+| Forward match, one project | 0.06 s cold; median 0.061 s over five more |
+| Re-run of the same project | 0.01 s; zero rows written (`unchanged` only) |
+| First reverse run, no watermark (every project) | 58.2 s, creating 366,010 findings (3,431 `unverifiable`) |
+| One advisory changes | touches 41 of 1,000 projects; 2.52 s (0.35 s to find the projects, 2.24 s to reconcile them) |
+| Full sweep | 35.1 s with 25 projects per step |
+
+**Stress case** (`--dense`: packages weighted by how many advisories they have, so projects average thousands of findings; 8 projects, 10,000 to 95,000 candidate rows each, up to 22,879 findings). Same data, three versions of the code:
+
+| Code | Total for 8 projects | Heaviest projects (80,000 to 95,000 candidates) |
+| --- | --- | --- |
+| Original: one insert per round trip, version strings re-parsed per candidate | 23.5 s | 4.8 to 5.7 s each |
+| Batched writes (`executemany`) only | 15.0 s | 3.3 to 3.75 s each |
+| Batched writes and cached version parsing | 8.4 s | 1.6 to 2.0 s each |
+
+- **What profiling showed.** I first assumed writes dominated and batched them. That gave only 1.6x. Profiling a heavy project then showed the real hotspot was matching: `_same` parsed both version strings for every listed version of every candidate, about 4 million `packaging.Version` constructions for one project. Parsed versions are now cached, and the parsed keys of an entry's listed versions are built once per distinct list. Together the two changes cut the stress case 2.8x and the standard case about 2x (the first full load went from 107 s to 58 s, the sweep from 91 s to 35 s). The earlier 107 s and 91 s figures were measured before the matching fix and are replaced.
+- **Not profiled after the fix:** what the remaining 1.6 to 2.0 s of a heavy project is spent on (candidate SQL is about 0.5 s of it).
+- **Agreement with OSV re-checked after the change:** 623 of 629 cases; the only difference from the earlier 624 is one advisory OSV published after the dump was downloaded (15:42 against a 14:08 download), so every other verdict is unchanged.
+- **The first "one advisory" figure (8 s) was matching time, not the affected-projects query,** which takes 0.35 s.
+- The sampled data is synthetic: real SBOMs may be denser or sparser in vulnerable packages. The numbers show the mechanism scales to the lab target, not what production will see.
+- Watermark overlap (5 minutes) re-reconciles recently changed advisories' projects once more as a no-op. Right after a bulk load, every advisory is inside the overlap, so the next event re-reconciles every project. The benchmark ages the loaded rows to measure the steady state.
+- Latency from event to findings is still **Unknown** as an SLO (SENTRA-26).
 
 ## Edge cases and failure behavior
 
@@ -167,15 +202,15 @@ Each PR is branched off the previous one and independently green. Merge bottom t
 
 ## Acceptance criteria
 
-- [ ] Parsed project dependencies are correlated with normalized vulnerabilities, on SBOM parsed, on advisory changes, and by the sweep.
-- [ ] Ecosystem, normalized package name and version are all considered, including scoped npm, Maven and Go names.
-- [ ] Matches produce findings with `org_id` and `project_id` taken from the dependency row.
-- [ ] Re-running changes nothing (no writes, `updated_at` untouched).
-- [ ] Each finding records the dependency identity, import, advisory and the rule that matched (`evidence`).
-- [ ] Unparseable versions, missing version data and unsupported ecosystems are `unverifiable` with a reason, or counted; never guessed.
-- [ ] Findings resolve (with a reason) when the dependency or advisory no longer applies, and reopen if they come back.
-- [ ] A tenant cannot read another tenant's findings; cases are in the SENTRA-21 suite.
-- [ ] Measured forward and full-sweep times on lab-scale synthetic data are recorded here.
+- [x] Parsed project dependencies are correlated with normalized vulnerabilities, on SBOM parsed, on advisory changes, and by the sweep.
+- [x] Ecosystem, normalized package name and version are all considered, including scoped npm, Maven and Go names.
+- [x] Matches produce findings with `org_id` and `project_id` taken from the dependency row.
+- [x] Re-running changes nothing (no writes, `updated_at` untouched).
+- [x] Each finding records the dependency identity, import, advisory and the rule that matched (`evidence`).
+- [x] Unparseable versions, missing version data and unsupported ecosystems are `unverifiable` with a reason, or counted; never guessed.
+- [x] Findings resolve (with a reason) when the dependency or advisory no longer applies, and reopen if they come back.
+- [x] A tenant cannot read another tenant's findings; cases are in the SENTRA-21 suite.
+- [x] Measured forward and full-sweep times on lab-scale synthetic data are recorded here.
 
 ## Verification
 
@@ -193,8 +228,21 @@ Each PR is branched off the previous one and independently green. Merge bottom t
 
 ## Open questions and assumptions to validate
 
-- OSV range-evaluation algorithm and `versions[]` semantics: confirm against OSV's schema and real advisories while building slice 2 (library docs via context7 for `packaging`). Owner: me; before slice 2 merges.
-- `unverifiable` noise: count how many real advisory entries have no version data and how many packages would produce them. If excessive, discuss a cap or a UI default. Owner: me; before slice 2 merges.
+- ~~OSV range-evaluation algorithm and `versions[]` semantics~~ **Verified** against OSV's own answers (see above).
+- ~~`unverifiable` noise~~ **Verified** negligible (see above).
 - ~~Does `GENERATED ALWAYS AS (...) STORED` accept the function as IMMUTABLE, and how long does the migration take on 256k advisories?~~ **Verified (2026-10-08):** it applies, and migration 010 took about 1 s on a scratch database with 256,000 advisories and as many affected rows (laptop, local Postgres).
-- 24h sweep default and batch size: tune from measured sweep time. Owner: operator; after slice 3.
+- 24h sweep default and batch size: a full sweep took 35 s at the lab target, so 24h is a staleness choice, not a cost one. Owner: operator; revisit with SENTRA-26.
 - First-draft API shape: SENTRA-15 and 16 may need changes; keep fields additive.
+
+## Implementation notes
+
+Differences from the draft, and what was learned:
+
+- **Route addressing.** The route uses the project slug (`/projects/:slug/findings`), matching the SBOM routes, not a project ID. `findProject` moved from `sbom.ts` to `projects.ts` so both share it.
+- **Reverse path also looks at open findings.** Besides projects whose latest import names a changed advisory's package, it reconciles projects holding an open finding for a changed advisory. Without it, an advisory that drops a package would never close its old findings.
+- **Watermark overlap.** `vulnerabilities.updated_at` is the normalizer's transaction start time, so a late-committing batch can carry an older timestamp than rows already seen. The reverse query looks back 5 minutes (tested); the re-reconcile is a no-op.
+- **Unexpected errors.** An event that keeps failing is retried 5 times and then given up on; the sweep covers whatever it would have done. Infrastructure outages leave the offset uncommitted.
+- **Performance.** Batched writes and cached version parsing; see "Measured" for what profiling found and the before and after numbers.
+- **First sweep runs at once.** With no recorded sweep the lease is claimable immediately, so a fresh deploy reconciles every project, which is the backfill the rollout relies on.
+- **npm name case.** One legacy advisory names `Openclaw`; we match npm case-insensitively, OSV exactly (see "Verified against real data").
+- **Not built:** targeted reverse updates, partitioning projects across workers, alerting on a stale sweep (SENTRA-23), and everything listed under Out of scope.

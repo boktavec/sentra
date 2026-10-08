@@ -22,6 +22,16 @@ interface ProjectRow {
 
 const COLUMNS = "id, org_id, name, slug, created_at";
 
+/** Resolves the project inside the caller's org; a slug from another org is simply not found. */
+export async function findProject(db: Pick<Pool, "query">, tenant: TenantContext, slug: string) {
+  const { rows } = await db.query<{ id: string }>(
+    "SELECT id FROM projects WHERE org_id = $1 AND slug = $2",
+    [tenant.orgId, slug],
+  );
+  if (!rows[0]) throw new AppError("not_found", 404, "Not found", { reason: "project_not_found" });
+  return rows[0].id;
+}
+
 const toProject = (row: ProjectRow): Project => ({
   id: row.id,
   orgId: row.org_id,
@@ -29,6 +39,23 @@ const toProject = (row: ProjectRow): Project => ({
   slug: row.slug,
   createdAt: row.created_at.toISOString(),
 });
+
+/**
+ * The query parameters of a keyset page over one project's rows: `[orgId, projectId, afterTimestamp,
+ * afterId, limit + 1]`. The cursor's second field is a row ID of that resource; `decodeCursor` only checks
+ * that it is a UUID.
+ */
+export async function projectPageParams(
+  db: Pick<Pool, "query">,
+  tenant: TenantContext,
+  slug: string,
+  limit: number,
+  cursor?: string,
+) {
+  const projectId = await findProject(db, tenant, slug);
+  const after = cursor ? decodeCursor(cursor) : undefined;
+  return [tenant.orgId, projectId, after?.createdAt ?? null, after?.orgId ?? null, limit + 1];
+}
 
 /**
  * Inserts the project and its audit event in one transaction. A slug conflict with the same name
