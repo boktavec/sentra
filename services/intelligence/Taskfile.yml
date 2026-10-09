@@ -30,3 +30,8 @@ tasks:
     desc: test services/intelligence
     cmds:
       - 'if [ -f pyproject.toml ]; then uv run pytest; else echo "services/intelligence has not been scaffolded yet; skipping."; fi'
+
+  test:integration:
+    desc: Store SQL against a scratch Postgres database (needs `task stack:up` and `task stack:bootstrap`)
+    cmds:
+      - sh -c 'set -a; . ../../infra/docker/.env.sentra; set +a; exec uv run pytest tests/integration'
