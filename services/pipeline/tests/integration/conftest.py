@@ -31,12 +31,13 @@ S3_KEYS = ("sentra-dev", "sentra-dev-secret")
 PIPELINE_PASSWORD = "pipeline-test-pw"
 NORMALIZER_PASSWORD = "normalizer-test-pw"
 CORRELATOR_PASSWORD = "correlator-test-pw"
+GROUPER_PASSWORD = "grouper-test-pw"
 
 
 @pytest.fixture(scope="session")
 def database():
     """A scratch database with every migration applied; yields
-    (admin_url, pipeline_role_url, normalizer_role_url, correlator_role_url)."""
+    (admin_url, pipeline_role_url, normalizer_role_url, correlator_role_url, grouper_role_url)."""
     name = f"pipeline_test_{uuid.uuid4().hex[:8]}"
     with psycopg.connect(ADMIN_URL, autocommit=True) as admin:
         admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
@@ -47,11 +48,13 @@ def database():
         conn.execute(sql.SQL("ALTER ROLE sentra_pipeline LOGIN PASSWORD {}").format(sql.Literal(PIPELINE_PASSWORD)))
         conn.execute(sql.SQL("ALTER ROLE sentra_normalizer LOGIN PASSWORD {}").format(sql.Literal(NORMALIZER_PASSWORD)))
         conn.execute(sql.SQL("ALTER ROLE sentra_correlator LOGIN PASSWORD {}").format(sql.Literal(CORRELATOR_PASSWORD)))
+        conn.execute(sql.SQL("ALTER ROLE sentra_grouper LOGIN PASSWORD {}").format(sql.Literal(GROUPER_PASSWORD)))
     yield (
         admin_url,
         make_conninfo(admin_url, user="sentra_pipeline", password=PIPELINE_PASSWORD),
         make_conninfo(admin_url, user="sentra_normalizer", password=NORMALIZER_PASSWORD),
         make_conninfo(admin_url, user="sentra_correlator", password=CORRELATOR_PASSWORD),
+        make_conninfo(admin_url, user="sentra_grouper", password=GROUPER_PASSWORD),
     )
     with psycopg.connect(ADMIN_URL, autocommit=True) as admin:
         admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
@@ -210,8 +213,9 @@ def env(database, clean_bucket):
     """Normalizer harness over a clean set of vulnerability tables."""
     e = Env(database, clean_bucket)
     e.q(
-        "TRUNCATE kev_entries, findings, vulnerability_ranges, vulnerability_affected, vulnerabilities, "
-        "normalization_runs, normalization_failures"
+        "TRUNCATE group_conflicts, vulnerability_group_members, vulnerability_groups, kev_entries, findings, "
+        "vulnerability_ranges, vulnerability_affected, vulnerabilities, normalization_runs, "
+        "normalization_failures"
     )
     yield e
     for store in e.stores:

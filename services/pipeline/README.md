@@ -45,7 +45,7 @@ A second process (`pipeline.normalize`, consumer group `normalizer-artifacts`) w
 
 `artifact.ingested` -> validate the event -> check the object key is exactly `raw/<source>/<ecosystem>/<sha256>.zip` (`.json` for KEV) -> claim the run -> download to a temp file and verify the SHA-256 -> stream the zip -> adapter -> validate against `vulnerability.v1.json` -> upsert in batches -> `vulnerabilities.normalized`.
 
-- Source adapters (`normalize/adapters/osv.py`, `kev.py`) are the only code that knows a source's shape. KEV is one JSON document, not a zip, so `process._pass_kev` writes `kev_entries` and tombstones in one transaction (see [ADR 0004](../../docs/adr/0004-kev-as-enrichment-plus-linked-vulnerability-rows.md)); `NORMALIZER_KEV_MAX_REMOVAL_RATE` is the operator override for a legitimate large removal.  Validation, persistence and the worker see only the canonical record.
+- Source adapters (`normalize/adapters/osv.py`, `kev.py`) are the only code that knows a source's shape. KEV is one JSON document, not a zip, so `process._pass_kev` writes `kev_entries` and tombstones in one transaction (see [ADR 0005](../../docs/adr/0004-kev-as-enrichment-plus-linked-vulnerability-rows.md)); `NORMALIZER_KEV_MAX_REMOVAL_RATE` is the operator override for a legitimate large removal.  Validation, persistence and the worker see only the canonical record.
 - A row is rewritten only if the source's `modified` is newer or `ADAPTER_VERSION` is higher, so reprocessing the same artifact changes nothing. After changing what the adapter produces, bump `ADAPTER_VERSION` and run `task pipeline:normalize:reprocess -- <ecosystem>`: it rewrites every row from the raw artifact.
 - A record that fails normalization or validation is stored in `normalization_failures` (artifact SHA-256, zip entry, error) and the run continues. If more than 1% of at least 1,000 records fail (**assumed**), the run is marked `failed` and no event is sent.
 - Zip limits (entries, bytes per entry, total bytes) are checked on declared and actual sizes; a tripped limit fails the run before any later entry is read.
@@ -74,6 +74,15 @@ Three triggers, one function. `reconcile(project)` takes a per-project advisory 
 - A sweep every `CORRELATOR_SWEEP_INTERVAL_SECONDS` (default 24h) reconciles every project, in batches between Kafka polls. It heals lost events. `task pipeline:correlate:sweep` runs one now (after a matcher change or an outage).
 
 Run it with `task pipeline:correlate:run` after `task stack:correlator-role`. Metrics are on `CORRELATOR_METRICS_PORT` (9105). `task pipeline:correlate:bench` times matching on real advisories and synthetic tenants.
+
+## Advisory grouper (SENTRA-12)
+
+`python -m pipeline.group` links advisories that describe the same issue. It polls `vulnerabilities.updated_at` (watermark in `group_state`, 5-minute overlap), takes the whole alias component around each changed advisory plus the groups it used to be in, and writes `vulnerability_groups`, `vulnerability_group_members` and `group_conflicts`. It only reads advisories; the correlator is untouched.
+
+- Rule: advisories sharing an identifier (own id or alias) are one group. A component with more than one CVE id, or whose advisories share no affected package, is refused: every member stays a singleton and gets a `group_conflicts` row.
+- Group id = UUIDv5 of the canonical member (smallest `(source, source_id)` among advisories that list packages, so KEV stubs never lead), so a rebuild gives the same ids. A group merged away keeps its row with `merged_into`.
+- Run: `task pipeline:group:run` after `task stack:grouper-role` (`-- --once` for one pass). To rebuild after a rule change: `DELETE FROM group_state`, then run once. Metrics on `GROUPER_METRICS_PORT` (9106); each pass is a row in `group_runs`.
+- Known limits: see the SENTRA-12 spec and `docs/adr/0005-advisory-groups-over-advisories.md`.
 
 ## Configuration
 
