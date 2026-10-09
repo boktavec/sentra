@@ -1,5 +1,8 @@
 // SQL shared by the findings list and the finding detail, so the two cannot disagree about which
-// finding leads a group, what its CVSS score is, or whether it is in the KEV catalog.
+// finding leads a group, what its CVSS score is, whether it is in the KEV catalog, or its priority tier.
+
+/** Bump on any change to the priority rules, thresholds or inputs (ADR 0008, packages/contracts/models.md). */
+const PRIORITY_MODEL_VERSION = 1;
 
 export type SeverityCategory = "critical" | "high" | "medium" | "low" | "none" | "unavailable";
 
@@ -40,21 +43,44 @@ export interface FindingRow {
   cvss_source: string | null;
   cvss_source_id: string | null;
   kev_status: "listed" | "not_listed" | "unavailable";
+  priority_tier: 1 | 2 | 3 | 4;
+  priority_base_reason: PriorityBaseReason;
+  priority_scope_adjusted: boolean;
   cursor_ts: string;
 }
 
-/** The finding's own advisory plus every advisory in its group. `row` needs vulnerability_id and group_id. */
+export type PriorityBaseReason =
+  "kev_listed" | "cvss_high" | "cvss_medium" | "cvss_unavailable" | "cvss_low";
+
+/** The API shape of a row's priority. The tier was decided in SQL; this only names it. */
+export function toPriority(row: FindingRow) {
+  const score = row.cvss_score === null ? null : Number(row.cvss_score);
+  return {
+    tier: `P${row.priority_tier}` as const,
+    modelVersion: PRIORITY_MODEL_VERSION,
+    baseReason: row.priority_base_reason,
+    scopeAdjusted: row.priority_scope_adjusted,
+    factors: {
+      kev: row.kev_status,
+      cvss: { score, category: category(score) },
+      scope: row.scope,
+      matchQuality: row.match_quality,
+    },
+  };
+}
+
+/** The finding's own advisory plus every advisory in its group. `row` needs vulnerability_id and group_id.
+ * Written as IN over a UNION ALL (not OR) so the planner can use the advisories' primary key per item. */
 export const advisoriesOfGroup = (row: string) =>
-  `(a.id = ${row}.vulnerability_id OR a.id IN
-    (SELECT vulnerability_id FROM vulnerability_group_members WHERE group_id = ${row}.group_id))`;
+  `a.id IN (SELECT ${row}.vulnerability_id UNION ALL
+    SELECT vulnerability_id FROM vulnerability_group_members WHERE group_id = ${row}.group_id)`;
 
 /** An active KEV entry for `a`, matched on its own id or any alias. */
 export const KEV_ENTRY_MATCHES_ADVISORY =
   "k.removed_at IS NULL AND k.cve_id = ANY(a.aliases || a.source_id)";
 
 const kevStatusSql = (row: string) => `CASE
-  WHEN NOT EXISTS (SELECT 1 FROM normalization_runs nr
-    WHERE nr.source = 'cisa-kev' AND nr.status IN ('completed', 'published')) THEN 'unavailable'
+  WHEN NOT (SELECT completed FROM kev_catalog) THEN 'unavailable'
   WHEN NOT EXISTS (
     SELECT 1 FROM vulnerabilities a,
       unnest(a.aliases || a.source_id) AS ids(identifier)
@@ -91,9 +117,13 @@ export function findingSql({ baseWhere, where, order, limit }: FindingSqlParts):
                   max(last_seen_at) OVER w AS group_last_seen_at
            FROM base WINDOW w AS (PARTITION BY purl, gid)
            ORDER BY purl, gid, (status = 'open') DESC, (match_quality = 'confirmed') DESC, first_seen_at, id
+         ), kev_catalog AS (
+           SELECT EXISTS (SELECT 1 FROM normalization_runs nr
+             WHERE nr.source = 'cisa-kev' AND nr.status IN ('completed', 'published')) AS completed
          ), scored AS (
            SELECT l.*, sev.cvss_score, sev.cvss_version,
-                  sev.source AS cvss_source, sev.source_id AS cvss_source_id
+                  sev.source AS cvss_source, sev.source_id AS cvss_source_id,
+                  ${kevStatusSql("l")} AS kev_status
            FROM leads l
            LEFT JOIN LATERAL (
              SELECT a.cvss_score, a.cvss_version, a.source, a.source_id
@@ -103,8 +133,25 @@ export function findingSql({ baseWhere, where, order, limit }: FindingSqlParts):
              ORDER BY a.cvss_score DESC, a.cvss_version DESC, a.source, a.source_id
              LIMIT 1
            ) sev ON true
+         ), tiered AS (
+           SELECT s.*, b.base_reason AS priority_base_reason, t.tier AS priority_tier,
+                  t.tier <> b.base_tier AS priority_scope_adjusted
+           FROM scored s
+           CROSS JOIN LATERAL (SELECT
+             CASE WHEN s.kev_status = 'listed' THEN 1
+                  WHEN s.cvss_score >= 7 THEN 2
+                  WHEN s.cvss_score >= 4 OR s.cvss_score IS NULL THEN 3
+                  ELSE 4 END AS base_tier,
+             CASE WHEN s.kev_status = 'listed' THEN 'kev_listed'
+                  WHEN s.cvss_score >= 7 THEN 'cvss_high'
+                  WHEN s.cvss_score >= 4 THEN 'cvss_medium'
+                  WHEN s.cvss_score IS NULL THEN 'cvss_unavailable'
+                  ELSE 'cvss_low' END AS base_reason) b
+           CROSS JOIN LATERAL (SELECT
+             CASE WHEN s.scope IN ('optional', 'excluded') THEN LEAST(b.base_tier + 1, 4)
+                  ELSE b.base_tier END AS tier) t
          ), paged AS (
-           SELECT s.* FROM scored s
+           SELECT s.* FROM tiered s
            ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
            ORDER BY ${order}
            LIMIT ${limit}
@@ -115,7 +162,7 @@ export function findingSql({ baseWhere, where, order, limit }: FindingSqlParts):
                 p.cvss_score, p.cvss_version, p.cvss_source, p.cvss_source_id,
                 v.id AS vulnerability_id, v.source, v.source_id, v.aliases, v.summary, v.severity,
                 src.sources, p.group_first_seen_at::text AS cursor_ts,
-                ${kevStatusSql("p")} AS kev_status
+                p.kev_status, p.priority_tier, p.priority_base_reason, p.priority_scope_adjusted
          FROM paged p
          LEFT JOIN vulnerability_groups g ON g.id = p.group_id
          JOIN vulnerabilities v ON v.id = COALESCE(g.canonical_vulnerability_id, p.vulnerability_id)

@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import { createOrg, signUp } from "./helpers";
 
+const PRIORITY_SHOTS = "../../docs/features/SENTRA-14-risk-priority/screenshots";
 const SHOTS = "../../docs/features/SENTRA-16-finding-detail/screenshots";
 const { Pool } = createRequire(new URL("../../api/package.json", import.meta.url))("pg");
 
@@ -261,6 +262,7 @@ test("members can read the evidence behind a finding, and outsiders cannot", asy
   browser,
 }) => {
   mkdirSync(SHOTS, { recursive: true });
+  mkdirSync(PRIORITY_SHOTS, { recursive: true });
   const run = Date.now().toString(36);
   const orgSlug = `detail-${run}`;
   await signUp(page, `detail-owner-${run}@example.com`);
@@ -279,9 +281,8 @@ test("members can read the evidence behind a finding, and outsiders cannot", asy
   await page.goto(`/orgs/${orgSlug}/projects/web-app/findings?status=all`);
   await page.getByRole("link", { name: ids.cve }).click();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(ids.cve);
-  await expect(page.getByTestId("priority-note")).toHaveText(
-    "Sentra priority is not yet calculated.",
-  );
+  await expect(page.getByTestId("priority")).toHaveText("Sentra priority P1 (model v1)");
+  await expect(page.getByTestId("priority-reasons")).toContainText("Listed in CISA KEV: base P1");
   await expect(page.getByTestId("kev-status")).toContainText("In CISA KEV");
   await expect(page.getByTestId("kev-status")).toContainText(
     "Apply updates per vendor instructions.",
@@ -306,7 +307,11 @@ test("members can read the evidence behind a finding, and outsiders cannot", asy
   await page.goto(detail(ids.unverifiable));
   await expect(page.getByTestId("finding-member")).toContainText("cannot tell");
   await expect(page.getByTestId("finding-member")).not.toContainText("falls inside");
+  await expect(page.getByTestId("priority-reasons")).toContainText(
+    "Version could not be verified: tier unchanged",
+  );
   await shot("2-unverifiable");
+  await page.screenshot({ path: `${PRIORITY_SHOTS}/3-priority-breakdown.png` });
 
   await page.goto(detail(ids.resolved));
   await expect(page.getByTestId("finding-status")).toHaveText("Resolved");

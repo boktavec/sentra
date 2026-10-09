@@ -4,6 +4,7 @@ import { Writable } from "node:stream";
 import { Pool } from "pg";
 import { createLogger, unauthenticated } from "@sentra/ts-platform";
 import { buildApp } from "../src/app.ts";
+import { findingSql } from "../src/finding-sql.ts";
 import { createFindingStore } from "../src/findings.ts";
 import { createInvitationStore } from "../src/invitations.ts";
 import { createMemberStore } from "../src/members.ts";
@@ -62,27 +63,44 @@ try {
       [org, project, user.id],
     )
   ).rows[0]!.id;
-  const advisories: string[] = [];
-  for (const [i, score] of [null, 3.1, 5.5, 7.5, 9.8].entries()) {
-    const row = await pool.query<{ id: string }>(
-      `INSERT INTO vulnerabilities (source, source_id, aliases, modified_at, severity,
-         cvss_score, cvss_version, cvss_calculated_at,
-         source_artifact_sha256, source_entry, schema_version, adapter_version)
-       VALUES ('osv', $1, ARRAY[$5], now(), '[]', $2, $3, now(), $4, 'bench', 1, 1) RETURNING id`,
-      [`BENCH-${i}`, score, score === null ? null : "3.1", "a".repeat(64), `CVE-2026-${1000 + i}`],
-    );
-    const advisoryId = row.rows[0]!.id;
-    advisories.push(advisoryId);
-    const groupId = randomUUID();
-    await pool.query(
-      "INSERT INTO vulnerability_groups (id, canonical_vulnerability_id) VALUES ($1, $2)",
-      [groupId, advisoryId],
-    );
-    await pool.query(
-      "INSERT INTO vulnerability_group_members (vulnerability_id, group_id) VALUES ($1, $2)",
-      [advisoryId, groupId],
-    );
-  }
+  // A representative global corpus: findings use 5,000 advisories in two-member groups, a 100,000-row
+  // filler of unrelated advisories sits beside them, and the KEV catalog lists 1,000 CVEs. A per-item
+  // sequential scan of `vulnerabilities` would show up here; five advisories would hide it.
+  await pool.query(
+    `INSERT INTO vulnerabilities (source, source_id, aliases, modified_at, severity,
+       cvss_score, cvss_version, cvss_calculated_at,
+       source_artifact_sha256, source_entry, schema_version, adapter_version)
+     SELECT 'osv', 'BENCH-' || n, ARRAY['CVE-2026-' || (100000 + n)], now(), '[]',
+       (ARRAY[NULL, 3.1, 5.5, 7.5, 9.8])[1 + (n % 5)],
+       CASE WHEN n % 5 = 0 THEN NULL ELSE '3.1' END,
+       now(), $1, 'bench', 1, 1
+     FROM generate_series(1, 5000) n`,
+    ["a".repeat(64)],
+  );
+  await pool.query(
+    `INSERT INTO vulnerabilities (source, source_id, aliases, modified_at, severity,
+       cvss_score, cvss_version, cvss_calculated_at,
+       source_artifact_sha256, source_entry, schema_version, adapter_version)
+     SELECT 'osv', 'FILL-' || n, ARRAY['CVE-2025-' || n], now(), '[]',
+       round((random() * 10)::numeric, 1), '3.1', now(), $1, 'bench', 1, 1
+     FROM generate_series(1, 100000) n`,
+    ["a".repeat(64)],
+  );
+  await pool.query(
+    `WITH ordered AS (
+       SELECT id, row_number() OVER (ORDER BY source_id) AS rn FROM vulnerabilities
+       WHERE source_id LIKE 'BENCH-%'
+     ), pairs AS (
+       SELECT (rn + 1) / 2 AS pair, gen_random_uuid() AS gid, (array_agg(id ORDER BY rn))[1] AS canonical
+       FROM ordered GROUP BY (rn + 1) / 2
+     ), made AS (
+       INSERT INTO vulnerability_groups (id, canonical_vulnerability_id)
+       SELECT gid, canonical FROM pairs RETURNING id
+     )
+     INSERT INTO vulnerability_group_members (vulnerability_id, group_id)
+     SELECT o.id, p.gid FROM ordered o JOIN pairs p ON p.pair = (o.rn + 1) / 2
+     WHERE EXISTS (SELECT 1 FROM made)`,
+  );
   await pool.query(
     `INSERT INTO normalization_runs (artifact_sha256, source, ecosystem, adapter_version, status, correlation_id)
      VALUES ($1, 'cisa-kev', 'none', 1, 'published', 'bench')`,
@@ -91,21 +109,25 @@ try {
   await pool.query(
     `INSERT INTO kev_entries (cve_id, date_added, content_hash, catalog_version,
        date_released, source_artifact_sha256, adapter_version)
-     VALUES ('CVE-2026-1004', CURRENT_DATE, $1, 'bench', now(), $1, 1)`,
+     SELECT 'CVE-2026-' || (100000 + n * 5 + 1), CURRENT_DATE, $1, 'bench', now(), $1, 1
+     FROM generate_series(1, 1000) n`,
     ["c".repeat(64)],
   );
   await pool.query(
     `INSERT INTO findings (org_id, project_id, vulnerability_id, purl, version, ecosystem, scope,
        import_id, match_quality, status, resolved_reason, resolved_at, matcher_version, evidence)
-     SELECT $1, $2, (ARRAY[$4::uuid,$5::uuid,$6::uuid,$7::uuid,$8::uuid])[1 + (g % 5)],
-       'pkg:pypi/bench-' || g || '@1.0', '1.0', 'PyPI', 'required', $3, 'confirmed',
+     SELECT $1, $2, ids[1 + (g % 5000)],
+       'pkg:pypi/bench-' || g || '@1.0', '1.0', 'PyPI', (ARRAY['required','optional','excluded'])[1 + (g % 3)], $3, 'confirmed',
        CASE WHEN g % 7 = 0 THEN 'resolved' ELSE 'open' END,
        CASE WHEN g % 7 = 0 THEN 'dependency_removed' ELSE NULL END,
        CASE WHEN g % 7 = 0 THEN now() ELSE NULL END, 1, '{}'::jsonb
-     FROM generate_series(1, 25000) AS g`,
-    [org, project, importId, ...advisories],
+     FROM generate_series(1, 25000) AS g,
+       (SELECT array_agg(id ORDER BY source_id) AS ids FROM vulnerabilities WHERE source_id LIKE 'BENCH-%') a`,
+    [org, project, importId],
   );
-  await pool.query("ANALYZE findings");
+  await pool.query(
+    "ANALYZE findings, vulnerabilities, vulnerability_groups, vulnerability_group_members, kev_entries",
+  );
   app = buildApp({
     logger: createLogger("bench", {
       level: "error",
@@ -168,7 +190,32 @@ try {
       }),
     );
   };
-  await measure("list", 25000, path, (body) => body.items.length === 50);
+  // SENTRA-14: a fifth of the findings are KEV-listed and scopes are mixed, so every tier is populated.
+  await measure("list sort=priority (default)", 25000, path, (body) => body.items.length === 50);
+  await measure(
+    "list sort=priority priority=p1",
+    25000,
+    `${path}?priority=p1`,
+    (body) => body.items.length === 50,
+  );
+  await measure(
+    "list sort=severity",
+    25000,
+    `${path}?sort=severity`,
+    (body) => body.items.length === 50,
+  );
+  if (process.env["BENCH_EXPLAIN"]) {
+    const { rows } = await pool.query<{ "QUERY PLAN": string }>(
+      `EXPLAIN (ANALYZE, BUFFERS) ${findingSql({
+        baseWhere: "f.org_id = $1 AND f.project_id = $2",
+        where: ["s.status = 'open'"],
+        order: "s.priority_tier, s.cvss_score DESC NULLS LAST, s.group_first_seen_at DESC, s.id",
+        limit: "51",
+      })}`,
+      [org, project],
+    );
+    console.log(rows.map((r) => r["QUERY PLAN"]).join("\n"));
+  }
 
   // SENTRA-16: one group at the response caps (52 advisories; the first 50 members plus the requested
   // one come back), each advisory with 64 KiB of details, 60 refs and 250 explicit versions.

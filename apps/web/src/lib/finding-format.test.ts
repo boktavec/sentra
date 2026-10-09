@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   explainEvidence,
+  explainPriority,
   formatDate,
   kevLabel,
+  priorityLabel,
   resolvedReasonLabel,
   safeHref,
   severityLabel,
 } from "./finding-format.ts";
+import type { FindingPriority } from "./findings.ts";
 
 describe("safeHref", () => {
   it.each(["https://example.test/a?b=1", "http://example.test", "HTTPS://EXAMPLE.TEST/x"])(
@@ -185,5 +188,80 @@ describe("labels", () => {
   });
   it("formats the UTC date", () => {
     expect(formatDate("2026-02-03T23:59:59.000Z")).toBe("2026-02-03");
+  });
+});
+
+describe("priority labels", () => {
+  const priority = (overrides: Partial<FindingPriority> = {}, factors = {}): FindingPriority => ({
+    tier: "P2",
+    modelVersion: 1,
+    baseReason: "cvss_high",
+    scopeAdjusted: false,
+    factors: {
+      kev: "not_listed",
+      cvss: { score: 7.5, category: "high" },
+      scope: "required",
+      matchQuality: "confirmed",
+      ...factors,
+    },
+    ...overrides,
+  });
+
+  it("names the tier and the model version", () => {
+    expect(priorityLabel(priority())).toBe("P2 (model v1)");
+  });
+
+  it.each([
+    ["kev_listed", { kev: "listed" }, "Listed in CISA KEV: base P1"],
+    ["cvss_high", {}, "High or critical severity (CVSS 7.5): base P2"],
+    [
+      "cvss_medium",
+      { cvss: { score: 5.5, category: "medium" } },
+      "Medium severity (CVSS 5.5): base P3",
+    ],
+    [
+      "cvss_unavailable",
+      { cvss: { score: null, category: "unavailable" } },
+      "Severity unavailable: treated as P3",
+    ],
+    ["cvss_low", { cvss: { score: 2, category: "low" } }, "Low severity (CVSS 2.0): base P4"],
+  ] as const)("explains the %s base reason first", (baseReason, factors, sentence) => {
+    expect(explainPriority(priority({ baseReason }, factors))[0]).toBe(sentence);
+  });
+
+  it("says exploitation data is unavailable, never that the vulnerability is not exploited", () => {
+    const reasons = explainPriority(priority({}, { kev: "unavailable" }));
+    expect(reasons).toContain("Exploitation data unavailable");
+    expect(reasons.join(" ")).not.toMatch(/not exploited/i);
+  });
+
+  it("states a not-listed result as a fact about the ingested catalog", () => {
+    expect(explainPriority(priority())).toContain("Not listed in ingested CISA KEV catalog");
+  });
+
+  it("does not repeat the KEV listing as a second reason", () => {
+    expect(explainPriority(priority({ baseReason: "kev_listed" }, { kev: "listed" }))).toEqual([
+      "Listed in CISA KEV: base P1",
+    ]);
+  });
+
+  it("explains a lowered tier, and a scope that could not lower it further", () => {
+    expect(explainPriority(priority({ scopeAdjusted: true }, { scope: "excluded" }))).toContain(
+      "Scope excluded: lowered one tier",
+    );
+    expect(
+      explainPriority(
+        priority(
+          { baseReason: "cvss_low", tier: "P4" },
+          { scope: "optional", cvss: { score: 2, category: "low" } },
+        ),
+      ),
+    ).toContain("Scope optional: already the lowest tier");
+  });
+
+  it("adds nothing for a required scope and reports an unverifiable match without changing the tier", () => {
+    const reasons = explainPriority(priority({}, { matchQuality: "unverifiable" }));
+    expect(reasons.some((r) => r.startsWith("Scope"))).toBe(false);
+    expect(reasons).toContain("Version could not be verified: tier unchanged");
   });
 });

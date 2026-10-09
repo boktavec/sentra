@@ -5,6 +5,7 @@ import {
   category,
   findingSql,
   KEV_ENTRY_MATCHES_ADVISORY,
+  toPriority,
 } from "./finding-sql.ts";
 import type { FindingRow } from "./finding-sql.ts";
 import { isUuid } from "./org-input.ts";
@@ -261,6 +262,7 @@ export async function getFindingDetail(
           : null,
     },
     kevStatus: lead.kev_status,
+    priority: toPriority(lead),
     kev:
       kev.rows?.map((k) => ({
         cveId: k.cve_id,
