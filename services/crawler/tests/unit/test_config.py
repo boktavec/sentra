@@ -39,3 +39,38 @@ def test_runtime_settings_come_from_validated_config(monkeypatch):
     monkeypatch.setenv("CRAWLER_METRICS_PORT", "not-a-port")
     with pytest.raises(RuntimeError, match="CRAWLER_METRICS_PORT"):
         config.load()
+
+
+def test_github_token_is_optional_and_redacted_everywhere_it_could_be_printed(monkeypatch):
+    for k, v in {
+        "CRAWLER_DATABASE_URL": "postgresql://x",
+        "CRAWLER_S3_ENDPOINT": "http://s3",
+        "CRAWLER_S3_ACCESS_KEY": "a",
+        "CRAWLER_S3_SECRET_KEY": "b",
+        "CRAWLER_SIGNING_KEYS": "k1=s",
+    }.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("CRAWLER_GITHUB_TOKEN", raising=False)
+    assert config.load().github_token is None
+    monkeypatch.setenv("CRAWLER_GITHUB_TOKEN", "  ")
+    assert config.load().github_token is None
+
+    token = "ghp_exampleTOKEN0123456789"
+    monkeypatch.setenv("CRAWLER_GITHUB_TOKEN", token)
+    settings = config.load()
+    assert settings.github_token is not None and settings.github_token.reveal() == token
+    for rendering in (
+        repr(settings),
+        str(settings),
+        repr(settings.github_token),
+        f"{settings.github_token}",
+        f"{settings!r}",
+    ):
+        assert token not in rendering
+
+
+@pytest.mark.parametrize("bad", ["two words", "line\nbreak", "tab\there", "café"])
+def test_a_malformed_github_token_is_refused_without_echoing_it(bad):
+    with pytest.raises(RuntimeError, match="CRAWLER_GITHUB_TOKEN") as e:
+        config.parse_github_token(bad)
+    assert bad.strip() not in str(e.value)

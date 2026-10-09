@@ -66,13 +66,20 @@ KEV is stored twice: the full entry in `kev_entries` (the source of truth for "i
 
 An entry that cannot be mapped (bad CVE ID or date) is quarantined; its CVE still counts as listed, so it is not tombstoned.
 
-## GitHub Security Advisory mapping (documented, not built; **Assumed** until SENTRA-9)
+## GitHub Security Advisory mapping (built in SENTRA-9)
+
+Source: REST `GET /advisories?type=reviewed`. The crawler stores each API page body unmodified as one entry (`page-NNNNN.json`) of a zip, so entries are pages; the adapter yields one record per advisory, with provenance `source_entry` = `page-NNNNN.json[<index>]`. Field names and shapes were **Verified** against the live API on 2026-10-09 (unauthenticated).
 
 | GHSA | Canonical |
 | --- | --- |
 | `ghsa_id` | `sourceId` (`source` = `ghsa`) |
-| `cve_id`, `identifiers` | `aliases` |
+| `cve_id`, `identifiers[].value` | `aliases`, de-duplicated, without the advisory's own `ghsa_id` |
 | `summary`, `description`, `published_at`, `updated_at`, `withdrawn_at` | `summary`, `details`, `publishedAt`, `modifiedAt`, `withdrawnAt` |
-| `vulnerabilities[].package` | `affected[]` `{ecosystem, packageName}` |
-| `vulnerabilities[].vulnerable_version_range` (`>= 1.0, < 1.4.2`) | `ranges[].events`: `introduced` / `fixed` / `last_affected` |
-| `severity`, `cvss` | `severity[]` |
+| `vulnerabilities[]` `{package, vulnerable_version_range}` | one `affected[]` entry each; `ecosystem` is mapped to the OSV name (`pip` to `PyPI`, `rust` to `crates.io`, `go` to `Go`, ...; unknown names are kept as given) |
+| `vulnerable_version_range`: `>= a, < b` / `<= b` / `< b` | one `ECOSYSTEM` range: `introduced a` (or `0` with no lower bound), then `fixed b` for `<` or `last_affected b` for `<=` |
+| `vulnerable_version_range`: `= v` | `affected[].versions = [v]`, no range |
+| `cvss_severities.cvss_v3` / `cvss_v4` `.vector_string`, top-level `cvss.vector_string` | `severity[]` `{type: CVSS_V3 / CVSS_V4, vector}`, each vector once |
+| `html_url`, `references[]` (URLs) | `references[]` typed `ADVISORY` / `WEB` |
+| `severity` (text), `cwes`, `credits`, `epss`, `first_patched_version`, `identifiers[].type` | not kept (the textual severity is derived from the vectors) |
+
+A range the model cannot express exactly is a normalization failure (quarantined), not widened: an exclusive lower bound (`> a`), more than one bound of a kind, or an unknown operator. Withdrawn advisories are stored with `withdrawnAt`; the correlator already resolves findings of a withdrawn advisory (`advisory_withdrawn`). Matching verifies only `npm` and `PyPI` ranges; other ecosystems store their data and are reported `ecosystem_unsupported` until a comparator exists. GHSA and OSV rows for the same advisory share the identifier `GHSA-...` and are grouped by the SENTRA-12 grouper.

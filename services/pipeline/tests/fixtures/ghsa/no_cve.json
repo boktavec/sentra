@@ -1,0 +1,61 @@
+{
+  "ghsa_id": "GHSA-6g2r-675j-hx59",
+  "cve_id": null,
+  "url": "https://api.github.com/advisories/GHSA-6g2r-675j-hx59",
+  "html_url": "https://github.com/advisories/GHSA-6g2r-675j-hx59",
+  "summary": "xxhash-rust: Safe xxh3 custom-secret API accepts too-short secret in release",
+  "description": "I have a minimized safe Rust witness for xxhash-rust 0.8.15.\n\nSafe public route:\n\nxxhash_rust::xxh3::xxh3_64_with_secret(&[0x41], &[])\n\nThe caller-side harness contains no unsafe code. Under release execution, the internal minimum custom-secret length predicate is enforced only by debug_assert!. Release-Miri reports construction of a fixed-width reference beyond the empty secret allocation.\n\nObserved diagnostic:\n\nUndefined Behavior: constructing invalid value of type &[u8; 4]: encountered a dangling reference\n\nLocal repair evidence: handling custom-secret slices shorter than the internal minimum before fixed-width secret reads makes the same safe short-secret harness pass under Linux release-Miri.\n\nLocal artifacts:\n- vulnerable log: artifacts/logs/W-4332_xxhash_rust_short_secret_miri_release_linux_001.log\n- repair log: artifacts/logs/differentials/W-4332_xxhash_rust_local_repair_miri_release_linux_001.log\n- report: artifacts/reports/W-4332_xxhash_rust_short_secret_report.md",
+  "type": "reviewed",
+  "severity": "low",
+  "repository_advisory_url": "https://api.github.com/repos/DoumanAsh/xxhash-rust/security-advisories/GHSA-6g2r-675j-hx59",
+  "source_code_location": "https://github.com/DoumanAsh/xxhash-rust",
+  "identifiers": [
+    {
+      "value": "GHSA-6g2r-675j-hx59",
+      "type": "GHSA"
+    }
+  ],
+  "references": [
+    "https://github.com/DoumanAsh/xxhash-rust/security/advisories/GHSA-6g2r-675j-hx59",
+    "https://github.com/DoumanAsh/xxhash-rust/commit/200cadb1a442c7f6cd9747e7d4297379b6b74200",
+    "https://github.com/advisories/GHSA-6g2r-675j-hx59"
+  ],
+  "published_at": "2026-10-02T18:29:13Z",
+  "updated_at": "2026-10-02T18:29:16Z",
+  "github_reviewed_at": "2026-10-02T18:29:13Z",
+  "nvd_published_at": null,
+  "withdrawn_at": null,
+  "vulnerabilities": [
+    {
+      "package": {
+        "ecosystem": "rust",
+        "name": "xxhash-rust"
+      },
+      "vulnerable_version_range": "< 0.8.16",
+      "first_patched_version": "0.8.16",
+      "vulnerable_functions": []
+    }
+  ],
+  "cvss_severities": {
+    "cvss_v3": {
+      "vector_string": "CVSS:3.1/AV:L/AC:L/PR:H/UI:N/S:U/C:L/I:N/A:N",
+      "score": 2.3
+    },
+    "cvss_v4": {
+      "vector_string": null,
+      "score": 0.0
+    }
+  },
+  "cwes": [
+    {
+      "cwe_id": "CWE-125",
+      "name": "Out-of-bounds Read"
+    }
+  ],
+  "credits": [],
+  "comments": 3,
+  "cvss": {
+    "vector_string": "CVSS:3.1/AV:L/AC:L/PR:H/UI:N/S:U/C:L/I:N/A:N",
+    "score": 2.3
+  }
+}
