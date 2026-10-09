@@ -154,6 +154,7 @@ task setup
 Common commands:
 
 ```bash
+task setup
 task lint
 task format
 task format:check
@@ -161,11 +162,20 @@ task typecheck
 task test
 task check
 task check:full
+task fallow
 task security
+task security:history
+task github:ruleset
 task hooks:install
 ```
 
-Namespaced commands target one component, for example `task crawler:test` or `task api:lint`. Component commands report a skip until their `pyproject.toml` or `package.json` exists. `task check` is the fast pre-PR sequence; `task check:full` also scans the working tree for secrets. Run `pre-commit run --all-files` to apply the repository hygiene hooks to all tracked files.
+Namespaced commands target one component, for example `task crawler:test` or `task api:lint`. Component commands report a skip until their `pyproject.toml` or `package.json` exists. `task check` is the fast sequence (format:check, lint, typecheck, test). `task check:full` is the pre-PR command: it runs `task check`, then `task fallow` (audit against `origin/main`), `task security` (secrets in the working tree), and `task security:history` (secrets in commits on your branch, including ones later deleted; `BASE=<ref>` overrides `origin/main`). Run `git fetch origin` first so `origin/main` is current. Run `pre-commit run --all-files` to apply the repository hygiene hooks to all tracked files.
+
+### CI
+
+Every pull request to `main`, and every push to `main`, runs one GitHub Actions job named `check` (`.github/workflows/ci.yml`). It installs the tools from `mise.toml`, then runs exactly `task setup` and `task check:full`, with a lockfile that must match its manifest. A red `check` blocks the merge once the ruleset is applied. A flaky failure may be re-run once; a second failure counts as real, and a known flaky test gets a YouTrack bug instead of a skip or a retry.
+
+`task github:ruleset` applies `.github/rulesets/main.json` (PR required, `check` must pass on an up-to-date branch, no force-push or deletion of `main`). It changes shared repository settings, needs an admin `gh` login, and is run by hand, never from CI. Apply it only after `check` has run green on `main`, and keep the job id `check` in sync with the ruleset. If the gate is stuck (for example Actions is down), the ruleset has no bypass actors, so an admin sets `enforcement` to `disabled` in Settings > Rules (or in the JSON and `task github:ruleset`) to unblock, then restores it.
 
 ## Roadmap
 
