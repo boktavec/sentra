@@ -108,16 +108,53 @@ tasks:
       - fallow audit --base origin/main
 
   check:full:
-    desc: Run fast checks, fallow audit, and secret scanning
+    desc: Run fast checks, fallow audit, and secret scanning (working tree and branch history)
     cmds:
       - task: check
       - task: fallow
       - task: security
+      - task: security:history
 
   security:
     desc: Scan the working tree for secrets
     cmds:
       - gitleaks dir --no-banner --redact .
+
+  security:history:
+    desc: Scan commits on this branch (BASE..HEAD, default origin/main) for secrets, including ones later deleted
+    vars:
+      BASE: '{{.BASE | default "origin/main"}}'
+    cmds:
+      # gitleaks exits 0 ("0 commits scanned") when the base ref is missing, so fail closed here.
+      - cmd: |
+          git rev-parse --verify --quiet '{{.BASE}}^{commit}' > /dev/null || {
+            echo "base ref {{.BASE}} not found; fetch full history (git fetch origin)" >&2
+            exit 1
+          }
+      - gitleaks git --no-banner --redact --log-opts="{{.BASE}}..HEAD" .
+
+  github:ruleset:
+    desc: Apply .github/rulesets/main.json to this repo (admin gh login; run by hand, never from CI)
+    vars:
+      REPO:
+        sh: gh repo view --json nameWithOwner --jq .nameWithOwner
+      RULESET_NAME:
+        sh: python3 -c 'import json; print(json.load(open(".github/rulesets/main.json"))["name"])'
+      RULESET_ID:
+        sh: gh api "repos/{{.REPO}}/rulesets?includes_parents=false" --jq '.[] | select(.name == "{{.RULESET_NAME}}") | .id'
+    cmds:
+      - |
+        if [ "$(printf '%s\n' "{{.RULESET_ID}}" | grep -c .)" -gt 1 ]; then
+          echo "more than one ruleset named {{.RULESET_NAME}}; delete duplicates in Settings > Rules" >&2
+          exit 1
+        fi
+        if [ -n "{{.RULESET_ID}}" ]; then
+          gh api --method PUT "repos/{{.REPO}}/rulesets/{{.RULESET_ID}}" --input .github/rulesets/main.json > /dev/null
+          echo "updated ruleset {{.RULESET_NAME}} ({{.RULESET_ID}})"
+        else
+          gh api --method POST "repos/{{.REPO}}/rulesets" --input .github/rulesets/main.json > /dev/null
+          echo "created ruleset {{.RULESET_NAME}}"
+        fi
 
   hooks:install:
     desc: Install the fast pre-commit hooks
