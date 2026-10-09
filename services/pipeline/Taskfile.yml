@@ -70,3 +70,9 @@ tasks:
     desc: Time matching on a scratch database of real advisories and synthetic tenants (needs `task stack:up` and OSV dumps; see bench/correlate_bench.py)
     cmds:
       - uv run python bench/correlate_bench.py {{.CLI_ARGS}}
+
+  group:run:
+    desc: Run the advisory grouper (SENTRA-12; needs `task stack:up`, migrations applied and `task stack:grouper-role`). Add `-- --once` for a single pass
+    cmds:
+      - "[ -f .env ] || cp .env.example .env"
+      - uv run --env-file .env python -m pipeline.group {{.CLI_ARGS}}

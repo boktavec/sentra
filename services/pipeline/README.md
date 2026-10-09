@@ -75,6 +75,15 @@ Three triggers, one function. `reconcile(project)` takes a per-project advisory 
 
 Run it with `task pipeline:correlate:run` after `task stack:correlator-role`. Metrics are on `CORRELATOR_METRICS_PORT` (9105). `task pipeline:correlate:bench` times matching on real advisories and synthetic tenants.
 
+## Advisory grouper (SENTRA-12)
+
+`python -m pipeline.group` links advisories that describe the same issue. It polls `vulnerabilities.updated_at` (watermark in `group_state`, 5-minute overlap), takes the whole alias component around each changed advisory plus the groups it used to be in, and writes `vulnerability_groups`, `vulnerability_group_members` and `group_conflicts`. It only reads advisories; the correlator is untouched.
+
+- Rule: advisories sharing an identifier (own id or alias) are one group. A component with more than one CVE id, or whose advisories share no affected package, is refused: every member stays a singleton and gets a `group_conflicts` row.
+- Group id = UUIDv5 of the smallest `(source, source_id)` member, so a rebuild gives the same ids. A group merged away keeps its row with `merged_into`.
+- Run: `task pipeline:group:run` after `task stack:grouper-role` (`-- --once` for one pass). To rebuild after a rule change: `DELETE FROM group_state`, then run once. Metrics on `GROUPER_METRICS_PORT` (9106); each pass is a row in `group_runs`.
+- Known limits: see the SENTRA-12 spec and `docs/adr/0004-advisory-groups-over-advisories.md`.
+
 ## Configuration
 
 See `.env.example`. `PIPELINE_MAX_SBOM_BYTES` must be at least the API's upload cap.
