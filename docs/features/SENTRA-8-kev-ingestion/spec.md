@@ -1,6 +1,6 @@
 # SENTRA-8: Ingest CISA KEV data
 
-- Status: Draft
+- Status: Implemented, in review
 - YouTrack: http://localhost:8080/issue/SENTRA-8 ("[MVP] Ingest CISA KEV Data")
 - Owner: Sentra operator / project owner
 
@@ -29,7 +29,7 @@
 | Decision | Chosen approach | Alternatives considered | Reason and tradeoff |
 | --- | --- | --- | --- |
 | Data model | Both: `kev_entries` enrichment table (source of truth for KEV status) plus a `vulnerabilities` row per KEV CVE (source `cisa-kev`) | Enrichment only; canonical rows only (as documented in `models.md`) | Enrichment keeps KEV facts that `vulnerabilities` has no column for. Stub rows keep KEV visible wherever vulnerabilities are listed. Cost: two writes per entry and an ADR, since this departs from `models.md`. |
-| Stub rows | Always create, linked by CVE alias; duplicates with OSV tolerated until SENTRA-12 | Create only if no alias match | Order-independent and idempotent. The same CVE can look duplicated across sources for now. |
+| Stub rows | Always create, linked by CVE alias; duplicates with OSV tolerated until SENTRA-12 | Create only if no alias match | Order-independent and idempotent. The stub row carries no `affected` entries (KEV names a vendor and product, not a package), so it never matches a dependency. The same CVE can look duplicated across sources for now. |
 | Removals | Tombstone: `removed_at` set when a CVE leaves the catalog, cleared if it returns | Mirror latest snapshot; never remove | Keeps history for audit. Every reader must honor `removed_at`; the view does so. |
 | Data flow | Generalize crawler -> `artifact.ingested` -> normalizer | Standalone KEV job | Reuses signing, leases, retries, etag/sha256 idempotency and run tables. Touches shared OSV code, so OSV regression tests are required. |
 | Lookup | SQL view only | API route; `kev` flag on findings | Keeps this story in Data scope; avoids API contract before SENTRA-14/16 shape it. |
@@ -40,7 +40,7 @@
 
 Third-party facts, checked 2026-10-08 against the live feed `https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json`:
 
-- **Verified:** `200`, `content-type: application/json`, `etag`, `last-modified` and `cache-control: max-age=3106` are returned, so conditional GET is possible. (A request carrying `If-None-Match` has not yet been tried; confirm a `304` before relying on it.)
+- **Verified (curl and the crawler's own `fetch`):** `200`, `content-type: application/json`, `etag`, `last-modified`. CISA **ignores `If-None-Match`** (returns `200` with the matching ETag) but honors `If-Modified-Since` (`304`). The crawler only sends `If-None-Match`, so each run downloads the 1.7 MiB body and the `sha256` comparison with the previous run makes it `unchanged`. Sending `If-Modified-Since` would need a `last_modified` column on `ingestion_runs`; not worth it at this size.
 - **Verified:** body is one JSON object with `title`, `catalogVersion` ("2026.10.08"), `dateReleased` (ISO timestamp), `count` (1739) and `vulnerabilities`. The body is 1,777,558 bytes (about 1.7 MiB) and `count` equals the array length.
 - **Verified:** per-entry fields are `cveID`, `vendorProject`, `product`, `vulnerabilityName`, `dateAdded`, `shortDescription`, `requiredAction`, `dueDate`, `knownRansomwareCampaignUse`, `notes`, plus `cwes` and `forensicTriage`, which `models.md` does not mention. Some strings have leading whitespace (e.g. `vulnerabilityName`), so normalize by trimming.
 - **Assumed:** the feed URL and schema stay stable, and not every field is present on every entry (the field set above is a union over all entries). Validate with a schema test using a real catalog fixture, and treat unknown fields as additive.
@@ -51,10 +51,10 @@ Third-party facts, checked 2026-10-08 against the live feed `https://www.cisa.go
 - Affected components: `services/crawler`, `services/pipeline` (normalize), `packages/contracts`, `apps/api/migrations`, `infra/docker` (Task wrapper).
 - Flow: operator publishes signed `crawl.requested {source: cisa-kev, ecosystem: none}` -> crawler does a conditional GET and stores the JSON content-addressed at `raw/cisa-kev/none/<sha256>.json` with its sidecar -> `artifact.ingested` -> normalizer adapter validates the snapshot, upserts `kev_entries` and `vulnerabilities`, tombstones missing CVEs, and records a `normalization_runs` row.
 - Storage (migration `011_kev.sql`):
-  - `kev_entries`: `cve_id` PK, `vendor_project`, `product`, `name`, `description`, `required_action`, `date_added`, `due_date`, `known_ransomware_use`, `cwes text[]`, `notes`, `content_hash`, `first_seen_at`, `last_seen_at`, `removed_at`, `catalog_version`, `date_released`, `source_artifact_sha256`, `adapter_version`, timestamps. Global table, no `tenant_id`.
+  - `kev_entries`: `cve_id` PK, `vendor_project`, `product`, `name`, `description`, `required_action`, `date_added`, `due_date`, `known_ransomware_use`, `cwes text[]`, `notes`, `content_hash`, `removed_at`, `catalog_version`, `date_released`, `source_artifact_sha256`, `adapter_version`, timestamps. Global table, no `tenant_id`.
   - View `vulnerability_kev_status`: for each `vulnerabilities` row, `in_kev` true when its `source_id` or any alias matches a `kev_entries.cve_id` with `removed_at IS NULL`.
   - Grants for the normalizer role; a test pins them.
-- Contracts: additive changes to `crawl.requested` and `artifact.ingested` (source value `cisa-kev`, ecosystem sentinel, artifact key pattern for `.json`). No `vulnerability.v2` is needed, since the flag lives in `kev_entries`.
+- Contracts: **no schema change was needed.** `source` is a free pattern and `ecosystem` accepts `none`. The artifact key is `raw/cisa-kev/none/<sha256>.json` with a `<sha256>.meta.json` sidecar (a `.json` sidecar would overwrite the artifact). No `vulnerability.v2` is needed, since the flag lives in `kev_entries`.
 - Compatibility: OSV behavior unchanged; guarded by regression tests.
 
 ## Workload and targets
@@ -107,8 +107,7 @@ Third-party facts, checked 2026-10-08 against the live feed `https://www.cisa.go
 
 ## Open questions and assumptions to validate
 
-- Confirm a `304` from CISA with `If-None-Match`. Owner: implementation, before the crawler PR.
 - Shrink threshold value (proposed 10%). Owner: user, with archived snapshot comparison, before the normalizer PR.
-- Ecosystem sentinel naming (`none`). Owner: user, now.
+- Ecosystem sentinel `none` and the 10% shrink threshold (floor of 5 removals) were taken as the recommended defaults; change them in review if wrong.
 - Does a KEV-only change need to wake the correlator? Currently no consumer; revisit in SENTRA-14.
 - Split into stacked PRs (crawler generalization, then normalizer and model)? Recommended.

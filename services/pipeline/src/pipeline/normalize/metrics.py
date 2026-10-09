@@ -9,7 +9,7 @@ ARTIFACTS = Counter(
 )
 RECORDS = Counter(
     "normalize_records_total",
-    "Records by outcome (upserted, unchanged, quarantined)",
+    "Records by outcome (upserted, unchanged, quarantined, kev_upserted, kev_tombstoned)",
     ["outcome"],
 )
 RUN_SECONDS = Histogram(

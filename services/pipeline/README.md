@@ -43,9 +43,9 @@ Metrics are on `127.0.0.1:9103/metrics` (`sbom_validation_total{outcome}`, `sbom
 
 A second process (`pipeline.normalize`, consumer group `normalizer-artifacts`) with its own Postgres role, `sentra_normalizer`, which cannot read any tenant table.
 
-`artifact.ingested` -> validate the event -> check the object key is exactly `raw/<source>/<ecosystem>/<sha256>.zip` -> claim the run -> download to a temp file and verify the SHA-256 -> stream the zip -> adapter -> validate against `vulnerability.v1.json` -> upsert in batches -> `vulnerabilities.normalized`.
+`artifact.ingested` -> validate the event -> check the object key is exactly `raw/<source>/<ecosystem>/<sha256>.zip` (`.json` for KEV) -> claim the run -> download to a temp file and verify the SHA-256 -> stream the zip -> adapter -> validate against `vulnerability.v1.json` -> upsert in batches -> `vulnerabilities.normalized`.
 
-- The OSV adapter (`normalize/adapters/osv.py`) is the only code that knows OSV's shape. Validation, persistence and the worker see only the canonical record.
+- Source adapters (`normalize/adapters/osv.py`, `kev.py`) are the only code that knows a source's shape. KEV is one JSON document, not a zip, so `process._pass_kev` writes `kev_entries` and tombstones in one transaction (see [ADR 0004](../../docs/adr/0004-kev-as-enrichment-plus-linked-vulnerability-rows.md)); `NORMALIZER_KEV_MAX_REMOVAL_RATE` is the operator override for a legitimate large removal.  Validation, persistence and the worker see only the canonical record.
 - A row is rewritten only if the source's `modified` is newer or `ADAPTER_VERSION` is higher, so reprocessing the same artifact changes nothing. After changing what the adapter produces, bump `ADAPTER_VERSION` and run `task pipeline:normalize:reprocess -- <ecosystem>`: it rewrites every row from the raw artifact.
 - A record that fails normalization or validation is stored in `normalization_failures` (artifact SHA-256, zip entry, error) and the run continues. If more than 1% of at least 1,000 records fail (**assumed**), the run is marked `failed` and no event is sent.
 - Zip limits (entries, bytes per entry, total bytes) are checked on declared and actual sizes; a tripped limit fails the run before any later entry is read.

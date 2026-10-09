@@ -14,6 +14,11 @@ class Limits:
     batch_size: int = 500
     max_failure_rate: float = 0.01  # abort the run above this share of failed records...
     min_records_for_rate: int = 1000  # ...once at least this many were seen
+    # KEV: one snapshot may tombstone at most this share of the active entries (but always at least
+    # kev_min_removals), or the run fails and nothing changes. An assumption until compared with real
+    # catalog history; raise it (NORMALIZER_KEV_MAX_REMOVAL_RATE) to let a legitimate large removal through.
+    kev_max_removal_rate: float = 0.10
+    kev_min_removals: int = 5
     lease_seconds: int = 15 * 60  # renewed after every batch
     max_attempts: int = 5
     backoff_base: float = 1.0
@@ -49,5 +54,6 @@ def load() -> Settings:
             max_entry_bytes=int(os.environ.get("NORMALIZER_MAX_ENTRY_BYTES", Limits.max_entry_bytes)),
             max_total_bytes=int(os.environ.get("NORMALIZER_MAX_TOTAL_BYTES", Limits.max_total_bytes)),
             batch_size=int(os.environ.get("NORMALIZER_BATCH_SIZE", Limits.batch_size)),
+            kev_max_removal_rate=float(os.environ.get("NORMALIZER_KEV_MAX_REMOVAL_RATE", Limits.kev_max_removal_rate)),
         ),
     )
