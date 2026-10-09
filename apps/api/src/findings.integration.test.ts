@@ -550,3 +550,412 @@ describe("consolidating advisories of one issue (SENTRA-12)", () => {
     expect(JSON.stringify(items)).not.toContain(theirs.org.id);
   });
 });
+
+describe("finding detail (SENTRA-16)", () => {
+  const detailUrl = (orgId: string, slug: string, findingId: string) =>
+    `${listUrl(orgId, slug)}/${findingId}`;
+
+  /** The dependency row the correlator joined on, and an affected entry (with one range) for a package. */
+  async function dependency(
+    s: { orgId: string; projectId: string; importId: string },
+    purl: string,
+  ) {
+    await pool.query(
+      `INSERT INTO sbom_dependencies (import_id, org_id, project_id, purl, purl_type, name, version, ecosystem, scope, occurrences)
+       VALUES ($1, $2, $3, $4, 'pypi', 'Trac', '1.0.0', 'PyPI', 'required', 1)`,
+      [s.importId, s.orgId, s.projectId, purl],
+    );
+  }
+  async function affected(
+    vulnerabilityId: string,
+    packageName: string,
+    events: [string, string][],
+    versions: string[] = [],
+  ) {
+    const id = randomUUID();
+    await pool.query(
+      `INSERT INTO vulnerability_affected (id, vulnerability_id, ecosystem, package_name, versions)
+       VALUES ($1, $2, 'PyPI', $3, $4)`,
+      [id, vulnerabilityId, packageName, versions],
+    );
+    for (const [i, [type, version]] of events.entries()) {
+      await pool.query(
+        `INSERT INTO vulnerability_ranges (affected_id, range_index, event_index, range_type, event_type, event_version)
+         VALUES ($1, 0, $2, 'ECOSYSTEM', $3, $4)`,
+        [id, i, type, version],
+      );
+    }
+  }
+
+  async function seedGroup() {
+    const project = await newProject();
+    const importId = await importFor(project.org.id, project.projectId, project.admin.id);
+    const base = { orgId: project.org.id, projectId: project.projectId, importId };
+    const ghsa = await advisory("GHSA", "ghsa", "GitHub summary");
+    const pysec = await advisory("PYSEC", "osv", "OSV summary");
+    await pool.query(
+      "UPDATE vulnerabilities SET cvss_score = 9.8, cvss_version = '3.1' WHERE id = $1",
+      [pysec],
+    );
+    await group(ghsa, pysec);
+    const purl = "pkg:pypi/trac@1.0.0";
+    await dependency(base, purl);
+    const ghsaFinding = await finding({ ...base, purl, vulnerabilityId: ghsa });
+    const pysecFinding = await finding({
+      ...base,
+      purl,
+      vulnerabilityId: pysec,
+      firstSeen: "2030-01-01T00:00:00Z",
+    });
+    return { ...project, ...base, purl, ghsa, pysec, ghsaFinding, pysecFinding };
+  }
+
+  it("shows the same grouped view for any member id, with the requested id echoed", async () => {
+    const s = await seedGroup();
+    await affected(s.ghsa, "Trac", [
+      ["introduced", "0"],
+      ["fixed", "1.2.0"],
+    ]);
+    await affected(s.ghsa, "other-package", [["introduced", "0"]]);
+
+    const [viaLead, viaOther] = await Promise.all(
+      [s.ghsaFinding, s.pysecFinding].map((id) =>
+        get(detailUrl(s.org.id, s.slug, id), s.member.headers),
+      ),
+    );
+
+    expect(viaLead!.statusCode, viaLead!.body).toBe(200);
+    expect(viaLead!.json().id).toBe(s.ghsaFinding);
+    expect(viaOther!.json().id).toBe(s.pysecFinding);
+    const lead = viaLead!.json();
+    expect({ ...viaOther!.json(), id: lead.id }).toEqual(lead);
+    expect(lead).toMatchObject({
+      purl: s.purl,
+      version: "1.0.0",
+      ecosystem: "PyPI",
+      scope: "required",
+      status: "open",
+      groupId: expect.any(String),
+      vulnerability: {
+        id: s.ghsa,
+        source: "ghsa",
+        summary: "GitHub summary",
+        cvssScore: 9.8,
+        cvssVersion: "3.1",
+        severityCategory: "critical",
+        cvssSource: { source: "osv" },
+      },
+      membersTruncated: false,
+    });
+    expect(lead.members.map((m: { id: string }) => m.id)).toEqual([s.ghsaFinding, s.pysecFinding]);
+    expect(lead.members[0]).toMatchObject({
+      matchQuality: "confirmed",
+      matcherVersion: 1,
+      evidence: { rule: "range", comparator: "pep440", package: "trac" },
+      advisory: {
+        source: "ghsa",
+        aliases: ["CVE-2026-0001"],
+        detailsTruncated: false,
+        refsTruncated: false,
+        refs: [],
+      },
+    });
+  });
+
+  it("returns only the affected entries that match this package, through the correlator's name rule", async () => {
+    const s = await seedGroup();
+    // "Trac" matches the dependency `trac` by PEP 503 name, not by raw string.
+    await affected(
+      s.ghsa,
+      "Trac",
+      [
+        ["introduced", "0"],
+        ["fixed", "1.2.0"],
+      ],
+      ["1.0.0"],
+    );
+    await affected(s.ghsa, "other-package", [["introduced", "0"]]);
+
+    const { members } = (
+      await get(detailUrl(s.org.id, s.slug, s.ghsaFinding), s.admin.headers)
+    ).json();
+
+    expect(members[0].advisory.affected).toEqual([
+      {
+        packageName: "Trac",
+        versions: ["1.0.0"],
+        versionsTruncated: false,
+        ranges: [
+          {
+            type: "ECOSYSTEM",
+            events: [
+              { type: "introduced", version: "0" },
+              { type: "fixed", version: "1.2.0" },
+            ],
+          },
+        ],
+      },
+    ]);
+    expect(members[1].advisory.affected).toEqual([]);
+  });
+
+  it("shows an ungrouped advisory as a single member with a null group", async () => {
+    const project = await newProject();
+    const importId = await importFor(project.org.id, project.projectId, project.admin.id);
+    const id = await finding({
+      orgId: project.org.id,
+      projectId: project.projectId,
+      importId,
+      purl: "pkg:pypi/solo@1",
+    });
+
+    const body = (
+      await get(detailUrl(project.org.id, project.slug, id), project.admin.headers)
+    ).json();
+
+    expect(body.groupId).toBeNull();
+    expect(body.members.map((m: { id: string }) => m.id)).toEqual([id]);
+  });
+
+  it("labels resolved findings and withdrawn advisories and keeps unverifiable evidence as stored", async () => {
+    const project = await newProject();
+    const importId = await importFor(project.org.id, project.projectId, project.admin.id);
+    const base = { orgId: project.org.id, projectId: project.projectId, importId };
+    const vulnerabilityId = await advisory("WITHDRAWN");
+    await pool.query(
+      "UPDATE vulnerabilities SET withdrawn_at = '2026-02-03T00:00:00Z' WHERE id = $1",
+      [vulnerabilityId],
+    );
+    const id = await finding({
+      ...base,
+      purl: "pkg:pypi/old@1",
+      vulnerabilityId,
+      status: "resolved",
+      quality: "unverifiable",
+    });
+
+    const body = (
+      await get(detailUrl(project.org.id, project.slug, id), project.admin.headers)
+    ).json();
+
+    expect(body.status).toBe("resolved");
+    expect(body.members[0]).toMatchObject({
+      status: "resolved",
+      resolvedReason: "dependency_removed",
+      resolvedAt: expect.any(String),
+      matchQuality: "unverifiable",
+      matchReason: "version_unparseable",
+      advisory: { withdrawnAt: "2026-02-03T00:00:00.000Z" },
+    });
+  });
+
+  it("bounds members, refs, details and versions, says so, and always includes the requested member", async () => {
+    const project = await newProject();
+    const importId = await importFor(project.org.id, project.projectId, project.admin.id);
+    const base = { orgId: project.org.id, projectId: project.projectId, importId };
+    const purl = "pkg:pypi/trac@1.0.0";
+    await dependency(base, purl);
+    const advisories = [];
+    for (let i = 0; i < 52; i++) advisories.push(await advisory(`BIG-${i}`));
+    await group(advisories[0]!, ...advisories.slice(1));
+    const ids: string[] = [];
+    for (const [i, vulnerabilityId] of advisories.entries()) {
+      ids.push(
+        await finding({
+          ...base,
+          purl,
+          vulnerabilityId,
+          firstSeen: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(),
+        }),
+      );
+    }
+    const last = ids.at(-1)!;
+    await pool.query(
+      `UPDATE vulnerabilities SET details = repeat('x', 70000),
+         refs = (SELECT jsonb_agg(jsonb_build_object('type', 'WEB', 'url', 'https://example.test/' || n))
+                 FROM generate_series(1, 60) n)
+       WHERE id = $1`,
+      [advisories.at(-1)],
+    );
+    await affected(
+      advisories.at(-1)!,
+      "Trac",
+      [],
+      Array.from({ length: 250 }, (_, n) => `0.${n}`),
+    );
+
+    const body = (
+      await get(detailUrl(project.org.id, project.slug, last), project.admin.headers)
+    ).json();
+
+    expect(body.membersTruncated).toBe(true);
+    expect(body.members).toHaveLength(51);
+    expect(body.members.map((m: { id: string }) => m.id)).toEqual([...ids.slice(0, 50), last]);
+    const { advisory: big } = body.members.at(-1);
+    expect(big.detailsTruncated).toBe(true);
+    expect(big.details).toHaveLength(65536);
+    expect(big.refsTruncated).toBe(true);
+    expect(big.refs).toHaveLength(50);
+    expect(big.refs[0]).toEqual({ type: "WEB", url: "https://example.test/1" });
+    expect(big.affected[0].versionsTruncated).toBe(true);
+    expect(big.affected[0].versions).toHaveLength(200);
+    const small = (
+      await get(detailUrl(project.org.id, project.slug, ids[0]!), project.admin.headers)
+    ).json();
+    expect(small.members).toHaveLength(50);
+    expect(small.membersTruncated).toBe(true);
+  });
+
+  it("caps details at 64 KiB of UTF-8, never splitting a character, and flags only a real cut", async () => {
+    const s = await seedGroup();
+    const url = detailUrl(s.org.id, s.slug, s.ghsaFinding);
+    const details = async (sql: string) => {
+      await pool.query(`UPDATE vulnerabilities SET details = ${sql} WHERE id = $1`, [s.ghsa]);
+      return (await get(url, s.admin.headers)).json().members[0].advisory;
+    };
+
+    // 3-byte characters: 65536 is not a multiple of 3, so a naive byte cut would split one.
+    const euro = await details("repeat('€', 30000)");
+    expect(euro.detailsTruncated).toBe(true);
+    expect(euro.details).toBe("€".repeat(21845));
+    expect(Buffer.byteLength(euro.details)).toBeLessThanOrEqual(65536);
+
+    // 60,000 bytes in 30,000 characters is under the cap: nothing is cut or flagged.
+    const small = await details("repeat('é', 30000)");
+    expect(small.detailsTruncated).toBe(false);
+    expect(small.details).toBe("é".repeat(30000));
+
+    // Exactly at the cap is not truncated; one byte over is.
+    expect((await details("repeat('x', 65536)")).detailsTruncated).toBe(false);
+    expect((await details("repeat('x', 65537)")).detailsTruncated).toBe(true);
+  });
+
+  it("treats refs that are not an array as empty instead of failing", async () => {
+    const s = await seedGroup();
+    for (const refs of ["'{}'", "'\"text\"'", "'null'", "'7'"]) {
+      await pool.query(`UPDATE vulnerabilities SET refs = ${refs}::jsonb WHERE id = $1`, [s.ghsa]);
+      const res = await get(detailUrl(s.org.id, s.slug, s.ghsaFinding), s.admin.headers);
+      expect(res.statusCode, refs).toBe(200);
+      const { advisory } = res.json().members[0];
+      expect(advisory.refs).toEqual([]);
+      expect(advisory.refsTruncated).toBe(false);
+    }
+  });
+
+  it("copes with malformed refs from the source", async () => {
+    const s = await seedGroup();
+    await pool.query(
+      `UPDATE vulnerabilities SET refs = '[{"type": null, "url": "javascript:alert(1)"}, {"url": 5}, 7, null]' WHERE id = $1`,
+      [s.ghsa],
+    );
+
+    const { members } = (
+      await get(detailUrl(s.org.id, s.slug, s.ghsaFinding), s.admin.headers)
+    ).json();
+
+    expect(members[0].advisory.refs).toEqual([
+      { type: null, url: "javascript:alert(1)" },
+      { type: null, url: null },
+      { type: null, url: null },
+      { type: null, url: null },
+    ]);
+  });
+
+  it("reports KEV details when listed, and no claim when the group has no CVE to look up", async () => {
+    const s = await seedGroup();
+    const cve = `CVE-2026-${parseInt(randomUUID().replaceAll("-", "").slice(0, 8), 16)}`;
+    await pool.query("UPDATE vulnerabilities SET aliases = ARRAY[$1] WHERE id = $2", [
+      cve,
+      s.pysec,
+    ]);
+    await pool.query(
+      `INSERT INTO normalization_runs (artifact_sha256, source, ecosystem, adapter_version, status, correlation_id)
+       VALUES ($1, 'cisa-kev', 'none', 1, 'published', $2)`,
+      [randomUUID().replaceAll("-", "").padEnd(64, "a"), `test-${run}`],
+    );
+    await pool.query(
+      `INSERT INTO kev_entries (cve_id, vendor_project, product, name, required_action, known_ransomware_use,
+         date_added, due_date, content_hash, catalog_version, date_released, source_artifact_sha256, adapter_version)
+       VALUES ($1, 'Acme', 'Trac', 'Acme Trac RCE', 'Patch it', 'Known', '2026-01-02', '2026-01-23', $2, 'v1', now(), $2, 1)`,
+      [cve, "b".repeat(64)],
+    );
+    const url = detailUrl(s.org.id, s.slug, s.ghsaFinding);
+
+    const listed = (await get(url, s.admin.headers)).json();
+    expect(listed.kevStatus).toBe("listed");
+    expect(listed.kev).toEqual([
+      {
+        cveId: cve,
+        vendorProject: "Acme",
+        product: "Trac",
+        name: "Acme Trac RCE",
+        dateAdded: "2026-01-02",
+        dueDate: "2026-01-23",
+        knownRansomwareUse: "Known",
+        requiredAction: "Patch it",
+        catalogVersion: "v1",
+      },
+    ]);
+
+    await pool.query("UPDATE kev_entries SET removed_at = now() WHERE cve_id = $1", [cve]);
+    const removed = (await get(url, s.admin.headers)).json();
+    expect(removed).toMatchObject({ kevStatus: "not_listed", kev: null });
+
+    await pool.query("UPDATE vulnerabilities SET aliases = '{}' WHERE id = ANY($1)", [
+      [s.ghsa, s.pysec],
+    ]);
+    const unlinked = (await get(url, s.admin.headers)).json();
+    expect(unlinked).toMatchObject({ kevStatus: "unavailable", kev: null });
+  });
+
+  it("returns the same 404 for malformed, unknown, other-project and other-tenant ids", async () => {
+    const mine = await newProject();
+    const theirs = await seedGroup();
+    const otherProject = await app.inject({
+      method: "POST",
+      url: `/v1/orgs/${mine.org.id}/projects`,
+      headers: mine.admin.headers,
+      payload: { name: "other", slug: "other" },
+    });
+    expect(otherProject.statusCode).toBe(201);
+    const importId = await importFor(mine.org.id, mine.projectId, mine.admin.id);
+    const sibling = await finding({
+      orgId: mine.org.id,
+      projectId: mine.projectId,
+      importId,
+      purl: "pkg:pypi/sibling@1",
+    });
+    const attempts = [
+      "not-a-uuid",
+      randomUUID(),
+      sibling, // exists, but in the project the URL does not name
+      theirs.ghsaFinding, // another tenant's
+    ];
+
+    const results = await Promise.all(
+      attempts.map((id) => get(detailUrl(mine.org.id, "other", id), mine.admin.headers)),
+    );
+
+    for (const res of results) {
+      expect(res.statusCode).toBe(404);
+      expect(res.body).not.toContain(theirs.purl);
+      expect(res.body).not.toContain(theirs.org.id);
+    }
+    const shapes = results.map((r) => ({ ...r.json(), correlationId: undefined }));
+    expect(new Set(shapes.map((s) => JSON.stringify(s))).size).toBe(1);
+    // The sibling is reachable in its own project.
+    expect(
+      (await get(detailUrl(mine.org.id, mine.slug, sibling), mine.admin.headers)).statusCode,
+    ).toBe(200);
+    // The other tenant's id does not resolve in the caller's matching project either.
+    expect(
+      (await get(detailUrl(mine.org.id, mine.slug, theirs.ghsaFinding), mine.admin.headers))
+        .statusCode,
+    ).toBe(404);
+  });
+
+  it("requires a signed-in user", async () => {
+    const s = await seedGroup();
+    expect((await get(detailUrl(s.org.id, s.slug, s.ghsaFinding))).statusCode).toBe(401);
+  });
+});

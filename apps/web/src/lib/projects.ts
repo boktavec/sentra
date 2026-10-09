@@ -1,14 +1,15 @@
 import { notFound } from "next/navigation";
 import { apiGet } from "./api.ts";
 import { callApi } from "./auth.ts";
+import { fetchOrg } from "./orgs.ts";
 
-export interface Project {
+interface Project {
   id: string;
   name: string;
   slug: string;
 }
 
-export type ProjectPage = { items: Project[]; nextCursor: string | null };
+type ProjectPage = { items: Project[]; nextCursor: string | null };
 
 export const listProjects = (orgId: string, cursor?: string) =>
   callApi((token) =>
@@ -25,4 +26,13 @@ export async function fetchProject(orgId: string, slug: string) {
   );
   if (!project.ok && project.status === 404) notFound();
   return project;
+}
+
+/** The org and project a page belongs to, or the correlation ID of the failure to show instead. */
+export async function fetchProjectScope(orgSlug: string, projectSlug: string) {
+  const org = await fetchOrg(orgSlug);
+  if (!org.ok) return { ok: false as const, correlationId: org.correlationId };
+  const project = await fetchProject(org.data.id, projectSlug);
+  if (!project.ok) return { ok: false as const, correlationId: project.correlationId };
+  return { ok: true as const, org: org.data, project: project.data };
 }
