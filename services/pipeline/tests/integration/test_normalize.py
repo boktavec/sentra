@@ -195,7 +195,7 @@ def test_events_are_dropped_not_processed_when_invalid_untrusted_or_for_another_
     elsewhere = env.event(sha)
     elsewhere["artifact"]["key"] = "sbom/someone-elses/file.zip"
     assert handle(elsewhere, deps) == "dropped_untrusted"
-    assert handle(env.event(sha, source="cisa-kev"), deps) == "skipped_source"
+    assert handle(env.event(sha, source="ghsa"), deps) == "skipped_source"
     assert env.q("SELECT count(*) FROM normalization_runs") == [(0,)]
 
 
