@@ -16,7 +16,7 @@ from .. import log
 from ..publisher import Publisher
 from ..storage import make_client
 from . import config
-from .process import Deps, handle
+from .process import Deps, artifact_key, handle
 from .store import Store
 
 
@@ -51,7 +51,7 @@ def main() -> int:
         "ecosystem": args.ecosystem,
         "artifact": {
             "bucket": settings.s3_bucket,
-            "key": f"raw/{args.source}/{args.ecosystem}/{sha256}.zip",
+            "key": artifact_key(args.source, args.ecosystem, sha256),
             "sha256": sha256,
             "sizeBytes": 0,
         },

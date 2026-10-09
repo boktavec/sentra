@@ -10,16 +10,17 @@ from confluent_kafka import KafkaException
 
 from .. import contracts
 from . import archive, events, model
-from .adapters import osv
+from .adapters import kev, osv
 from .config import Limits
 from .metrics import ARTIFACTS, RECORDS, RETRIES, RUN_SECONDS
-from .store import Claim, LeaseLost, Store
+from .store import Claim, LeaseLost, Store, TooManyRemovals
 
 log = logging.getLogger("pipeline")
 
 # Source name -> (adapter, adapter version). A source with no entry is skipped until its story adds one.
 ADAPTERS: dict[str, tuple[Callable[[dict[str, Any]], dict[str, Any]], int]] = {
     osv.SOURCE: (osv.normalize, osv.ADAPTER_VERSION),
+    kev.SOURCE: (kev.normalize, kev.ADAPTER_VERSION),
 }
 
 # Failures of something we depend on. These are released and retried for as long as the outage lasts,
@@ -45,9 +46,68 @@ class Deps:
     sleep: Callable[[float], None] = time.sleep
 
 
+def artifact_key(source: str, ecosystem: str, sha256: str) -> str:
+    """The crawler's layout, the only place the pipeline reads from. KEV is one JSON document, not a zip."""
+    return f"raw/{source}/{ecosystem}/{sha256}.{'json' if source == kev.SOURCE else 'zip'}"
+
+
+def _pass_kev(run_id: str, event: dict[str, Any], deps: Deps) -> None:
+    """One pass over a KEV snapshot: check it is whole, write the enrichment rows and tombstones in one
+    transaction, then the linked vulnerabilities rows in batches."""
+    limits, sha256 = deps.limits, event["artifact"]["sha256"]
+    deps.store.restart(run_id, limits.lease_seconds)
+    with archive.download(deps.s3, deps.bucket, event["artifact"]["key"], sha256, limits.max_artifact_bytes) as f:
+        snapshot = kev.parse(f, limits.max_entry_bytes)
+    rows: list[dict[str, Any]] = []
+    stubs: list[tuple[str, dict[str, Any]]] = []
+    failed: list[tuple[str, str]] = []
+    seen = {c for c in map(kev.cve_id, snapshot.entries) if c}
+    for i, raw in enumerate(snapshot.entries):
+        name = f"vulnerabilities[{i}]"
+        try:
+            doc = kev.normalize(raw)
+            model.validate(doc)
+            rows.append(kev.entry(raw))
+            stubs.append((name, doc))
+        except Exception as e:  # a bad entry is quarantined, whatever way it is bad
+            failed.append((name, f"{type(e).__name__}: {e}"[:1000]))
+    total = len(snapshot.entries)
+    if total >= limits.min_records_for_rate and len(failed) / total > limits.max_failure_rate:
+        raise TooManyFailures(f"{len(failed)} of {total} entries failed (limit {limits.max_failure_rate:.0%})")
+    upserted, tombstoned = deps.store.commit_kev(
+        run_id,
+        sha256=sha256,
+        adapter_version=kev.ADAPTER_VERSION,
+        catalog_version=snapshot.catalog_version,
+        date_released=snapshot.date_released,
+        rows=rows,
+        seen=seen,
+        max_removals=lambda active: max(limits.kev_min_removals, int(active * limits.kev_max_removal_rate)),
+        lease_seconds=limits.lease_seconds,
+    )
+    RECORDS.labels("kev_upserted").inc(upserted)
+    RECORDS.labels("kev_tombstoned").inc(tombstoned)
+    for start in range(0, max(len(stubs), 1), limits.batch_size):
+        last = start + limits.batch_size >= len(stubs)
+        done, unchanged = deps.store.commit_batch(
+            run_id,
+            sha256=sha256,
+            adapter_version=kev.ADAPTER_VERSION,
+            schema_version=model.SCHEMA_VERSION,
+            ok=stubs[start : start + limits.batch_size],
+            failed=failed if last else [],
+            lease_seconds=limits.lease_seconds,
+        )
+        RECORDS.labels("upserted").inc(done)
+        RECORDS.labels("unchanged").inc(unchanged)
+    RECORDS.labels("quarantined").inc(len(failed))
+
+
 def _pass(run_id: str, event: dict[str, Any], deps: Deps) -> None:
     """One streaming pass over the artifact: normalize, validate, write in batches, quarantine the rest."""
     limits, sha256, source = deps.limits, event["artifact"]["sha256"], event["source"]
+    if source == kev.SOURCE:
+        return _pass_kev(run_id, event, deps)
     normalize, adapter_version = ADAPTERS[source]
     deps.store.restart(run_id, limits.lease_seconds)
     ok: list[tuple[str, dict[str, Any]]] = []
@@ -98,7 +158,7 @@ def _run(claim: Claim, event: dict[str, Any], deps: Deps, extra: dict[str, Any])
             _pass(run_id, event, deps)
         except LeaseLost:
             return "skipped_duplicate"
-        except (archive.ArchiveError, TooManyFailures) as e:
+        except (archive.ArchiveError, TooManyFailures, TooManyRemovals) as e:
             deps.store.finish(run_id, status="failed", error=str(e)[:500])
             log.error("artifact failed", extra={**extra, "reason": str(e)})
             return "failed"
@@ -156,7 +216,7 @@ def handle(event: dict[str, Any], deps: Deps) -> str:
         log.info("source has no adapter yet", extra={**extra, "outcome": "skipped_source"})
         return "skipped_source"
     # The crawler's layout is the only place the pipeline will read from, whatever the event says.
-    if artifact["key"] != f"raw/{source}/{ecosystem}/{artifact['sha256']}.zip":
+    if artifact["key"] != artifact_key(source, ecosystem, artifact["sha256"]):
         log.warning("event dropped", extra={**extra, "outcome": "dropped_untrusted", "reason": "unexpected object key"})
         return "dropped_untrusted"
     _, adapter_version = ADAPTERS[source]

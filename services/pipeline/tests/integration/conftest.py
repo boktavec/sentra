@@ -210,8 +210,8 @@ def env(database, clean_bucket):
     """Normalizer harness over a clean set of vulnerability tables."""
     e = Env(database, clean_bucket)
     e.q(
-        "TRUNCATE findings, vulnerability_ranges, vulnerability_affected, vulnerabilities, normalization_runs, "
-        "normalization_failures"
+        "TRUNCATE kev_entries, findings, vulnerability_ranges, vulnerability_affected, vulnerabilities, "
+        "normalization_runs, normalization_failures"
     )
     yield e
     for store in e.stores:
