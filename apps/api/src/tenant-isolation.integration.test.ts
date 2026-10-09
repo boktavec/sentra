@@ -17,6 +17,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createLogger, unauthenticated } from "@sentra/ts-platform";
 import { buildApp } from "./app.ts";
+import { createAuditStore } from "./audits.ts";
 import { createInvitationStore } from "./invitations.ts";
 import { createMemberStore } from "./members.ts";
 import { migrate } from "./migrate.ts";
@@ -120,6 +121,12 @@ const CASES: Case[] = [
     build: (t) => ({ url: `${org(t)}/invitations/${t.invitationId}` }),
   },
   {
+    route: "GET /v1/orgs/:orgId/audit-events",
+    adminOnly: true,
+    child: false,
+    build: (t) => ({ url: `${org(t)}/audit-events` }),
+  },
+  {
     route: "POST /v1/orgs/:orgId/projects",
     child: false,
     build: (t) => ({ url: `${org(t)}/projects`, payload: { name: "Intruder", slug: "intruder" } }),
@@ -182,6 +189,17 @@ const CASES: Case[] = [
 ];
 
 /** Routes under /v1 that are not tenant-scoped on purpose. */
+const FAILURE_ACTIONS: Record<string, string> = {
+  "POST /v1/orgs/:orgId/projects": "project.create",
+  "POST /v1/orgs/:orgId/projects/:slug/sboms": "sbom.upload_initiated",
+  "POST /v1/orgs/:orgId/projects/:slug/sboms/:importId/complete": "sbom.upload_completed",
+  "PATCH /v1/orgs/:orgId/members/:userId": "member.role_changed",
+  "DELETE /v1/orgs/:orgId/members/:userId": "member.removed",
+  "POST /v1/orgs/:orgId/invitations": "invitation.create",
+  "DELETE /v1/orgs/:orgId/invitations/:invitationId": "invitation.revoked",
+  "POST /v1/orgs/:orgId/projects/:slug/findings/:findingId/investigations": "investigation.create",
+};
+
 const EXEMPT: Record<string, string> = {
   "GET /v1/me": "returns the caller's own user ID only",
   "POST /v1/orgs": "creates a new org for the caller; no existing tenant is addressed",
@@ -332,6 +350,7 @@ async function snapshot(orgIds: string[]) {
       await pool.query("SELECT * FROM organizations WHERE id = $1", [orgId])
     ).rows;
     for (const { table_name } of tables) {
+      if (table_name === "audit_events") continue;
       out[`${table_name}:${orgId}`] = (
         await pool.query(
           `SELECT t::text AS r FROM "${table_name}" t WHERE org_id = $1 ORDER BY 1`,
@@ -341,6 +360,39 @@ async function snapshot(orgIds: string[]) {
     }
   }
   return out;
+}
+
+async function auditSnapshot(orgId: string) {
+  return (
+    await pool.query<Record<string, unknown>>(
+      `SELECT id, org_id, actor_user_id, action, target_type, target_id, result, failure_code
+       FROM audit_events WHERE org_id = $1 ORDER BY id`,
+      [orgId],
+    )
+  ).rows;
+}
+
+function expectSafeAuditChanges(
+  before: Record<string, unknown>[],
+  after: Record<string, unknown>[],
+  actorUserId: string,
+  route: string,
+  statuses: number[],
+) {
+  const action = FAILURE_ACTIONS[route];
+  const expectedCount = action ? statuses.filter((status) => status >= 400).length : 0;
+  const previousIds = new Set(before.map((row) => row.id));
+  const added = after.filter((row) => !previousIds.has(row.id));
+  expect(added).toHaveLength(expectedCount);
+  for (const row of added) {
+    expect(row).toMatchObject({
+      actor_user_id: actorUserId,
+      action,
+      target_id: null,
+      result: "failed",
+    });
+    expect(row.failure_code).toMatch(/^(invalid_input|not_found|forbidden|bad_request)$/);
+  }
 }
 
 /** What the caller can observe, minus the per-request correlation ID. */
@@ -371,6 +423,7 @@ beforeAll(async () => {
   app = buildApp({
     logger,
     orgs: createOrgStore(pool, { maxOrgsPerUser: 100 }),
+    audits: createAuditStore(pool, logger),
     members: createMemberStore(pool),
     projects: createProjectStore(pool),
     findings: createFindingStore(pool),
@@ -430,6 +483,7 @@ describe.each(CASES)("$route", (c) => {
   it("is a 404 for an outsider, the same as for a random org, and changes nothing", async () => {
     const { victim, outsider, home } = world;
     const before = await snapshot([victim.orgId, home.id]);
+    const auditsBefore = await Promise.all([auditSnapshot(victim.orgId), auditSnapshot(home.id)]);
     const [real, reference] = [
       await call(outsider, c.route.split(" ")[0]!, c.build(victim)),
       await call(outsider, c.route.split(" ")[0]!, c.build(randomTarget(victim))),
@@ -438,6 +492,8 @@ describe.each(CASES)("$route", (c) => {
     expect(seen(real)).toEqual(seen(reference));
     expect(real.body).not.toContain(victim.orgId);
     expect(await snapshot([victim.orgId, home.id])).toEqual(before);
+    await expect(auditSnapshot(victim.orgId)).resolves.toEqual(auditsBefore[0]);
+    await expect(auditSnapshot(home.id)).resolves.toEqual(auditsBefore[1]);
   });
 
   it("is a 401 with no identity", async () => {
@@ -454,20 +510,33 @@ describe.each(CASES)("$route", (c) => {
       const swapped: Target = { ...victim, orgId: home.id, orgSlug: home.slug };
       const control = randomTarget(victim, { orgId: home.id, orgSlug: home.slug });
       const before = await snapshot([victim.orgId, home.id]);
+      const [victimAuditsBefore, homeAuditsBefore] = await Promise.all([
+        auditSnapshot(victim.orgId),
+        auditSnapshot(home.id),
+      ]);
       const method = c.route.split(" ")[0]!;
       const real = await call(dual, method, c.build(swapped));
       const reference = await call(dual, method, c.build(control));
       expect(seen(real)).toEqual(seen(reference));
       expect(await snapshot([victim.orgId, home.id])).toEqual(before);
+      await expect(auditSnapshot(victim.orgId)).resolves.toEqual(victimAuditsBefore);
+      expectSafeAuditChanges(homeAuditsBefore, await auditSnapshot(home.id), dual, c.route, [
+        real.statusCode,
+        reference.statusCode,
+      ]);
     },
   );
 
   it.runIf(c.adminOnly)("is a 403 for a plain member of the victim org", async () => {
     const { victim, dual } = world;
     const before = await snapshot([victim.orgId]);
+    const auditsBefore = await auditSnapshot(victim.orgId);
     const res = await call(dual, c.route.split(" ")[0]!, c.build(victim));
     expect(res.statusCode).toBe(403);
     expect(await snapshot([victim.orgId])).toEqual(before);
+    expectSafeAuditChanges(auditsBefore, await auditSnapshot(victim.orgId), dual, c.route, [
+      res.statusCode,
+    ]);
   });
 });
 
@@ -564,8 +633,12 @@ describe("findings", () => {
   });
 });
 
-// Not built yet. Each story that adds one of these registers its routes in CASES (the coverage
-// test fails until it does) and replaces the todo.
-describe("pending resources", () => {
-  it.todo("audit records: cross-tenant read (SENTRA-20)");
+describe("audit records", () => {
+  it("are readable by a real admin and filter only that organization", async () => {
+    const res = await call(world.outsider, "GET", {
+      url: `/v1/orgs/${world.home.id}/audit-events?result=success`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).not.toContain(world.victim.orgId);
+  });
 });

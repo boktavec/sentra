@@ -7,6 +7,8 @@ import {
   type Logger,
 } from "@sentra/ts-platform";
 import { createAuthenticator } from "./auth.ts";
+import { registerAuditRoutes } from "./audit-routes.ts";
+import type { AuditStore } from "./audits.ts";
 import * as metrics from "./metrics.ts";
 import { registerFindingsRoutes } from "./findings-routes.ts";
 import { registerInvestigationRoutes } from "./investigation-routes.ts";
@@ -29,6 +31,7 @@ declare module "fastify" {
     ctx: { correlationId: string; log: Logger };
     user?: AuthUser;
     tenant?: TenantContext;
+    failureCode?: string;
   }
 }
 
@@ -44,6 +47,8 @@ interface Deps {
   sbom?: SbomStore | undefined;
   sbomMaxBytes?: number;
   invitations: InvitationStore;
+  /** Optional only for focused route tests that do not register audit history. */
+  audits?: AuditStore;
   ready: () => Promise<boolean>;
   trustedProxies: string[] | false;
 }
@@ -59,6 +64,7 @@ export function buildApp({
   sbom,
   sbomMaxBytes,
   invitations,
+  audits,
   ready,
   trustedProxies,
 }: Deps) {
@@ -74,16 +80,16 @@ export function buildApp({
 
   app.setErrorHandler((err, request, reply) => {
     const { correlationId, log } = request.ctx;
-    const response = toErrorResponse(
-      err instanceof AppError ? err : fastifyClientError(err),
-      correlationId,
-    );
+    const safeError = err instanceof AppError ? err : fastifyClientError(err);
+    request.failureCode = safeError instanceof AppError ? safeError.code : "internal_error";
+    const response = toErrorResponse(safeError, correlationId);
     if (response.status >= 500) log.error({ err }, "request_failed");
     return reply.status(response.status).headers(response.headers).send(response.body);
   });
   app.setNotFoundHandler(() => {
     throw new AppError("not_found", 404, "Not found");
   });
+  app.addHook("onSend", failedResponse(audits));
 
   app.get("/healthz", async () => ({ status: "ok" }));
   app.get("/readyz", async (_request, reply) =>
@@ -110,12 +116,85 @@ export function buildApp({
       registerInvestigationRoutes(protectedRoutes, { logger, orgs, investigations });
     registerSbomRoutes(protectedRoutes, { logger, orgs, sbom, maxBytes: sbomMaxBytes ?? 0 });
     registerInvitationRoutes(protectedRoutes, { logger, orgs, invitations });
+    if (audits) registerAuditRoutes(protectedRoutes, { logger, orgs, audits });
   });
 
   return app;
 }
 
 /** Fastify's own 4xx errors (bad JSON, etc.) keep their status but get a generic message. */
+const FAILURE_ACTIONS: Record<
+  string,
+  {
+    action: string;
+    targetType: "user" | "invitation" | "project" | "sbom_import" | "investigation";
+  }
+> = {
+  "POST /v1/orgs/:orgId/projects": { action: "project.create", targetType: "project" },
+  "POST /v1/orgs/:orgId/projects/:slug/sboms": {
+    action: "sbom.upload_initiated",
+    targetType: "sbom_import",
+  },
+  "POST /v1/orgs/:orgId/projects/:slug/sboms/:importId/complete": {
+    action: "sbom.upload_completed",
+    targetType: "sbom_import",
+  },
+  "PATCH /v1/orgs/:orgId/members/:userId": { action: "member.role_changed", targetType: "user" },
+  "DELETE /v1/orgs/:orgId/members/:userId": { action: "member.removed", targetType: "user" },
+  "POST /v1/orgs/:orgId/invitations": { action: "invitation.create", targetType: "invitation" },
+  "DELETE /v1/orgs/:orgId/invitations/:invitationId": {
+    action: "invitation.revoked",
+    targetType: "invitation",
+  },
+  "POST /v1/orgs/:orgId/projects/:slug/findings/:findingId/investigations": {
+    action: "investigation.create",
+    targetType: "investigation",
+  },
+};
+
+function failureAction(request: import("fastify").FastifyRequest, route: string) {
+  const action = FAILURE_ACTIONS[`${request.method} ${route}`];
+  if (
+    action?.action === "member.removed" &&
+    request.user?.id === (request.params as { userId?: string }).userId
+  ) {
+    return { ...action, action: "member.left" };
+  }
+  return action;
+}
+
+function failedResponse(audits: AuditStore | undefined) {
+  return async (
+    request: import("fastify").FastifyRequest,
+    reply: import("fastify").FastifyReply,
+  ) => {
+    if (reply.statusCode < 400) return;
+    const route = request.routeOptions.url ?? "unmatched";
+    const failureCode = request.failureCode ?? "internal_error";
+    request.ctx.log.warn(
+      {
+        status: reply.statusCode,
+        route,
+        requestIp: request.ip,
+        failureCode,
+        ...(request.user ? { userId: request.user.id } : {}),
+        ...(request.tenant ? { orgId: request.tenant.orgId } : {}),
+      },
+      "api_request_failed",
+    );
+    const action = failureAction(request, route);
+    if (action && request.tenant) {
+      await audits?.recordFailure({
+        tenant: request.tenant,
+        action: action.action,
+        targetType: action.targetType,
+        correlationId: request.ctx.correlationId,
+        failureCode,
+      });
+    }
+  };
+}
+
 function fastifyClientError(err: unknown): unknown {
   const status = (err as { statusCode?: number }).statusCode;
   return status && status >= 400 && status < 500
