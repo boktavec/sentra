@@ -38,7 +38,7 @@ Third-party claims:
 - Components: `services/pipeline/src/pipeline/group/` (new), `apps/api` findings read model, migration `012_vulnerability_groups.sql`.
 - Flow: normalizer upserts advisories (bumps `updated_at`) -> grouper reads changed advisories by watermark -> recomputes affected components -> writes groups/members/conflicts in one transaction per batch (a component is never split across batches) -> findings API joins findings -> members -> groups and collapses.
 - Storage (additive): `vulnerability_groups(id, merged_into, canonical_source, canonical_source_id, created_at, updated_at)`, `vulnerability_group_members(vulnerability_id PK, group_id)`, `group_conflicts(vulnerability_id, reason, detected_at)`, `group_runs`, `group_state`. Final shapes are in migration 012.
-- API: findings list item = `{ vulnerability: {groupId, canonical summary, severity}, sources: [{source, sourceId, aliases}] }`. Old fields documented as replaced in `packages/contracts`.
+- API (`GET /v1/orgs/:orgId/projects/:slug/findings`, **response changed**): one item per (purl, group). Same fields as before plus `vulnerability.groupId` (null while the grouper has not reached the advisory) and `sources: [{id, source, sourceId, aliases}]` listing every advisory in the group, including advisories with no finding of their own (e.g. a `cisa-kev` stub). `vulnerability` is the group's canonical advisory (summary, severity, aliases). The item is led by one finding (open over resolved, confirmed over unverifiable, then oldest): `id`, `status`, `matchQuality`, `evidence`, `version`, `scope` and `importId` are the lead's; `firstSeenAt` is the earliest and `lastSeenAt` the latest across the issue's findings. Pagination is keyset on (`firstSeenAt` DESC, lead `id`). The item `id` is the lead finding's id and can change if a different finding becomes the lead. There is no separate contract file for findings; this section and the SENTRA-13 spec are the reference.
 - Compatibility: `vulnerabilities` and `findings` unchanged. Advisory with no group yet falls back to its own row (LEFT JOIN), so lag never hides a finding. No findings backfill.
 
 ## Workload and targets
@@ -90,7 +90,8 @@ Third-party claims:
 
 ## Open questions and assumptions to validate
 
-- Guard definition and alias symmetry on real data (before merge of grouper PR).
-- Group severity shown as highest advisory severity as-is; real merge deferred to SENTRA-14 (confirm with user).
-- Canonical summary choice (which member supplies it): proposal is smallest-key member, confirm.
-- Stacked PRs: (1) schema + grouper, (2) API read model.
+- Guard definition and alias symmetry on real data (before relying on the grouper in production).
+- Severity: `vulnerability.severity` is the canonical advisory's own severity as-is; merging or scoring across sources is SENTRA-14. Implemented with this default; not yet confirmed by the user.
+- Canonical summary comes from the canonical member (smallest key among advisories that list packages). Implemented with this default; not yet confirmed.
+- The read query computes groups with a window function over the project's findings on every page (O(findings per project)); unmeasured. Add a stored group key on `findings` if it proves slow.
+- Delivered as stacked PRs: (1) schema + grouper, (2) API read model, tests and learning note.

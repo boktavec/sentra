@@ -106,7 +106,7 @@ sweep timer (lease) ------------------------------------------------+||
   - New `sbom.parsed.v1`: ADR 0002 envelope plus `importId`, `orgId`, `projectId`, `dependencyCount`. The matcher reads `org_id` and `project_id` from the database, not the event.
   - Published by the parse worker after its commit; a crash before publish is recovered by redelivery of `sbom.uploaded`, as in SENTRA-11.
   - Existing `vulnerabilities.normalized` is only a wake-up; its counts are ignored.
-- API: `GET /v1/orgs/:orgId/projects/:slug/findings?limit&cursor` (projects are addressed by slug, like the SBOM routes). Any org member. Keyset pagination on `(first_seen_at DESC, id)`. Returns finding fields plus `vulnerability {source, sourceId, aliases, summary, severity}`. Both open and resolved findings appear, with `status`; SENTRA-15 adds filters. Uses the existing org and project scoping, and the error shape in `packages/contracts/error-response.md`.
+- API: `GET /v1/orgs/:orgId/projects/:slug/findings?limit&cursor` (projects are addressed by slug, like the SBOM routes). Any org member. Keyset pagination on `(first_seen_at DESC, id)`. Returns finding fields plus `vulnerability {source, sourceId, aliases, summary, severity}`. SENTRA-12 changed the response: one item per issue with `sources[]` and `vulnerability.groupId`; see the SENTRA-12 spec. Both open and resolved findings appear, with `status`; SENTRA-15 adds filters. Uses the existing org and project scoping, and the error shape in `packages/contracts/error-response.md`.
 - Compatibility: additive. The `match_name` generated columns rewrite two tables once. Rollback: stop the worker and drop the new tables; the columns are harmless.
 
 ## Workload and targets
