@@ -1,4 +1,4 @@
-# 0004: Investigations are durable runs with a Postgres outbox
+# 0007: Investigations are durable runs with a Postgres outbox
 
 - Status: Accepted
 - Date: 2026-10-08

@@ -1,14 +1,7 @@
 import { apiGet } from "./api.ts";
 import { callApi } from "./auth.ts";
-
-export interface Finding {
-  id: string;
-  purl: string;
-  version: string;
-  status: "open" | "resolved";
-  matchQuality: "confirmed" | "unverifiable";
-  vulnerability: { source: string; sourceId: string; summary: string | null };
-}
+import type { Finding } from "./findings.ts";
+export type { Finding } from "./findings.ts";
 
 export interface Investigation {
   id: string;
@@ -37,7 +30,7 @@ export const investigationsPath = (orgId: string, projectSlug: string, findingId
 export const listInvestigationFindings = (orgId: string, projectSlug: string, cursor?: string) =>
   callApi((token) =>
     apiGet<Page<Finding>>(
-      `${findingsPath(orgId, projectSlug)}?limit=20${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+      `${findingsPath(orgId, projectSlug)}?status=all&severity=all&sort=newest&limit=20${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
       token,
     ),
   );

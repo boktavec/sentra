@@ -52,6 +52,7 @@ let orgId: string;
 let projectId: string;
 let findingId: string;
 let resolvedId: string;
+let groupId: string;
 const slug = `inv-${randomUUID().slice(0, 8)}`;
 const base = () => `/v1/orgs/${orgId}/projects/${slug}/findings/${findingId}/investigations`;
 const call = (id: string, method: "GET" | "POST", path: string) =>
@@ -92,6 +93,23 @@ beforeAll(async () => {
       [`INV-${slug}`, "b".repeat(64)],
     )
   ).rows[0]!.id;
+  const relatedId = (
+    await pool.query<{ id: string }>(
+      `INSERT INTO vulnerabilities (source, source_id, modified_at, source_artifact_sha256, source_entry,
+         schema_version, adapter_version, summary)
+       VALUES ('osv', $1, now(), $2, 'entry', 1, 1, 'A related advisory') RETURNING id`,
+      [`INV-RELATED-${slug}`, "c".repeat(64)],
+    )
+  ).rows[0]!.id;
+  groupId = randomUUID();
+  await pool.query(
+    "INSERT INTO vulnerability_groups (id, canonical_vulnerability_id) VALUES ($1, $2)",
+    [groupId, vulnId],
+  );
+  await pool.query(
+    "INSERT INTO vulnerability_group_members (vulnerability_id, group_id) VALUES ($1, $3), ($2, $3)",
+    [vulnId, relatedId, groupId],
+  );
   const rows = await pool.query<{ id: string; status: string }>(
     `INSERT INTO findings (org_id, project_id, vulnerability_id, purl, version, ecosystem, scope, import_id,
        match_quality, match_reason, matcher_version, evidence, status, resolved_reason, resolved_at)
@@ -140,6 +158,11 @@ describe("investigation lifecycle API", () => {
     expect(db.rows[0].context_snapshot).toMatchObject({
       finding: { matchQuality: "unverifiable" },
       advisory: { summary: "A real advisory summary" },
+      groupId,
+      linkedAdvisories: expect.arrayContaining([
+        expect.objectContaining({ summary: "A real advisory summary" }),
+        expect.objectContaining({ summary: "A related advisory" }),
+      ]),
     });
     expect(db.rows[0].payload).toMatchObject({
       type: "investigation.requested",

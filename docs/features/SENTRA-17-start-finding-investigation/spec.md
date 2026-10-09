@@ -2,6 +2,7 @@
 
 - Status: Implemented on feature branch; pending PR review
 - YouTrack: http://localhost:8080/issue/SENTRA-17
+- Architecture decision: [ADR 0007](../../adr/0007-durable-investigation-runs.md)
 - Owner: Project member; operational owners: API and intelligence worker maintainers
 
 ## Problem and outcome
@@ -22,9 +23,9 @@ Done means an authorized member can select a finding on a dedicated investigatio
   - A user-facing generated summary, evidence citations, and guidance (SENTRA-19).
   - Model-initiated tools, retrieval, or arbitrary queries (SENTRA-18).
   - A general agent framework, LangChain, additional model providers, or autonomous remediation.
-  - A findings detail page or comprehensive findings UI (SENTRA-15/16). The picker may show only fields already returned by the findings list API.
+  - A findings detail page (SENTRA-16). The picker uses the existing SENTRA-15 findings list API.
   - A product-wide retention policy. Drafts remain with investigation records until such a policy is defined.
-- Dependencies and related stories: SENTRA-13 is Done and supplies findings. SENTRA-21 supplies the isolation suite. SENTRA-15/16 may change findings navigation; SENTRA-18/19 build on this lifecycle. Concurrent work on SENTRA-15 should be reconciled before merge.
+- Dependencies and related stories: SENTRA-13 supplies findings; SENTRA-15 supplies the grouped, paginated findings list; SENTRA-21 supplies the isolation suite. SENTRA-16 may add a finding detail path; SENTRA-18/19 build on this lifecycle.
 
 ## Decisions and alternatives
 
@@ -32,11 +33,11 @@ Third-party claims are labeled **Verified** or **Assumed** below. Repository con
 
 | Decision | Chosen approach | Alternatives considered | Reason and tradeoff |
 | --- | --- | --- | --- |
-| User entry | Project page link to a dedicated investigation page with a finding picker | Inline project-page section; direct ID-only URL | Usable before SENTRA-15 while keeping the project page small. Costs a small, temporary finding-selection UI. |
+| User entry | Project page link to a dedicated investigation page with a finding picker | Inline project-page section; direct ID-only URL | Keeps the project page small and uses SENTRA-15's existing findings list contract. Costs a small selection UI alongside the findings list. |
 | Output in this story | Save a private draft after a real model call; show status and all run history, but not draft text | Mock processing; show a temporary answer; implement all of SENTRA-19 | Proves the async and failure path without presenting an unevaluated model answer as evidence. The draft format may change in SENTRA-19. |
 | Dispatch | Investigation and event outbox row commit in one Postgres transaction; relay publishes a reference event to Redpanda | Postgres-only queue; publish plus sweep | No committed request is lost between DB write and publish. Costs a relay and outbox table. This follows the existing SBOM outbox pattern and ADR 0002 envelope. |
 | Runtime | Python worker in Docker; oMLX stays native on the Mac; configurable OpenAI-compatible URL, model ID, and API key | Containerized model; Ollama; llama.cpp; LangChain | Reuses the user's running MLX model and keeps the worker deployable. Local networking and credentials need explicit setup. |
-| Model input | Versioned, bounded snapshot of the authorized finding, its match evidence, and linked advisory fields, captured at start | Reload at execution; include SBOM/project context; model tools | Reproducible input and a narrow tenant-data boundary. A later finding change does not alter the run. |
+| Model input | Versioned, bounded snapshot of the authorized finding, its match evidence, lead advisory and all linked advisory facts from its SENTRA-12 group, captured at start | Reload at execution; include SBOM/project context; model tools | Reproducible input and a narrow tenant-data boundary. A later finding or advisory group change does not alter the run. |
 | Eligibility | Any open finding, whether `confirmed` or `unverifiable`; reject resolved findings | Confirmed only; historical resolved findings | Uncertainty is itself useful to investigate; resolved findings are no longer current exposure. |
 | Duplicate starts | At most one queued/running run per finding; concurrent starts return it; a new run is allowed after completion or failure | One run forever; every click creates a run | Prevents duplicate model work while allowing a fresh attempt. Enforce with a partial unique index, not an application-only check. |
 | Visibility | Any current member of the finding's organization may read status/history; creator is recorded | Creator-only; creator plus admins | Investigations are shared project work. Every read remains scoped to organization, project, and finding. |
@@ -79,7 +80,7 @@ All routes require authentication and current organization membership; project a
 | `GET /v1/orgs/:orgId/projects/:slug/findings/:findingId/investigations?limit&cursor` | Bounded, newest-first history of all runs for the finding, with `nextCursor`. Metadata/status only. |
 | `GET /v1/orgs/:orgId/projects/:slug/findings/:findingId/investigations/:investigationId` | Current status, timestamps, attempt count, and safe failure code when failed. No prompt, draft, raw provider response, or credentials. |
 
-The existing paginated findings route supplies the picker. It currently returns open and resolved findings, so the page labels resolved rows as unavailable for Start and preserves pagination. A later findings-list UI may replace this picker without changing the investigation routes. Route names and exact response/error shapes are proposed and will be checked against `packages/contracts/error-response.md` in implementation.
+The existing paginated findings route supplies the picker with `status=all`, `severity=all`, and `sort=newest`. The page labels resolved rows as unavailable for Start and preserves pagination. The SENTRA-15 findings list and this picker remain separate entry points to the same grouped findings. Error responses follow `packages/contracts/error-response.md`.
 
 ### Proposed storage and event contract
 
@@ -159,4 +160,4 @@ Implementation evidence (2026-10-08 local stack): `task check` passed across web
 - Numeric worker concurrency, per-org pending cap, retries, timeouts, snapshot/output bounds, and outbox recovery interval are **Assumed** configuration choices. Pick conservative initial values after measuring the local model and report them in the PR; they are not product SLOs.
 - Product latency, throughput, and availability targets are **Unknown**. Capture baseline measurements and propose targets under SENTRA-26 rather than presenting guesses as requirements.
 - The exact private draft schema is provisional. SENTRA-19 should define the evidence-based, user-facing result separately and decide whether to reuse or replace drafts.
-- Coordinate with SENTRA-15/16 changes to the project/finding navigation before merging.
+- SENTRA-16 can link its future finding detail page directly to this investigation page.

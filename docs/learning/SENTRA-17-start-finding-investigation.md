@@ -1,6 +1,6 @@
 # SENTRA-17: Starting a finding investigation
 
-Spec: [SENTRA-17](../features/SENTRA-17-start-finding-investigation/spec.md). Decision: [ADR 0004](../adr/0004-durable-investigation-runs.md).
+Spec: [SENTRA-17](../features/SENTRA-17-start-finding-investigation/spec.md). Decision: [ADR 0007](../adr/0007-durable-investigation-runs.md).
 
 ## What was built
 

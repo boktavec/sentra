@@ -26,6 +26,7 @@ def main() -> None:
         publish=lambda event: None,  # replaced by the worker's Kafka producer
         signing_keys=settings.signing_keys,
         osv_base_url=settings.osv_base_url,
+        kev_url=settings.kev_url,
         limits=settings.limits,
     )
     worker = Worker(deps, settings.kafka_bootstrap)

@@ -10,6 +10,7 @@ from normalize_support import ECOSYSTEM, GOOD, good_entries, make_zip, record  #
 
 from pipeline.normalize import process
 from pipeline.normalize.adapters import osv
+from pipeline.normalize.backfill_cvss import backfill
 from pipeline.normalize.process import Busy, handle
 from pipeline.normalize.store import LeaseLost
 
@@ -57,6 +58,30 @@ def test_affected_ranges_and_versions_are_stored(env):
         record("versions_only")["id"],
     )
     assert any(v[0] > 0 for v in versions)
+
+
+def test_cvss_score_is_written_and_existing_rows_can_be_backfilled(env):
+    raw = record("versions_only")
+    _, sha = env.upload({"score.json": raw})
+    assert handle(env.event(sha), env.deps()) == "published"
+    original = env.q(
+        "SELECT cvss_score, cvss_version, cvss_calculated_at FROM vulnerabilities WHERE source_id = %s", raw["id"]
+    )
+    assert original[0][0] is not None and original[0][1] == "3.1" and original[0][2] is not None
+
+    env.q(
+        "UPDATE vulnerabilities SET cvss_score = NULL, cvss_version = NULL, "
+        "cvss_calculated_at = NULL WHERE source_id = %s",
+        raw["id"],
+    )
+    with psycopg.connect(env.normalizer_url, autocommit=True) as conn:
+        assert backfill(conn, batch_size=1) == 1
+        assert backfill(conn, batch_size=1) == 0
+    restored = env.q(
+        "SELECT cvss_score, cvss_version, cvss_calculated_at FROM vulnerabilities WHERE source_id = %s", raw["id"]
+    )
+    assert restored[0][0:2] == original[0][0:2]
+    assert restored[0][2] is not None
 
 
 def test_withdrawn_is_kept_and_git_ranges_are_not(env):
@@ -195,7 +220,7 @@ def test_events_are_dropped_not_processed_when_invalid_untrusted_or_for_another_
     elsewhere = env.event(sha)
     elsewhere["artifact"]["key"] = "sbom/someone-elses/file.zip"
     assert handle(elsewhere, deps) == "dropped_untrusted"
-    assert handle(env.event(sha, source="cisa-kev"), deps) == "skipped_source"
+    assert handle(env.event(sha, source="ghsa"), deps) == "skipped_source"
     assert env.q("SELECT count(*) FROM normalization_runs") == [(0,)]
 
 

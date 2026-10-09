@@ -36,6 +36,7 @@ class Settings:
     s3_secret_key: str
     signing_keys: dict[str, bytes]
     osv_base_url: str = "https://osv-vulnerabilities.storage.googleapis.com"
+    kev_url: str = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
     limits: Limits = Limits()
     kafka_bootstrap: str = "127.0.0.1:19092"
     # Loopback by default; set CRAWLER_METRICS_HOST=0.0.0.0 in a container so Prometheus can scrape it.
@@ -62,11 +63,11 @@ def parse_signing_keys(raw: str) -> dict[str, bytes]:
 
 
 def check_source_url(url: str) -> str:
-    """The source base URL is operator config, never event data. HTTPS only, except loopback for tests."""
+    """Source URLs are operator config, never event data. HTTPS only, except loopback for tests."""
     parsed = urlparse(url)
     if parsed.scheme == "https" or (parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "localhost")):
         return url.rstrip("/")
-    raise RuntimeError("OSV base URL must be https (http only for loopback)")
+    raise RuntimeError("source URL must be https (http only for loopback)")
 
 
 def _port(name: str, default: int) -> int:
@@ -86,6 +87,7 @@ def load() -> Settings:
         s3_secret_key=_required("CRAWLER_S3_SECRET_KEY"),
         signing_keys=parse_signing_keys(_required("CRAWLER_SIGNING_KEYS")),
         osv_base_url=base,
+        kev_url=check_source_url(os.environ.get("CRAWLER_KEV_URL", Settings.kev_url)),
         kafka_bootstrap=os.environ.get("CRAWLER_KAFKA_BOOTSTRAP", Settings.kafka_bootstrap),
         metrics_host=os.environ.get("CRAWLER_METRICS_HOST", Settings.metrics_host),
         metrics_port=_port("CRAWLER_METRICS_PORT", Settings.metrics_port),

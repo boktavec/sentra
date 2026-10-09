@@ -4,7 +4,7 @@ SENTRA-17 runs the Python worker in Docker and oMLX natively on macOS. The worke
 
 1. Start oMLX with its authenticated server on port 8000. Confirm `GET /v1/models` lists the desired served ID.
 2. Put `OMLX_API_KEY` and `INTELLIGENCE_DB_PASSWORD` in `infra/docker/.env` (copied from `.env.example` and gitignored).
-3. Run `task stack:up`, start the API so migration 011 is applied, then run `task stack:intelligence-role` and `task stack:intelligence:up`.
+3. Run `task stack:up`, start the API so migration 014 is applied, then run `task stack:intelligence-role` and `task stack:intelligence:up`.
 4. Start the API and web app with their usual Task commands. From a project page, open Investigations, select an open finding, and start a run. The page polls status. The worker persists a private draft on success; the draft is not exposed by this story.
 
 The API can start while oMLX or the worker is down. Queued rows remain durable. The worker periodically scans due rows as well as consuming Redpanda events, so a missed event does not strand a run. Defaults: one concurrent model call across workers, five pending runs per organization, three attempts, 90 second model timeout, 180 second lease, up to 64 KiB input snapshot and 16 KiB output draft. These are provisional capacity limits, not product SLOs.

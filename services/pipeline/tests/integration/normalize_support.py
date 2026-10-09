@@ -51,7 +51,7 @@ class Flaky:
 
 class Env:
     def __init__(self, database, bucket):
-        self.admin_url, _, self.normalizer_url, _ = database
+        self.admin_url, _, self.normalizer_url, *_ = database
         self.s3, self.bucket = bucket
         self.flaky = Flaky(self.s3)
         self.published: list[dict[str, Any]] = []

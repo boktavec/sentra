@@ -1,9 +1,12 @@
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 import psycopg
 from psycopg.types.json import Jsonb
+
+from .cvss_score import score
 
 # Records are (zip entry name, canonical vulnerability document).
 Record = tuple[str, dict[str, Any]]
@@ -12,6 +15,10 @@ Failure = tuple[str, str]  # (zip entry name, error)
 
 class LeaseLost(Exception):
     """Another worker took over this run; nothing from this batch was written."""
+
+
+class TooManyRemovals(Exception):
+    """A catalog snapshot would tombstone more entries than a sane update does. Nothing was written."""
 
 
 @dataclass(frozen=True)
@@ -35,17 +42,43 @@ class RunRow:
 UPSERT = """
 INSERT INTO vulnerabilities
   (source, source_id, aliases, summary, details, published_at, modified_at, withdrawn_at, severity, refs,
+   cvss_score, cvss_version, cvss_calculated_at,
    source_artifact_sha256, source_entry, schema_version, adapter_version)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), %s, %s, %s, %s)
 ON CONFLICT (source, source_id) DO UPDATE SET
   aliases = EXCLUDED.aliases, summary = EXCLUDED.summary, details = EXCLUDED.details,
   published_at = EXCLUDED.published_at, modified_at = EXCLUDED.modified_at,
   withdrawn_at = EXCLUDED.withdrawn_at, severity = EXCLUDED.severity, refs = EXCLUDED.refs,
+  cvss_score = EXCLUDED.cvss_score, cvss_version = EXCLUDED.cvss_version,
+  cvss_calculated_at = EXCLUDED.cvss_calculated_at,
   source_artifact_sha256 = EXCLUDED.source_artifact_sha256, source_entry = EXCLUDED.source_entry,
   schema_version = EXCLUDED.schema_version, adapter_version = EXCLUDED.adapter_version, updated_at = now()
 WHERE EXCLUDED.modified_at > vulnerabilities.modified_at
    OR EXCLUDED.adapter_version > vulnerabilities.adapter_version
 RETURNING id
+"""
+
+
+KEV_UPSERT = """
+INSERT INTO kev_entries
+  (cve_id, vendor_project, product, name, description, required_action, date_added, due_date,
+   known_ransomware_use, cwes, notes, content_hash, catalog_version, date_released,
+   source_artifact_sha256, adapter_version)
+VALUES (%(cve_id)s, %(vendor_project)s, %(product)s, %(name)s, %(description)s, %(required_action)s,
+        %(date_added)s, %(due_date)s, %(known_ransomware_use)s, %(cwes)s, %(notes)s, %(content_hash)s,
+        %(catalog_version)s, %(date_released)s, %(sha256)s, %(adapter_version)s)
+ON CONFLICT (cve_id) DO UPDATE SET
+  vendor_project = EXCLUDED.vendor_project, product = EXCLUDED.product, name = EXCLUDED.name,
+  description = EXCLUDED.description, required_action = EXCLUDED.required_action,
+  date_added = EXCLUDED.date_added, due_date = EXCLUDED.due_date,
+  known_ransomware_use = EXCLUDED.known_ransomware_use, cwes = EXCLUDED.cwes, notes = EXCLUDED.notes,
+  content_hash = EXCLUDED.content_hash, removed_at = NULL, catalog_version = EXCLUDED.catalog_version,
+  date_released = EXCLUDED.date_released, source_artifact_sha256 = EXCLUDED.source_artifact_sha256,
+  adapter_version = EXCLUDED.adapter_version, updated_at = now()
+WHERE kev_entries.content_hash <> EXCLUDED.content_hash
+   OR kev_entries.removed_at IS NOT NULL
+   OR kev_entries.adapter_version < EXCLUDED.adapter_version
+RETURNING cve_id
 """
 
 
@@ -145,6 +178,7 @@ class Store:
                                 d["withdrawnAt"],
                                 Jsonb(d["severity"]),
                                 Jsonb(d["references"]),
+                                *score(d["severity"]),
                                 sha256,
                                 name,
                                 schema_version,
@@ -177,6 +211,65 @@ class Store:
             if moved.rowcount != 1:
                 raise LeaseLost(run_id)
         return len(changed), len(ok) - len(changed)
+
+    def commit_kev(
+        self,
+        run_id: str,
+        *,
+        sha256: str,
+        adapter_version: int,
+        catalog_version: str,
+        date_released: str,
+        rows: list[dict[str, Any]],
+        seen: set[str],
+        max_removals: Callable[[int], int],
+        lease_seconds: int,
+    ) -> tuple[int, int]:
+        """Write a whole catalog snapshot in one transaction: upsert its entries, tombstone the active ones
+        it no longer lists. Returns (upserted, tombstoned).
+
+        `seen` is every CVE the snapshot lists, including entries that were quarantined, so a bad entry
+        is never mistaken for a removal. `max_removals(active)` is the most tombstones one snapshot may
+        add; beyond it nothing is written and TooManyRemovals is raised. Raises LeaseLost if the run was retaken.
+        """
+        with self.conn.transaction():
+            moved = self.conn.execute(
+                "UPDATE normalization_runs SET claimed_until = now() + make_interval(secs => %s), updated_at = now() "
+                "WHERE id = %s AND status = 'running'",
+                (lease_seconds, run_id),
+            )
+            if moved.rowcount != 1:
+                raise LeaseLost(run_id)
+            active = {r[0] for r in self.conn.execute("SELECT cve_id FROM kev_entries WHERE removed_at IS NULL")}
+            gone = sorted(active - seen)
+            if len(gone) > max_removals(len(active)):
+                raise TooManyRemovals(f"snapshot {catalog_version} would remove {len(gone)} of {len(active)} entries")
+            upserted = 0
+            with self.conn.cursor() as cur:
+                cur.executemany(
+                    KEV_UPSERT,
+                    [
+                        {
+                            **r,
+                            "catalog_version": catalog_version,
+                            "date_released": date_released,
+                            "sha256": sha256,
+                            "adapter_version": adapter_version,
+                        }
+                        for r in rows
+                    ],
+                    returning=True,
+                )
+                for _ in rows:
+                    upserted += cur.fetchone() is not None
+                    cur.nextset()
+            if gone:
+                self.conn.execute(
+                    "UPDATE kev_entries SET removed_at = now(), updated_at = now(), catalog_version = %s, "
+                    "date_released = %s, source_artifact_sha256 = %s WHERE cve_id = ANY(%s) AND removed_at IS NULL",
+                    (catalog_version, date_released, sha256, gone),
+                )
+        return upserted, len(gone)
 
     def _replace_affected(self, changed: list[tuple[str, dict[str, Any]]]) -> None:
         if not changed:

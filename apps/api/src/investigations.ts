@@ -26,6 +26,8 @@ interface FindingContext {
   aliases: string[];
   summary: string | null;
   severity: unknown;
+  group_id: string | null;
+  linked_advisories: unknown;
 }
 
 interface RunRow {
@@ -78,8 +80,23 @@ export function createInvestigationStore(
         const { rows: findings } = await db.query<FindingContext>(
           `SELECT f.id, f.org_id, f.project_id, f.purl, f.version, f.ecosystem, f.scope,
                   f.status, f.match_quality, f.match_reason, f.evidence,
-                  v.source, v.source_id, v.aliases, v.summary, v.severity
+                  v.source, v.source_id, v.aliases, v.summary, v.severity,
+                  member.group_id,
+                  linked.advisories AS linked_advisories
            FROM findings f JOIN vulnerabilities v ON v.id = f.vulnerability_id
+           LEFT JOIN vulnerability_group_members member ON member.vulnerability_id = f.vulnerability_id
+           CROSS JOIN LATERAL (
+             SELECT coalesce(jsonb_agg(jsonb_build_object(
+               'source', a.source, 'sourceId', a.source_id, 'aliases', a.aliases,
+               'summary', a.summary, 'severity', a.severity,
+               'cvssScore', a.cvss_score, 'cvssVersion', a.cvss_version
+             ) ORDER BY a.source, a.source_id), '[]'::jsonb) AS advisories
+             FROM vulnerabilities a
+             WHERE a.id = f.vulnerability_id OR a.id IN (
+               SELECT vulnerability_id FROM vulnerability_group_members
+               WHERE group_id = member.group_id
+             )
+           ) linked
            WHERE f.id = $1 AND f.org_id = $2 AND f.project_id = $3
            FOR SHARE OF f`,
           [findingId, tenant.orgId, projectId],
@@ -123,6 +140,8 @@ export function createInvestigationStore(
             summary: finding.summary,
             severity: finding.severity,
           },
+          groupId: finding.group_id,
+          linkedAdvisories: finding.linked_advisories,
         };
         if (Buffer.byteLength(JSON.stringify(snapshot)) > 64 * 1024) {
           throw new AppError("context_too_large", 422, "Finding context is too large", {
