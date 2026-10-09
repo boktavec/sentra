@@ -60,3 +60,17 @@ def test_advisory_without_package_data_does_not_veto():
 
 def test_group_id_is_stable():
     assert group_id("osv", "GHSA-aaaa") == group_id("osv", "GHSA-aaaa") != group_id("osv", "GHSA-aaab")
+
+
+def test_package_less_kev_stub_joins_the_group_but_never_becomes_canonical():
+    kev = adv("CVE-2024-1", source="cisa-kev", packages=frozenset())  # sorts before osv
+    ghsa = adv("GHSA-aaaa", "CVE-2024-1")
+    (group,) = build_groups([kev, ghsa])
+    assert set(group.members) == {kev.id, ghsa.id}
+    assert group.canonical == ghsa.id
+    assert group.id == group_id("osv", "GHSA-aaaa")
+
+
+def test_kev_stub_alone_is_its_own_group():
+    (group,) = build_groups([adv("CVE-2024-1", source="cisa-kev", packages=frozenset())])
+    assert group.canonical == "id-CVE-2024-1"

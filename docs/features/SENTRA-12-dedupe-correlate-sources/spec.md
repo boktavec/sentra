@@ -13,7 +13,7 @@
 
 - In scope: grouper job (alias connected components + ambiguity guard), group tables, conflict recording, findings list read model with nested `sources[]`, bench task, docs of strategy and limitations.
 - Out of scope: new source adapters (KEV, GHSA), severity merging/scoring (SENTRA-14), malware-vs-vulnerability distinction for `MAL-`, rekeying or changing `findings`, UI work.
-- Dependencies: SENTRA-11 (normalized advisories), SENTRA-13 (findings, correlator, findings API).
+- Dependencies: SENTRA-11 (normalized advisories), SENTRA-13 (findings, correlator, findings API), SENTRA-8 (KEV: `cisa-kev` stub rows carry the CVE as `source_id`, no aliases and no affected packages, so they group with the OSV advisories that list the CVE and never veto on packages; ADR 0004).
 
 ## Decisions and alternatives
 
@@ -25,7 +25,7 @@
 | Trigger | Separate grouper job, watermark on `vulnerabilities.updated_at`, own DB role | Inline in normalizer; read-time view | Decoupled, idempotent, mirrors `correlate/`. Cost: short lag. |
 | Read model | One item per (project, purl, group), nested `sources[]` | `groupId` field only; `?consolidate` flag | Removes duplicates for every client. Response shape changes (needs contract note). |
 | `MAL-` | No special case; no-alias records become singleton groups | Exclude; separate rule | Simplest. Volume to be measured. |
-| Group id | UUIDv5 of smallest `(source, source_id)` in component; `merged_into` pointer | Random persisted id; CVE-derived id | Rebuild from data gives identical ids. Id changes on merge/split, pointer keeps old ids resolvable. |
+| Group id | UUIDv5 of the canonical member (smallest `(source, source_id)` among advisories that list affected packages, else smallest overall); `merged_into` pointer | Random persisted id; CVE-derived id | Rebuild from data gives identical ids. Id changes on merge/split, pointer keeps old ids resolvable. |
 
 Guard (initial definition, to be validated on real data): a component is **ambiguous** if its members' affected `(ecosystem, package)` sets do not all intersect a common package, or it contains more than one distinct CVE id. **Assumed**; validate by running the grouper on the real npm + PyPI OSV dumps and inspecting every conflict.
 
@@ -35,9 +35,9 @@ Third-party claims:
 
 ## Architecture and contracts
 
-- Components: `services/pipeline/src/pipeline/group/` (new), `apps/api` findings read model, migration `011_vulnerability_groups.sql`.
+- Components: `services/pipeline/src/pipeline/group/` (new), `apps/api` findings read model, migration `012_vulnerability_groups.sql`.
 - Flow: normalizer upserts advisories (bumps `updated_at`) -> grouper reads changed advisories by watermark -> recomputes affected components -> writes groups/members/conflicts in one transaction per batch (a component is never split across batches) -> findings API joins findings -> members -> groups and collapses.
-- Storage (additive): `vulnerability_groups(id, merged_into, canonical_source, canonical_source_id, created_at, updated_at)`, `vulnerability_group_members(vulnerability_id PK, group_id)`, `group_conflicts(vulnerability_id, reason, detected_at)`, `group_runs`, `group_state`. Final shapes are in migration 011.
+- Storage (additive): `vulnerability_groups(id, merged_into, canonical_source, canonical_source_id, created_at, updated_at)`, `vulnerability_group_members(vulnerability_id PK, group_id)`, `group_conflicts(vulnerability_id, reason, detected_at)`, `group_runs`, `group_state`. Final shapes are in migration 012.
 - API: findings list item = `{ vulnerability: {groupId, canonical summary, severity}, sources: [{source, sourceId, aliases}] }`. Old fields documented as replaced in `packages/contracts`.
 - Compatibility: `vulnerabilities` and `findings` unchanged. Advisory with no group yet falls back to its own row (LEFT JOIN), so lag never hides a finding. No findings backfill.
 

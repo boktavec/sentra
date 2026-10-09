@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-# Fixed forever: group ids are uuid5(NAMESPACE, "source\0source_id") of the smallest member.
+# Fixed forever: group ids are uuid5(NAMESPACE, "source\0source_id") of the canonical member.
 NAMESPACE = uuid.UUID("5e9a6a64-3d0b-4b9c-9a7e-12c0de5e17a1")
 
 
@@ -79,6 +79,8 @@ def build_groups(advisories: Iterable[Advisory]) -> list[Group]:
                 Group(group_id(*m.key), m.id, (m.id,), conflict=reason, component_size=len(members)) for m in members
             ]
         else:
-            first = members[0]
+            # The canonical member is the smallest key among advisories that list packages, so a package-less
+            # stub (a cisa-kev row, whose source sorts before osv) never becomes the face of the group.
+            first = min(members, key=lambda m: (not m.packages, m.key))
             groups.append(Group(group_id(*first.key), first.id, tuple(m.id for m in members), None, len(members)))
     return sorted(groups, key=lambda g: g.id)

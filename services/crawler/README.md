@@ -28,4 +28,4 @@ Integration tests default to the compose ports; set `TEST_ADMIN_DATABASE_URL`, `
 
 ## Configuration
 
-See `.env.example`. The source base URL (`CRAWLER_OSV_BASE_URL`) is operator config and must be https (http only for loopback); events never carry URLs.
+See `.env.example`. Source URLs (`CRAWLER_OSV_BASE_URL`, `CRAWLER_KEV_URL`) are operator config and must be https (http only for loopback); events never carry URLs.

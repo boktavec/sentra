@@ -118,3 +118,18 @@ def test_second_grouper_cannot_run_concurrently(grouper, database):
         assert run_once(conn) is None
     finally:
         other.close()
+
+
+def test_kev_stub_row_is_grouped_with_the_osv_advisory_that_lists_its_cve(grouper):
+    admin, conn = grouper
+    advisory(admin, "GHSA-aaaa", ["CVE-2024-1"])
+    kev = admin.execute(
+        "INSERT INTO vulnerabilities (source, source_id, modified_at, source_artifact_sha256, source_entry, "
+        "schema_version, adapter_version) VALUES ('cisa-kev', 'CVE-2024-1', now(), %s, 'e', 1, 1) RETURNING id",
+        ("b" * 64,),
+    ).fetchone()[0]
+    run_once(conn)
+    got = groups_of(admin)
+    assert got["CVE-2024-1"] == got["GHSA-aaaa"] == group_id("osv", "GHSA-aaaa")
+    assert admin.execute("SELECT count(*) FROM group_conflicts").fetchone()[0] == 0
+    assert kev

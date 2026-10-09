@@ -1,8 +1,8 @@
-# 0004: Advisory groups sit on top of advisories
+# 0005: Advisory groups sit on top of advisories
 
 - Status: Proposed
 - Date: 2026-10-08
-- Related: [SENTRA-12 spec](../features/SENTRA-12-dedupe-correlate-sources/spec.md), [ADR 0003](0003-findings-as-derived-state-reconciled-per-project.md)
+- Related: [SENTRA-12 spec](../features/SENTRA-12-dedupe-correlate-sources/spec.md), [ADR 0003](0003-findings-as-derived-state-reconciled-per-project.md), [ADR 0004](0004-kev-as-enrichment-plus-linked-vulnerability-rows.md)
 
 ## Context
 
@@ -13,7 +13,7 @@ Providers describe one issue under several ids (GHSA, PYSEC, CVE). SENTRA-11 kee
 - **Groups are an additive layer.** `vulnerability_groups` and `vulnerability_group_members` are derived from `vulnerabilities.aliases`. Advisory rows, ids and provenance are never modified, and the correlator and `findings` keep their shape.
 - **Rule: connected components over shared identifiers** (an advisory's own id plus its aliases).
 - **Ambiguity guard: refuse, do not guess.** A component with more than one CVE id, or whose advisories share no affected `(ecosystem, package)`, is not merged. Members stay singletons, recorded in `group_conflicts` with the reason.
-- **Deterministic ids:** group id is a UUIDv5 of the smallest `(source, source_id)` member. A merged-away group keeps its row with `merged_into`.
+- **Deterministic ids:** group id is a UUIDv5 of the canonical member: the smallest `(source, source_id)` among advisories that list affected packages, else the smallest overall. This keeps a package-less `cisa-kev` stub (ADR 0004) from becoming canonical, so KEV arriving later does not change an existing group's id. A merged-away group keeps its row with `merged_into`.
 - **A separate grouper job** (`sentra_grouper`, read-only on advisories) recomputes changed components idempotently from a watermark. A single advisory lock keeps one grouper running.
 
 ## Alternatives considered

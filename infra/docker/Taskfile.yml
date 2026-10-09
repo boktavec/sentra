@@ -69,7 +69,7 @@ tasks:
           -c "ALTER ROLE sentra_correlator LOGIN PASSWORD '$CORRELATOR_DB_PASSWORD'"
 
   grouper-role:
-    desc: Give the sentra_grouper Postgres role (created by migration 011) a local login password
+    desc: Give the sentra_grouper Postgres role (created by migration 012) a local login password
     cmds:
       - |
         set -a; . ./.env; set +a
