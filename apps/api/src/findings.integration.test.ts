@@ -69,15 +69,31 @@ async function importFor(orgId: string, projectId: string, userId: string) {
   return rows[0].id as string;
 }
 
-async function advisory(sourceId: string) {
+async function advisory(sourceId: string, source = "osv", summary = "A bug") {
   const { rows } = await pool.query(
     `INSERT INTO vulnerabilities (source, source_id, aliases, summary, severity, modified_at,
        source_artifact_sha256, source_entry, schema_version, adapter_version)
-     VALUES ('osv', $1, ARRAY['CVE-2026-0001'], 'A bug', '[{"type":"CVSS_V3","vector":"CVSS:3.1/AV:N"}]',
+     VALUES ($3, $1, ARRAY['CVE-2026-0001'], $4, '[{"type":"CVSS_V3","vector":"CVSS:3.1/AV:N"}]',
        now(), $2, 'e', 1, 1) RETURNING id`,
-    [`${sourceId}-${run}-${randomUUID().slice(0, 6)}`, "a".repeat(64)],
+    [`${sourceId}-${run}-${randomUUID().slice(0, 6)}`, "a".repeat(64), source, summary],
   );
   return rows[0].id as string;
+}
+
+/** What the grouper writes (services/pipeline): one group, its canonical advisory and its members. */
+async function group(canonical: string, ...others: string[]) {
+  const id = randomUUID();
+  await pool.query(
+    "INSERT INTO vulnerability_groups (id, canonical_vulnerability_id) VALUES ($1, $2)",
+    [id, canonical],
+  );
+  for (const v of [canonical, ...others]) {
+    await pool.query(
+      "INSERT INTO vulnerability_group_members (vulnerability_id, group_id) VALUES ($1, $2)",
+      [v, id],
+    );
+  }
+  return id;
 }
 
 interface Seed {
@@ -88,6 +104,7 @@ interface Seed {
   firstSeen?: string;
   status?: "open" | "resolved";
   quality?: "confirmed" | "unverifiable";
+  vulnerabilityId?: string;
 }
 
 async function finding(s: Seed) {
@@ -100,7 +117,7 @@ async function finding(s: Seed) {
     [
       s.orgId,
       s.projectId,
-      await advisory("PYSEC"),
+      s.vulnerabilityId ?? (await advisory("PYSEC")),
       s.purl,
       s.importId,
       quality,
@@ -307,5 +324,110 @@ describe("listing findings", () => {
   it("requires a signed-in user", async () => {
     const { org, slug } = await newProject();
     expect((await get(listUrl(org.id, slug))).statusCode).toBe(401);
+  });
+});
+
+describe("consolidating advisories of one issue (SENTRA-12)", () => {
+  it("shows one item per issue, led by the open finding, with every source advisory listed", async () => {
+    const { org, admin, slug, projectId } = await newProject();
+    const importId = await importFor(org.id, projectId, admin.id);
+    const ghsa = await advisory("GHSA", "osv", "Canonical summary");
+    const pysec = await advisory("PYSEC", "osv", "Other summary");
+    const kev = await advisory("CVE-2026-0001", "cisa-kev", "Stub summary"); // no finding: no affected rows
+    const groupId = await group(ghsa, pysec, kev);
+    const purl = "pkg:pypi/trac@1.0.0";
+    const resolved = await finding({
+      orgId: org.id,
+      projectId,
+      importId,
+      purl,
+      vulnerabilityId: ghsa,
+      status: "resolved",
+      firstSeen: "2026-01-01T00:00:00Z",
+    });
+    const open = await finding({
+      orgId: org.id,
+      projectId,
+      importId,
+      purl,
+      vulnerabilityId: pysec,
+      firstSeen: "2026-03-01T00:00:00Z",
+    });
+
+    const { items } = (await get(listUrl(org.id, slug), admin.headers)).json();
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: open,
+      status: "open",
+      firstSeenAt: "2026-01-01T00:00:00.000Z", // spans the whole issue
+      vulnerability: { id: ghsa, groupId, summary: "Canonical summary" },
+    });
+    expect(items[0].sources.map((x: { id: string }) => x.id).sort()).toEqual(
+      [ghsa, pysec, kev].sort(),
+    );
+    expect(items[0].sources[0]).toHaveProperty("sourceId");
+    expect(items[0].sources[0]).toHaveProperty("aliases");
+    expect(resolved).not.toBe(open);
+  });
+
+  it("keeps a dependency that is hit by two different issues as two items, and two dependencies as two items", async () => {
+    const { org, admin, slug, projectId } = await newProject();
+    const importId = await importFor(org.id, projectId, admin.id);
+    const a = await advisory("GHSA");
+    const b = await advisory("GHSA");
+    const g = await group(a);
+    await group(b);
+    for (const purl of ["pkg:pypi/x@1", "pkg:pypi/y@1"]) {
+      await finding({ orgId: org.id, projectId, importId, purl, vulnerabilityId: a });
+    }
+    await finding({ orgId: org.id, projectId, importId, purl: "pkg:pypi/x@1", vulnerabilityId: b });
+
+    const { items } = (await get(listUrl(org.id, slug), admin.headers)).json();
+
+    expect(items).toHaveLength(3);
+    expect(
+      items.filter((i: { vulnerability: { groupId: string } }) => i.vulnerability.groupId === g),
+    ).toHaveLength(2);
+  });
+
+  it("still shows a finding whose advisory the grouper has not reached yet", async () => {
+    const { org, admin, slug, projectId } = await newProject();
+    const importId = await importFor(org.id, projectId, admin.id);
+    const id = await finding({ orgId: org.id, projectId, importId, purl: "pkg:pypi/lag@1" });
+
+    const { items } = (await get(listUrl(org.id, slug), admin.headers)).json();
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ id, vulnerability: { groupId: null } });
+    expect(items[0].sources).toHaveLength(1);
+  });
+
+  it("does not leak another tenant's findings through a shared group", async () => {
+    const mine = await newProject();
+    const theirs = await newProject();
+    const a = await advisory("GHSA");
+    const b = await advisory("PYSEC");
+    await group(a, b);
+    await finding({
+      orgId: mine.org.id,
+      projectId: mine.projectId,
+      importId: await importFor(mine.org.id, mine.projectId, mine.admin.id),
+      purl: "pkg:pypi/shared@1",
+      vulnerabilityId: a,
+    });
+    const theirId = await finding({
+      orgId: theirs.org.id,
+      projectId: theirs.projectId,
+      importId: await importFor(theirs.org.id, theirs.projectId, theirs.admin.id),
+      purl: "pkg:pypi/shared@1",
+      vulnerabilityId: b,
+    });
+
+    const { items } = (await get(listUrl(mine.org.id, mine.slug), mine.admin.headers)).json();
+
+    expect(items).toHaveLength(1);
+    expect(items.map((i: { id: string }) => i.id)).not.toContain(theirId);
+    expect(JSON.stringify(items)).not.toContain(theirs.org.id);
   });
 });
