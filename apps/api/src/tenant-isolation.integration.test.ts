@@ -22,6 +22,7 @@ import { createMemberStore } from "./members.ts";
 import { migrate } from "./migrate.ts";
 import { createOrgStore } from "./orgs.ts";
 import { createFindingStore } from "./findings.ts";
+import { createInvestigationStore } from "./investigations.ts";
 import { createProjectStore } from "./projects.ts";
 import { createSbomStorage } from "./sbom-storage.ts";
 import { createSbomStore } from "./sbom.ts";
@@ -57,6 +58,8 @@ interface Target {
   userId: string;
   importId: string;
   invitationId: string;
+  findingId: string;
+  investigationId: string;
 }
 interface Req {
   url: string;
@@ -151,6 +154,24 @@ const CASES: Case[] = [
     build: (t) => ({ url: `${org(t)}/projects/${t.sharedProject}/findings` }),
   },
   {
+    route: "POST /v1/orgs/:orgId/projects/:slug/findings/:findingId/investigations",
+    build: (t) => ({
+      url: `${org(t)}/projects/${t.sharedProject}/findings/${t.findingId}/investigations`,
+    }),
+  },
+  {
+    route: "GET /v1/orgs/:orgId/projects/:slug/findings/:findingId/investigations",
+    build: (t) => ({
+      url: `${org(t)}/projects/${t.sharedProject}/findings/${t.findingId}/investigations`,
+    }),
+  },
+  {
+    route: "GET /v1/orgs/:orgId/projects/:slug/findings/:findingId/investigations/:investigationId",
+    build: (t) => ({
+      url: `${org(t)}/projects/${t.sharedProject}/findings/${t.findingId}/investigations/${t.investigationId}`,
+    }),
+  },
+  {
     route: "POST /v1/orgs/:orgId/projects/:slug/sboms/:importId/complete",
     build: (t) => ({ url: `${sbom(t, t.sharedProject)}/${t.importId}/complete` }),
   },
@@ -234,12 +255,13 @@ async function seedFinding(orgId: string, importId: string) {
      VALUES ('osv', $1, now(), $2, 'e', 1, 1) RETURNING id`,
     [`ISO-${run}`, "a".repeat(64)],
   );
-  await pool.query(
+  const inserted = await pool.query<{ id: string }>(
     `INSERT INTO findings (org_id, project_id, vulnerability_id, purl, version, ecosystem, scope, import_id,
        match_quality, matcher_version, evidence)
-     VALUES ($1, $2, $3, $4, '1.0.0', 'PyPI', 'required', $5, 'confirmed', 1, '{"rule":"explicit_version"}')`,
+     VALUES ($1, $2, $3, $4, '1.0.0', 'PyPI', 'required', $5, 'confirmed', 1, '{"rule":"explicit_version"}') RETURNING id`,
     [orgId, project.rows[0].id, vuln.rows[0].id, FINDING_PURL, importId],
   );
+  return inserted.rows[0]!.id;
 }
 
 async function seed(): Promise<World> {
@@ -264,7 +286,11 @@ async function seed(): Promise<World> {
     payload: { filename: "bom.json", size_bytes: 10 },
   });
   expect(imp.statusCode).toBe(201);
-  await seedFinding(victimOrg.id, imp.json().id as string);
+  const findingId = await seedFinding(victimOrg.id, imp.json().id as string);
+  const createdRun = await call(victimAdmin, "POST", {
+    url: `/v1/orgs/${victimOrg.id}/projects/shared-app/findings/${findingId}/investigations`,
+  });
+  expect(createdRun.statusCode).toBe(201);
   const inv = await call(victimAdmin, "POST", {
     url: `/v1/orgs/${victimOrg.id}/invitations`,
     payload: { email: `victim-${run}@example.com`, role: "member" },
@@ -284,6 +310,8 @@ async function seed(): Promise<World> {
       userId: member,
       importId: imp.json().id as string,
       invitationId: inv.json().id as string,
+      findingId,
+      investigationId: createdRun.json().id as string,
     },
   };
 }
@@ -326,6 +354,8 @@ const randomTarget = (t: Target, keep: Partial<Target> = {}): Target => ({
   userId: randomUUID(),
   importId: randomUUID(),
   invitationId: randomUUID(),
+  findingId: randomUUID(),
+  investigationId: randomUUID(),
   ...keep,
 });
 
@@ -340,6 +370,7 @@ beforeAll(async () => {
     members: createMemberStore(pool),
     projects: createProjectStore(pool),
     findings: createFindingStore(pool),
+    investigations: createInvestigationStore(pool, { modelId: "test-model", maxPendingPerOrg: 5 }),
     sbom: createSbomStore(pool, { storage, limits }),
     sbomMaxBytes: limits.maxBytes,
     invitations: createInvitationStore(pool, {
@@ -472,6 +503,5 @@ describe("findings", () => {
 // Not built yet. Each story that adds one of these registers its routes in CASES (the coverage
 // test fails until it does) and replaces the todo.
 describe("pending resources", () => {
-  it.todo("investigations: cross-tenant read and start (SENTRA-17)");
   it.todo("audit records: cross-tenant read (SENTRA-20)");
 });

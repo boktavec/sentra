@@ -39,8 +39,8 @@ services:
       - --mode=dev-container
       - --smp=1
       - --memory=512M
-      - --kafka-addr=0.0.0.0:${REDPANDA_KAFKA_PORT}
-      - --advertise-kafka-addr=127.0.0.1:${REDPANDA_KAFKA_PORT}
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:${REDPANDA_KAFKA_PORT}
+      - --advertise-kafka-addr=internal://redpanda:9092,external://127.0.0.1:${REDPANDA_KAFKA_PORT}
     ports:
       - 127.0.0.1:${REDPANDA_KAFKA_PORT}:${REDPANDA_KAFKA_PORT}
     healthcheck:
@@ -66,6 +66,23 @@ services:
     volumes:
       - ./seaweedfs-s3.json:/etc/seaweedfs/s3.json:ro
       - seaweedfs-data:/data:rw
+
+  intelligence:
+    build: ../../services/intelligence
+    profiles: ["intelligence"]
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:${INTELLIGENCE_METRICS_PUBLISHED_PORT:-9106}:9106
+    depends_on:
+      sentra-postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    environment:
+      INTELLIGENCE_DATABASE_URL: postgresql://sentra_intelligence:${INTELLIGENCE_DB_PASSWORD}@sentra-postgres:5432/sentra
+      INTELLIGENCE_KAFKA_BOOTSTRAP: redpanda:9092
+      INTELLIGENCE_MODEL_URL: http://host.docker.internal:8000/v1
+      INTELLIGENCE_MODEL_API_KEY: ${OMLX_API_KEY:-}
 
   mailpit:
     image: ${MAILPIT_IMAGE}
