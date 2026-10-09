@@ -24,11 +24,19 @@ def topics():
     tag = uuid.uuid4().hex[:8]
     t = Topics(f"{tag}.crawl.requested", f"{tag}.artifact.ingested", f"{tag}.crawl.failed")
     admin = AdminClient({"bootstrap.servers": BOOTSTRAP})
-    for fut in admin.create_topics(
-        [NewTopic(n, num_partitions=1, replication_factor=1) for n in vars(t).values()]
-    ).values():
-        fut.result(15)
-    return t
+    names = list(vars(t).values())
+    created = []
+    try:
+        for name, fut in admin.create_topics(
+            [NewTopic(n, num_partitions=1, replication_factor=1) for n in names]
+        ).items():
+            fut.result(15)
+            created.append(name)
+        yield t
+    finally:
+        if created:
+            for fut in admin.delete_topics(created).values():
+                fut.result(15)
 
 
 class Running:
