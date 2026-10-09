@@ -44,6 +44,11 @@ export default async function ProjectPage({
       <p>
         Slug: <code data-testid="project-slug">{project.data.slug}</code>
       </p>
+      <p>
+        <Link href={`/orgs/${org.data.slug}/projects/${project.data.slug}/findings`}>
+          View findings
+        </Link>
+      </p>
       {sboms.ok ? (
         <SbomSection
           orgId={org.data.id}

@@ -454,6 +454,23 @@ describe("findings", () => {
     expect(res.json().items.map((i: { purl: string }) => i.purl)).toEqual([FINDING_PURL]);
   });
 
+  it("keeps filtered and sorted findings inside the same tenant boundary", async () => {
+    for (const query of [
+      "?status=all&sort=newest",
+      "?severity=unavailable",
+      "?status=resolved&severity=critical",
+    ]) {
+      const outsider = await call(world.outsider, "GET", {
+        url: `${url(world.victim.orgId)}${query}`,
+      });
+      expect(outsider.statusCode).toBe(404);
+      expect(outsider.body).not.toContain(FINDING_PURL);
+      const sameSlug = await call(world.outsider, "GET", { url: `${url(world.home.id)}${query}` });
+      expect(sameSlug.statusCode).toBe(200);
+      expect(sameSlug.body).not.toContain(FINDING_PURL);
+    }
+  });
+
   it("do not leak through a same-named project in another org, or to an outsider", async () => {
     const { outsider, dual, home, victim } = world;
     const ownProject = await call(outsider, "GET", { url: url(home.id) });
