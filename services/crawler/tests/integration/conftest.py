@@ -100,6 +100,7 @@ class Harness:
             publish=self.publish,
             signing_keys=KEYS,
             osv_base_url=self.osv.base_url,
+            kev_url=self.osv.base_url + "/kev.json",
             limits=self.limits,
             tmp_dir=str(self.tmp_path),
         )

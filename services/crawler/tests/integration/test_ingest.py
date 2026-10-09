@@ -8,7 +8,7 @@ import pytest
 from conftest import make_request
 from crawler import contracts
 from crawler.ingest import handle
-from fake_osv import Response, make_zip
+from fake_osv import FIXTURES, Response, make_zip
 
 NPM = "/npm/all.zip"
 
@@ -245,3 +245,50 @@ def test_crawler_role_is_least_privilege(database, admin):
         for statement in ("DELETE FROM ingestion_runs", "SELECT * FROM users", "DROP TABLE ingestion_runs"):
             with pytest.raises(psycopg.errors.Error):
                 conn.execute(statement)  # type: ignore[arg-type]
+
+
+KEV = "/kev.json"
+KEV_BODY = (FIXTURES / "kev" / "catalog.json").read_bytes()  # a real slice of the CISA catalog
+
+
+def test_kev_catalog_is_stored_raw_as_json_then_published(harness, admin):
+    sha = hashlib.sha256(KEV_BODY).hexdigest()
+    harness.osv.serve(KEV, Response(body=KEV_BODY, etag='"k1"'))
+    req = make_request(source="cisa-kev", ecosystem="none")
+
+    assert handle(req, harness.deps()) == "published"
+
+    key = f"raw/cisa-kev/none/{sha}.json"
+    assert harness.s3.get_object(Bucket=harness.bucket, Key=key)["Body"].read() == KEV_BODY
+    assert sorted(harness.objects()) == [key, f"raw/cisa-kev/none/{sha}.meta.json"]  # sidecar must not clobber it
+    (event,) = harness.published
+    contracts.validate("artifact.ingested", event)
+    assert event["source"] == "cisa-kev" and event["artifact"]["key"] == key
+    assert row(admin, req["runId"])["status"] == "published"
+
+
+def test_kev_rerun_with_unchanged_catalog_is_a_noop(harness, admin):
+    harness.osv.serve(KEV, Response(body=KEV_BODY, etag='"k1"'))
+    assert handle(make_request(source="cisa-kev", ecosystem="none"), harness.deps()) == "published"
+    objects_before = harness.objects()
+
+    harness.osv.serve(KEV, Response(status=304))
+    assert handle(make_request(source="cisa-kev", ecosystem="none"), harness.deps()) == "unchanged"
+    assert harness.osv.requests[-1][1]["If-None-Match"] == '"k1"'
+    assert harness.objects() == objects_before and len(harness.published) == 1
+
+
+def test_kev_html_error_page_served_as_200_fails_the_run_without_storing(harness, admin):
+    harness.osv.serve(KEV, Response(body=b"<html>maintenance</html>"))
+    req = make_request(source="cisa-kev", ecosystem="none")
+
+    assert handle(req, harness.deps()) == "failed"
+
+    assert harness.objects() == []
+    assert row(admin, req["runId"])["status"] == "failed"
+    assert harness.published[0]["type"] == "crawl.failed"
+
+
+def test_kev_with_an_ecosystem_is_dropped_as_unsupported(harness, admin):
+    assert handle(make_request(source="cisa-kev", ecosystem="npm"), harness.deps()) == "dropped_unsupported"
+    assert harness.osv.requests == []

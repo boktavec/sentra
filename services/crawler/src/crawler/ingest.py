@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from . import contracts, events, signing
-from .config import Limits
+from .config import Limits, Settings
 from .fetch import Downloaded, FetchFailed, NotModified, fetch
 from .metrics import DOWNLOAD_BYTES, RETRIES
 from .runs import Run, Runs
@@ -16,6 +16,14 @@ log = logging.getLogger("crawler")
 
 # Source + ecosystem -> path under the configured base URL. Events never carry URLs.
 OSV_ECOSYSTEMS = {"npm": "npm", "PyPI": "PyPI"}
+KEV = ("cisa-kev", "none")  # one global catalog, so no ecosystem; contracts require a non-empty value
+
+
+@dataclass(frozen=True)
+class Target:
+    url: str
+    ext: str  # artifact suffix
+    magic: bytes  # the body must start with these bytes
 
 
 @dataclass
@@ -25,9 +33,18 @@ class Deps:
     publish: Callable[[dict[str, Any]], None]
     signing_keys: dict[str, bytes]
     osv_base_url: str
+    kev_url: str = Settings.kev_url
     limits: Limits = Limits()
     tmp_dir: str | None = None
     fetch_fn: Callable[..., Downloaded | NotModified] = fetch
+
+
+def target(source: str, ecosystem: str, deps: Deps) -> Target | None:
+    if source == "osv" and ecosystem in OSV_ECOSYSTEMS:
+        return Target(f"{deps.osv_base_url}/{OSV_ECOSYSTEMS[ecosystem]}/all.zip", "zip", b"PK")
+    if (source, ecosystem) == KEV:
+        return Target(deps.kev_url, "json", b"{")
+    return None
 
 
 def _drop(outcome: str, reason: str, event: dict[str, Any]) -> str:
@@ -45,7 +62,7 @@ def handle(event: dict[str, Any], deps: Deps) -> str:
         return _drop("dropped_invalid", str(e)[:300], event)
     if not signing.verify(event, deps.signing_keys):
         return _drop("dropped_signature", "bad signature or unknown keyId", event)
-    if event["source"] != "osv" or event["ecosystem"] not in OSV_ECOSYSTEMS:
+    if target(event["source"], event["ecosystem"], deps) is None:
         return _drop("dropped_unsupported", f"unsupported {event['source']}/{event['ecosystem']}", event)
 
     run = deps.runs.claim(
@@ -76,14 +93,17 @@ def _process(run: Run, deps: Deps) -> str:
     fetched_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
     if run.status == "fetching":
-        url = f"{deps.osv_base_url}/{OSV_ECOSYSTEMS[run.ecosystem]}/all.zip"
+        t = target(run.source, run.ecosystem, deps)
+        if t is None:  # claimed runs were validated on request; config may have changed since
+            raise RuntimeError(f"unsupported {run.source}/{run.ecosystem}")
         previous = deps.runs.latest_published(run.source, run.ecosystem)
         try:
             result = deps.fetch_fn(
-                url,
+                t.url,
                 etag=previous.etag if previous else None,
                 limits=deps.limits,
                 tmp_dir=deps.tmp_dir,
+                magic=t.magic,
             )
         except FetchFailed as e:
             RETRIES.labels(run.source).inc(e.attempts - 1)
@@ -121,7 +141,8 @@ def _process(run: Run, deps: Deps) -> str:
                 sha256=result.sha256,
                 size=result.size,
                 etag=result.etag,
-                source_url=url,
+                source_url=t.url,
+                ext=t.ext,
                 fetched_at=fetched_at,
             )
         finally:

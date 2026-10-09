@@ -44,7 +44,9 @@ class NotModified:
     attempts: int
 
 
-def _once(client: httpx.Client, url: str, etag: str | None, limits: Limits, tmp_dir: str | None, deadline: float):
+def _once(
+    client: httpx.Client, url: str, etag: str | None, limits: Limits, tmp_dir: str | None, deadline: float, magic: bytes
+):
     headers = {"If-None-Match": etag} if etag else {}
     remaining = max(deadline - time.monotonic(), 0.001)
     timeout = httpx.Timeout(min(limits.read_timeout, remaining), connect=min(limits.connect_timeout, remaining))
@@ -61,7 +63,7 @@ def _once(client: httpx.Client, url: str, etag: str | None, limits: Limits, tmp_
             raise _Fatal(f"artifact larger than {limits.max_bytes} bytes")
 
         digest, size, head = hashlib.sha256(), 0, b""
-        fd, path = tempfile.mkstemp(dir=tmp_dir, suffix=".zip")
+        fd, path = tempfile.mkstemp(dir=tmp_dir, suffix=".part")
         try:
             with os.fdopen(fd, "wb") as out:
                 for chunk in r.iter_bytes(64 * 1024):
@@ -70,11 +72,11 @@ def _once(client: httpx.Client, url: str, etag: str | None, limits: Limits, tmp_
                         raise _Fatal(f"artifact larger than {limits.max_bytes} bytes")
                     if time.monotonic() > deadline:
                         raise _Retryable("total download timeout")
-                    head = (head + chunk)[:4]
+                    head = (head + chunk)[: len(magic)]
                     digest.update(chunk)
                     out.write(chunk)
-            if not head.startswith(b"PK"):
-                raise _Fatal("response is not a ZIP archive")
+            if not head.startswith(magic):
+                raise _Fatal("response is not the expected file type")
         except BaseException:
             os.unlink(path)
             raise
@@ -87,6 +89,7 @@ def fetch(
     etag: str | None,
     limits: Limits,
     tmp_dir: str | None = None,
+    magic: bytes = b"PK",  # first bytes the body must start with; ZIP by default
     client: httpx.Client | None = None,
     sleep: Callable[[float], None] = time.sleep,
     rand: Callable[[], float] = random.random,
@@ -101,7 +104,7 @@ def fetch(
     try:
         for attempt in range(1, limits.max_attempts + 1):
             try:
-                result = _once(client, url, etag, limits, tmp_dir, deadline)
+                result = _once(client, url, etag, limits, tmp_dir, deadline, magic)
             except _Fatal as e:
                 raise FetchFailed(str(e), attempt) from e
             except (_Retryable, httpx.TransportError) as e:
