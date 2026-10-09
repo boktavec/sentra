@@ -154,6 +154,10 @@ const CASES: Case[] = [
     build: (t) => ({ url: `${org(t)}/projects/${t.sharedProject}/findings` }),
   },
   {
+    route: "GET /v1/orgs/:orgId/projects/:slug/findings/:findingId",
+    build: (t) => ({ url: `${org(t)}/projects/${t.sharedProject}/findings/${t.findingId}` }),
+  },
+  {
     route: "POST /v1/orgs/:orgId/projects/:slug/findings/:findingId/investigations",
     build: (t) => ({
       url: `${org(t)}/projects/${t.sharedProject}/findings/${t.findingId}/investigations`,
@@ -514,7 +518,48 @@ describe("findings", () => {
     expect(reach.body).not.toContain(FINDING_PURL);
   });
 
-  it.todo("detail route: cross-tenant read (SENTRA-16)");
+  describe("detail", () => {
+    const detail = (orgId: string, project: string, findingId: string) =>
+      `${url(orgId, project)}/${findingId}`;
+
+    it("is readable by a member of the owning org (so the 404s below are not a broken route)", async () => {
+      const res = await call(world.member, "GET", {
+        url: detail(world.victim.orgId, "shared-app", world.victim.findingId),
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().purl).toBe(FINDING_PURL);
+    });
+
+    it("answers every way of reaching the victim's finding like a finding that does not exist", async () => {
+      const { outsider, dual, home, victim } = world;
+      const reference = seen(
+        await call(dual, "GET", { url: detail(home.id, "shared-app", randomUUID()) }),
+      );
+      const [crossTenant, malformed, nonMember] = await Promise.all([
+        // Another org's finding under the caller's own org and a same-named project.
+        call(dual, "GET", { url: detail(home.id, "shared-app", victim.findingId) }),
+        call(dual, "GET", { url: detail(home.id, "shared-app", "not-a-uuid") }),
+        // The victim's org and project, by a caller who is not a member.
+        call(outsider, "GET", { url: detail(victim.orgId, "shared-app", victim.findingId) }),
+      ]);
+      for (const res of [crossTenant, malformed, nonMember]) {
+        expect(res.statusCode).toBe(404);
+        expect(res.body).not.toContain(FINDING_PURL);
+        expect(res.body).not.toContain(victim.orgId);
+      }
+      expect(seen(crossTenant)).toEqual(reference);
+      expect(seen(malformed)).toEqual(reference);
+    });
+
+    it("does not resolve a finding of another project in the same org", async () => {
+      const { member, victim } = world;
+      const res = await call(member, "GET", {
+        url: detail(victim.orgId, victim.project, victim.findingId),
+      });
+      expect(res.statusCode).toBe(404);
+      expect(res.body).not.toContain(FINDING_PURL);
+    });
+  });
 });
 
 // Not built yet. Each story that adds one of these registers its routes in CASES (the coverage

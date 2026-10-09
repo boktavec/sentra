@@ -9,8 +9,7 @@ const params = (request: FastifyRequest) => request.params as Params;
 
 /**
  * Registers the findings list on an already-authenticated scope. Any org member may read it. Findings are
- * derived data written by the correlator, so there are no write routes. SENTRA-15 adds sorting and filters,
- * SENTRA-16 the detail view.
+ * derived data written by the correlator, so there are no write routes.
  */
 export function registerFindingsRoutes(
   routes: FastifyInstance,
@@ -43,5 +42,11 @@ export function registerFindingsRoutes(
       sort: sortValue as FindingQuery["sort"],
     };
     return deps.findings.list(request.tenant!, params(request).slug, query);
+  });
+
+  routes.get("/v1/orgs/:orgId/projects/:slug/findings/:findingId", async (request) => {
+    const { orgId, slug, findingId } = request.params as Params & { findingId: string };
+    await scope(request, { orgId });
+    return deps.findings.get(request.tenant!, slug, findingId);
   });
 }

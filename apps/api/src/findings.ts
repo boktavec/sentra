@@ -3,9 +3,11 @@ import { AppError } from "@sentra/ts-platform";
 import { isUuid } from "./org-input.ts";
 import type { TenantContext } from "./orgs.ts";
 import { findProject } from "./projects.ts";
+import { category, findingSql, type FindingRow, type SeverityCategory } from "./finding-sql.ts";
+import { getFindingDetail } from "./finding-detail.ts";
 
 export type FindingStatus = "open" | "resolved" | "all";
-export type Severity = "critical" | "high" | "medium" | "low" | "none" | "unavailable" | "all";
+export type Severity = SeverityCategory | "all";
 export type FindingSort = "severity" | "newest";
 export interface FindingQuery {
   status: FindingStatus;
@@ -15,48 +17,8 @@ export interface FindingQuery {
   cursor?: string;
 }
 
-interface FindingRow {
-  id: string;
-  purl: string;
-  version: string;
-  ecosystem: string;
-  scope: string;
-  status: string;
-  resolved_reason: string | null;
-  resolved_at: Date | null;
-  match_quality: string;
-  match_reason: string | null;
-  first_seen_at: Date;
-  last_seen_at: Date;
-  import_id: string;
-  evidence: unknown;
-  vulnerability_id: string;
-  group_id: string | null;
-  sources: { id: string; source: string; sourceId: string; aliases: string[] }[];
-  source: string;
-  source_id: string;
-  aliases: string[];
-  summary: string | null;
-  severity: unknown;
-  cvss_score: string | null;
-  cvss_version: string | null;
-  cvss_source: string | null;
-  cvss_source_id: string | null;
-  kev_status: "listed" | "not_listed" | "unavailable";
-  cursor_ts: string;
-}
-
 const invalid = (reason: string) => new AppError("invalid_input", 400, "Invalid input", { reason });
 const timestamp = /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d{1,6})?\+00$/;
-
-function category(value: number | null): Exclude<Severity, "all"> {
-  if (value === null) return "unavailable";
-  if (value === 0) return "none";
-  if (value < 4) return "low";
-  if (value < 7) return "medium";
-  if (value < 9) return "high";
-  return "critical";
-}
 
 const toFinding = (row: FindingRow) => {
   const cvssScore = row.cvss_score === null ? null : Number(row.cvss_score);
@@ -191,76 +153,10 @@ function cursorCondition(sort: FindingSort, after: Cursor, values: unknown[]): s
 const scoreOrder = "s.cvss_score DESC NULLS LAST, s.group_first_seen_at DESC, s.id";
 const newestOrder = "s.group_first_seen_at DESC, s.id";
 
-function findingSql(where: string[], order: string, limitParameter: number): string {
-  return `WITH base AS (
-           SELECT f.*, m.group_id, COALESCE(m.group_id, f.vulnerability_id) AS gid
-           FROM findings f
-           LEFT JOIN vulnerability_group_members m ON m.vulnerability_id = f.vulnerability_id
-           WHERE f.org_id = $1 AND f.project_id = $2
-         ), leads AS (
-           SELECT DISTINCT ON (purl, gid) base.*,
-                  min(first_seen_at) OVER w AS group_first_seen_at,
-                  max(last_seen_at) OVER w AS group_last_seen_at
-           FROM base WINDOW w AS (PARTITION BY purl, gid)
-           ORDER BY purl, gid, (status = 'open') DESC, (match_quality = 'confirmed') DESC, first_seen_at, id
-         ), scored AS (
-           SELECT l.*, sev.cvss_score, sev.cvss_version,
-                  sev.source AS cvss_source, sev.source_id AS cvss_source_id
-           FROM leads l
-           LEFT JOIN LATERAL (
-             SELECT a.cvss_score, a.cvss_version, a.source, a.source_id
-             FROM vulnerabilities a
-             WHERE (a.id = l.vulnerability_id OR a.id IN
-               (SELECT vulnerability_id FROM vulnerability_group_members WHERE group_id = l.group_id))
-               AND a.cvss_score IS NOT NULL
-             ORDER BY a.cvss_score DESC, a.cvss_version DESC, a.source, a.source_id
-             LIMIT 1
-           ) sev ON true
-         ), paged AS (
-           SELECT s.* FROM scored s
-           ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-           ORDER BY ${order}
-           LIMIT $${limitParameter}
-         )
-         SELECT p.id, p.purl, p.version, p.ecosystem, p.scope, p.status, p.resolved_reason, p.resolved_at,
-                p.match_quality, p.match_reason, p.group_first_seen_at AS first_seen_at,
-                p.group_last_seen_at AS last_seen_at, p.import_id, p.evidence, p.group_id,
-                p.cvss_score, p.cvss_version, p.cvss_source, p.cvss_source_id,
-                v.id AS vulnerability_id, v.source, v.source_id, v.aliases, v.summary, v.severity,
-                src.sources, p.group_first_seen_at::text AS cursor_ts,
-                CASE
-                  WHEN NOT EXISTS (SELECT 1 FROM normalization_runs nr
-                    WHERE nr.source = 'cisa-kev' AND nr.status IN ('completed', 'published')) THEN 'unavailable'
-                  WHEN NOT EXISTS (
-                    SELECT 1 FROM vulnerabilities a,
-                      unnest(a.aliases || a.source_id) AS ids(identifier)
-                    WHERE (a.id = p.vulnerability_id OR a.id IN
-                      (SELECT vulnerability_id FROM vulnerability_group_members WHERE group_id = p.group_id))
-                      AND identifier ~ '^CVE-[0-9]{4}-[0-9]{4,}$'
-                  ) THEN 'unavailable'
-                  WHEN EXISTS (
-                    SELECT 1 FROM vulnerabilities a JOIN kev_entries k
-                      ON k.removed_at IS NULL AND k.cve_id = ANY(a.aliases || a.source_id)
-                    WHERE a.id = p.vulnerability_id OR a.id IN
-                      (SELECT vulnerability_id FROM vulnerability_group_members WHERE group_id = p.group_id)
-                  ) THEN 'listed' ELSE 'not_listed'
-                END AS kev_status
-         FROM paged p
-         LEFT JOIN vulnerability_groups g ON g.id = p.group_id
-         JOIN vulnerabilities v ON v.id = COALESCE(g.canonical_vulnerability_id, p.vulnerability_id)
-         CROSS JOIN LATERAL (
-           SELECT COALESCE(jsonb_agg(jsonb_build_object('id', a.id, 'source', a.source,
-                    'sourceId', a.source_id, 'aliases', a.aliases) ORDER BY a.source, a.source_id), '[]') AS sources
-           FROM vulnerabilities a
-           WHERE a.id = p.vulnerability_id
-              OR a.id IN (SELECT vulnerability_id FROM vulnerability_group_members WHERE group_id = p.group_id)
-         ) src
-         ORDER BY ${order.replaceAll("s.", "p.")}`;
-}
-
 /** Reads one item per dependency and vulnerability group; the correlator owns the underlying rows. */
 export function createFindingStore(pool: Pool) {
   return {
+    get: getFindingDetail.bind(null, pool),
     async list(tenant: TenantContext, slug: string, query: FindingQuery) {
       const projectId = await findProject(pool, tenant, slug);
       const after = decodeCursor(query);
@@ -269,7 +165,12 @@ export function createFindingStore(pool: Pool) {
       values.push(query.limit + 1);
       const order = query.sort === "severity" ? scoreOrder : newestOrder;
       const { rows } = await pool.query<FindingRow>(
-        findingSql(where, order, values.length),
+        findingSql({
+          baseWhere: "f.org_id = $1 AND f.project_id = $2",
+          where,
+          order,
+          limit: `$${values.length}`,
+        }),
         values,
       );
       const page = rows.slice(0, query.limit);

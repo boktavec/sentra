@@ -21,6 +21,14 @@ const admin = new Pool({ connectionString: adminUrl });
 let pool: Pool | undefined;
 let app: ReturnType<typeof buildApp> | undefined;
 
+interface ListBody {
+  items: unknown[];
+}
+interface DetailBody {
+  members: unknown[];
+  membersTruncated: boolean;
+}
+
 function percentile(sorted: number[], p: number) {
   return sorted[Math.ceil((p / 100) * sorted.length) - 1];
 }
@@ -120,29 +128,100 @@ try {
     },
   });
   const path = `/v1/orgs/${org}/projects/bench/findings`;
-  const timings: number[] = [];
-  for (let i = 0; i < 110; i++) {
+  const timeRequest = async (
+    name: string,
+    url: string,
+    valid: (body: ListBody & DetailBody) => boolean,
+  ) => {
     const start = performance.now();
-    const response = await app.inject({
+    const response = await app!.inject({
       method: "GET",
-      url: path,
+      url,
       headers: { "x-test-user": user.id },
     });
-    if (response.statusCode !== 200 || response.json().items.length !== 50) {
-      throw new Error(`request ${i} failed: ${response.statusCode}`);
+    if (response.statusCode !== 200 || !valid(response.json())) {
+      throw new Error(`${name} request failed: ${response.statusCode}`);
     }
-    if (i >= 10) timings.push(performance.now() - start);
-  }
-  timings.sort((a, b) => a - b);
-  console.log(
-    JSON.stringify({
-      findings: 25000,
-      requests: timings.length,
-      concurrency: 1,
-      p50Ms: percentile(timings, 50),
-      p95Ms: percentile(timings, 95),
-      p99Ms: percentile(timings, 99),
-    }),
+    return performance.now() - start;
+  };
+  const measure = async (
+    name: string,
+    count: number,
+    url: string,
+    valid: (body: ListBody & DetailBody) => boolean,
+  ) => {
+    const timings: number[] = [];
+    for (let i = 0; i < 110; i++) {
+      const elapsed = await timeRequest(name, url, valid);
+      if (i >= 10) timings.push(elapsed);
+    }
+    timings.sort((a, b) => a - b);
+    console.log(
+      JSON.stringify({
+        scenario: name,
+        findings: count,
+        requests: timings.length,
+        concurrency: 1,
+        p50Ms: percentile(timings, 50),
+        p95Ms: percentile(timings, 95),
+        p99Ms: percentile(timings, 99),
+      }),
+    );
+  };
+  await measure("list", 25000, path, (body) => body.items.length === 50);
+
+  // SENTRA-16: one group at the response caps (52 advisories; the first 50 members plus the requested
+  // one come back), each advisory with 64 KiB of details, 60 refs and 250 explicit versions.
+  const detailPurl = "pkg:pypi/bench-detail@1.0";
+  await pool.query(
+    `INSERT INTO sbom_dependencies (import_id, org_id, project_id, purl, purl_type, name, version, ecosystem, scope, occurrences)
+     VALUES ($1, $2, $3, $4, 'pypi', 'bench-detail', '1.0', 'PyPI', 'required', 1)`,
+    [importId, org, project, detailPurl],
+  );
+  const { rows: bigAdvisories } = await pool.query<{ id: string }>(
+    `INSERT INTO vulnerabilities (source, source_id, aliases, modified_at, severity, details, refs,
+       cvss_score, cvss_version, cvss_calculated_at, source_artifact_sha256, source_entry, schema_version, adapter_version)
+     SELECT 'osv', 'BIGGROUP-' || n, ARRAY['CVE-2026-9' || lpad(n::text, 3, '0')], now(), '[]',
+       repeat('x', 70000),
+       (SELECT jsonb_agg(jsonb_build_object('type', 'WEB', 'url', 'https://example.test/' || r))
+        FROM generate_series(1, 60) r),
+       5.5, '3.1', now(), $1, 'bench', 1, 1
+     FROM generate_series(1, 52) n RETURNING id`,
+    ["a".repeat(64)],
+  );
+  const groupId = randomUUID();
+  await pool.query(
+    "INSERT INTO vulnerability_groups (id, canonical_vulnerability_id) VALUES ($1, $2)",
+    [groupId, bigAdvisories[0]!.id],
+  );
+  const ids = bigAdvisories.map((a) => a.id);
+  await pool.query(
+    `INSERT INTO vulnerability_group_members (vulnerability_id, group_id)
+     SELECT unnest($1::uuid[]), $2`,
+    [ids, groupId],
+  );
+  const { rows: bigFindings } = await pool.query<{ id: string }>(
+    `INSERT INTO findings (org_id, project_id, vulnerability_id, purl, version, ecosystem, scope,
+       import_id, match_quality, matcher_version, evidence, first_seen_at)
+     SELECT $1, $2, v, $3, '1.0', 'PyPI', 'required', $4, 'confirmed', 1,
+       '{"rule":"range","comparator":"pep440","package":"bench-detail"}'::jsonb,
+       now() + make_interval(secs => ord)
+     FROM unnest($5::uuid[]) WITH ORDINALITY AS t(v, ord) RETURNING id`,
+    [org, project, detailPurl, importId, ids],
+  );
+  await pool.query(
+    `INSERT INTO vulnerability_affected (id, vulnerability_id, ecosystem, package_name, versions)
+     SELECT gen_random_uuid(), v, 'PyPI', 'Bench_Detail',
+       (SELECT array_agg('0.' || n) FROM generate_series(1, 250) n)
+     FROM unnest($1::uuid[]) AS t(v)`,
+    [ids],
+  );
+  await pool.query("ANALYZE findings, vulnerabilities, vulnerability_affected");
+  await measure(
+    "detail",
+    25052,
+    `${path}/${bigFindings.at(-1)!.id}`,
+    (body) => body.members.length === 51 && body.membersTruncated === true,
   );
 } finally {
   await app?.close();

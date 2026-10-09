@@ -1,13 +1,13 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { fetchOrg } from "@/lib/orgs";
-import { fetchProject } from "@/lib/projects";
+import { fetchProjectScope } from "@/lib/projects";
 import {
   listFindings,
   type Finding,
   type FindingSeverity,
   type FindingStatus,
 } from "@/lib/findings";
+import { kevLabel, optionLabel, severityLabel } from "@/lib/finding-format";
 import { RefreshButton } from "./refresh-button";
 
 export const dynamic = "force-dynamic";
@@ -22,22 +22,6 @@ const SEVERITIES: FindingSeverity[] = [
   "none",
   "unavailable",
 ];
-
-const optionLabel = (value: string) =>
-  value === "all" ? "All" : value[0]!.toUpperCase() + value.slice(1);
-
-function severityLabel(finding: Finding) {
-  const { cvssScore, cvssVersion, severityCategory } = finding.vulnerability;
-  return cvssScore === null
-    ? "Severity unavailable"
-    : `${optionLabel(severityCategory)} ${cvssScore.toFixed(1)} (CVSS ${cvssVersion})`;
-}
-
-function kevLabel(status: Finding["kevStatus"]) {
-  if (status === "listed") return "In CISA KEV";
-  if (status === "not_listed") return "Not listed in ingested CISA KEV catalog";
-  return "Exploitation data unavailable";
-}
 
 function FindingDetails({ finding }: { finding: Finding }) {
   return (
@@ -54,7 +38,7 @@ function FindingDetails({ finding }: { finding: Finding }) {
         <code>{finding.purl}</code>
       </dd>
       <dt>Severity</dt>
-      <dd style={{ margin: 0 }}>{severityLabel(finding)}</dd>
+      <dd style={{ margin: 0 }}>{severityLabel(finding.vulnerability)}</dd>
       <dt>Exploitation</dt>
       <dd style={{ margin: 0 }}>{kevLabel(finding.kevStatus)}</dd>
       <dt>Match</dt>
@@ -77,7 +61,7 @@ function FindingDetails({ finding }: { finding: Finding }) {
   );
 }
 
-function FindingCard({ finding }: { finding: Finding }) {
+function FindingCard({ finding, base }: { finding: Finding; base: string }) {
   return (
     <li
       data-testid="finding-row"
@@ -97,8 +81,10 @@ function FindingCard({ finding }: { finding: Finding }) {
         }}
       >
         <strong style={{ overflowWrap: "anywhere" }}>
-          {finding.vulnerability.aliases.find((a) => a.startsWith("CVE-")) ??
-            finding.vulnerability.sourceId}
+          <Link href={`${base}/findings/${finding.id}`}>
+            {finding.vulnerability.aliases.find((a) => a.startsWith("CVE-")) ??
+              finding.vulnerability.sourceId}
+          </Link>
         </strong>
         <span>{optionLabel(finding.status)}</span>
       </div>
@@ -108,11 +94,11 @@ function FindingCard({ finding }: { finding: Finding }) {
   );
 }
 
-function FindingsTable({ items }: { items: Finding[] }) {
+function FindingsTable({ items, base }: { items: Finding[]; base: string }) {
   return (
     <ul data-testid="findings-list" style={{ listStyle: "none", padding: 0 }}>
       {items.map((finding) => (
-        <FindingCard key={finding.id} finding={finding} />
+        <FindingCard key={finding.id} finding={finding} base={base} />
       ))}
     </ul>
   );
@@ -190,7 +176,7 @@ function FindingsResponse({
     );
   return (
     <>
-      <FindingsTable items={result.data.items} />
+      <FindingsTable items={result.data.items} base={base} />
       <NextPageLink
         cursor={result.data.nextCursor}
         status={status}
@@ -240,18 +226,11 @@ export default async function FindingsPage({
   const query = await searchParams;
   const status = selectedStatus(query.status);
   const severity = selectedSeverity(query.severity);
-  const org = await fetchOrg(slug);
-  if (!org.ok)
+  const scope = await fetchProjectScope(slug, projectSlug);
+  if (!scope.ok)
     return (
       <main role="alert">
-        The service is temporarily unavailable. Reference: {org.correlationId}
-      </main>
-    );
-  const project = await fetchProject(org.data.id, projectSlug);
-  if (!project.ok)
-    return (
-      <main role="alert">
-        The service is temporarily unavailable. Reference: {project.correlationId}
+        The service is temporarily unavailable. Reference: {scope.correlationId}
       </main>
     );
   const base = `/orgs/${encodeURIComponent(slug)}/projects/${encodeURIComponent(projectSlug)}`;
@@ -259,7 +238,7 @@ export default async function FindingsPage({
   return (
     <main>
       <p>
-        <Link href={base}>{project.data.name}</Link>
+        <Link href={base}>{scope.project.name}</Link>
       </p>
       <h1>Findings</h1>
       <p>Current project vulnerability findings, grouped by dependency and issue.</p>
@@ -269,7 +248,7 @@ export default async function FindingsPage({
         fallback={<p role="status">Loading findings…</p>}
       >
         <FindingsResults
-          orgId={org.data.id}
+          orgId={scope.org.id}
           projectSlug={projectSlug}
           status={status}
           severity={severity}
