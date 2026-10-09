@@ -36,7 +36,7 @@ interface AuditEvent {
   actorUserId: string;
   correlationId: string;
   action: string;
-  targetType: "user" | "invitation" | "project" | "sbom_import";
+  targetType: "user" | "invitation" | "project" | "sbom_import" | "investigation";
   targetId: string;
   metadata: Record<string, string>;
 }

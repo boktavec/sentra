@@ -39,6 +39,9 @@ export interface Config {
   kafkaBootstrap: string[] | undefined;
   sbomRelayPollSeconds: number;
   sbomSweepSeconds: number;
+  investigationModelId: string;
+  investigationMaxPendingPerOrg: number;
+  investigationRelayPollSeconds: number;
   /** Fastify `trustProxy` value; unset means use the socket address and ignore X-Forwarded-For. */
   trustedProxies: string[] | false;
 }
@@ -79,6 +82,9 @@ export function loadConfig(): Config {
     kafkaBootstrap: process.env["KAFKA_BOOTSTRAP"]?.split(","),
     sbomRelayPollSeconds: int("SBOM_RELAY_POLL_SECONDS", 2),
     sbomSweepSeconds: int("SBOM_SWEEP_SECONDS", 60),
+    investigationModelId: process.env["INVESTIGATION_MODEL_ID"] ?? "Qwen 3.8:27b",
+    investigationMaxPendingPerOrg: int("INVESTIGATION_MAX_PENDING_PER_ORG", 5),
+    investigationRelayPollSeconds: int("INVESTIGATION_RELAY_POLL_SECONDS", 2),
     trustedProxies: process.env["TRUSTED_PROXIES"]
       ? process.env["TRUSTED_PROXIES"].split(",")
       : false,

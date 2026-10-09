@@ -15,6 +15,8 @@ import { createInvitationStore } from "./invitations.ts";
 import { createMemberStore } from "./members.ts";
 import { createOrgStore } from "./orgs.ts";
 import { createFindingStore } from "./findings.ts";
+import { createInvestigationStore } from "./investigations.ts";
+import { createInvestigationRelay } from "./investigation-relay.ts";
 import { createProjectStore } from "./projects.ts";
 import { createSbomRelay, ensureDevTopic, type EventPublisher } from "./sbom-relay.ts";
 import { createSbomStorage } from "./sbom-storage.ts";
@@ -116,6 +118,10 @@ export async function createApi(config: Config, logger: Logger) {
     members: createMemberStore(pool),
     projects: createProjectStore(pool),
     findings: createFindingStore(pool),
+    investigations: createInvestigationStore(pool, {
+      modelId: config.investigationModelId,
+      maxPendingPerOrg: config.investigationMaxPendingPerOrg,
+    }),
     sbom,
     sbomMaxBytes: config.sbomMaxBytes,
     invitations: createInvitationStore(pool, {
@@ -149,11 +155,34 @@ export async function createApi(config: Config, logger: Logger) {
   // ponytail: in-process relay and sweep, safe across replicas (SKIP LOCKED); move to a worker if load grows.
   if (config.kafkaBootstrap && config.sbomDevBootstrap) {
     await ensureDevTopic(config.kafkaBootstrap, "sbom.uploaded");
+    await ensureDevTopic(config.kafkaBootstrap, "investigation.requested");
   }
   const relay = config.kafkaBootstrap
     ? startSbomRelay(config.kafkaBootstrap, config, pool, logger)
     : undefined;
   if (!relay) logger.warn({}, "sbom_relay_disabled_no_kafka_bootstrap");
+  const investigationRelay = config.kafkaBootstrap
+    ? (() => {
+        const producer = new Producer({
+          clientId: "sentra-investigation-relay",
+          bootstrapBrokers: config.kafkaBootstrap!,
+          serializers: stringSerializers,
+        });
+        const publisher: EventPublisher = {
+          async publish(topic, key, value) {
+            await producer.send({ messages: [{ topic, key, value }] });
+          },
+        };
+        const poller = createInvestigationRelay(pool, {
+          publisher,
+          logger,
+          leaseSeconds: 60,
+          backoffBaseSeconds: 5,
+        });
+        poller.start(config.investigationRelayPollSeconds * 1000);
+        return { poller, close: () => producer.close(true) };
+      })()
+    : undefined;
   const sweep = sbom
     ? setInterval(() => {
         sbom.expirePending().catch((err: unknown) => {
@@ -168,6 +197,7 @@ export async function createApi(config: Config, logger: Logger) {
     app,
     sbom,
     relay: relay?.relay,
+    investigationRelay: investigationRelay?.poller,
     pool,
     redis,
     async close() {
@@ -175,6 +205,8 @@ export async function createApi(config: Config, logger: Logger) {
       await sender?.stop();
       await relay?.relay.stop();
       await relay?.close();
+      await investigationRelay?.poller.stop();
+      await investigationRelay?.close();
       storage?.destroy();
       await app.close();
       await pool.end();

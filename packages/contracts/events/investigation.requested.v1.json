@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentra.dev/contracts/events/investigation.requested.v1.json",
+  "title": "investigation.requested v1",
+  "type": "object",
+  "properties": {
+    "eventId": { "type": "string", "format": "uuid" },
+    "type": { "const": "investigation.requested" },
+    "version": { "const": 1 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "correlationId": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,128}$" },
+    "investigationId": { "type": "string", "format": "uuid" },
+    "orgId": { "type": "string", "format": "uuid" },
+    "projectId": { "type": "string", "format": "uuid" }
+  },
+  "required": ["eventId", "type", "version", "timestamp", "correlationId", "investigationId", "orgId", "projectId"],
+  "additionalProperties": false
+}

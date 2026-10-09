@@ -9,6 +9,8 @@ import {
 import { createAuthenticator } from "./auth.ts";
 import * as metrics from "./metrics.ts";
 import { registerFindingsRoutes } from "./findings-routes.ts";
+import { registerInvestigationRoutes } from "./investigation-routes.ts";
+import type { InvestigationStore } from "./investigations.ts";
 import type { FindingStore } from "./findings.ts";
 import { registerInvitationRoutes } from "./invitation-routes.ts";
 import type { InvitationStore } from "./invitations.ts";
@@ -37,6 +39,7 @@ interface Deps {
   members: MemberStore;
   projects: ProjectStore;
   findings: FindingStore;
+  investigations?: InvestigationStore;
   /** Undefined when object storage is not configured. */
   sbom?: SbomStore | undefined;
   sbomMaxBytes?: number;
@@ -52,6 +55,7 @@ export function buildApp({
   members,
   projects,
   findings,
+  investigations,
   sbom,
   sbomMaxBytes,
   invitations,
@@ -102,6 +106,8 @@ export function buildApp({
     registerMemberRoutes(protectedRoutes, { logger, orgs, members });
     registerProjectRoutes(protectedRoutes, { logger, orgs, projects });
     registerFindingsRoutes(protectedRoutes, { logger, orgs, findings });
+    if (investigations)
+      registerInvestigationRoutes(protectedRoutes, { logger, orgs, investigations });
     registerSbomRoutes(protectedRoutes, { logger, orgs, sbom, maxBytes: sbomMaxBytes ?? 0 });
     registerInvitationRoutes(protectedRoutes, { logger, orgs, invitations });
   });

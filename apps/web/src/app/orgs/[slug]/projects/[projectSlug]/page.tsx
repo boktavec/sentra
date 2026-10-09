@@ -45,6 +45,11 @@ export default async function ProjectPage({
         Slug: <code data-testid="project-slug">{project.data.slug}</code>
       </p>
       <p>
+        <Link href={`/orgs/${org.data.slug}/projects/${project.data.slug}/investigations`}>
+          Investigations
+        </Link>
+      </p>
+      <p>
         <Link href={`/orgs/${org.data.slug}/projects/${project.data.slug}/findings`}>
           View findings
         </Link>
