@@ -1,0 +1,79 @@
+{
+  "ghsa_id": "GHSA-67c5-x5mf-rppq",
+  "cve_id": "CVE-2026-2611",
+  "url": "https://api.github.com/advisories/GHSA-67c5-x5mf-rppq",
+  "html_url": "https://github.com/advisories/GHSA-67c5-x5mf-rppq",
+  "summary": "MLflow: Improper Origin Validation in MLflow Assistant /ajax-api Endpoints Enables Browser-Mediated Local Command Execution",
+  "description": "In MLflow version 3.9.0, the MLflow Assistant feature introduced improper origin validation in its /ajax-api endpoints. This vulnerability allows a remote attacker to exploit cross-origin requests from a malicious webpage to interact with the MLflow Assistant running on a victim's local machine. By bypassing the loopback-only restriction, the attacker can modify the Assistant's configuration to enable full access, which in turn allows the execution of arbitrary commands via the Claude Code sub-agent. This issue is resolved in version 3.10.0.",
+  "type": "reviewed",
+  "severity": "critical",
+  "repository_advisory_url": null,
+  "source_code_location": "https://github.com/mlflow/mlflow",
+  "identifiers": [
+    {
+      "value": "GHSA-67c5-x5mf-rppq",
+      "type": "GHSA"
+    },
+    {
+      "value": "CVE-2026-2611",
+      "type": "CVE"
+    }
+  ],
+  "references": [
+    "https://nvd.nist.gov/vuln/detail/CVE-2026-2611",
+    "https://github.com/mlflow/mlflow/commit/8f9c8a53af90842944101eb8b7d60706822c81bc",
+    "https://huntr.com/bounties/8462addd-b464-4a84-b6a2-5529604e6e5a",
+    "https://access.redhat.com/security/cve/CVE-2026-2611",
+    "https://bugzilla.redhat.com/show_bug.cgi?id=2479797",
+    "https://github.com/advisories/GHSA-67c5-x5mf-rppq",
+    "https://github.com/mlflow/mlflow",
+    "https://github.com/pypa/advisory-database/tree/main/vulns/mlflow/PYSEC-2026-418.yaml",
+    "https://pypi.org/project/mlflow"
+  ],
+  "published_at": "2026-05-19T12:31:37Z",
+  "updated_at": "2026-10-05T21:33:12Z",
+  "github_reviewed_at": "2026-06-04T15:23:35Z",
+  "nvd_published_at": "2026-05-19T10:16:22Z",
+  "withdrawn_at": null,
+  "vulnerabilities": [
+    {
+      "package": {
+        "ecosystem": "pip",
+        "name": "mlflow"
+      },
+      "vulnerable_version_range": "= 3.9.0",
+      "first_patched_version": "3.10.0",
+      "vulnerable_functions": []
+    }
+  ],
+  "cvss_severities": {
+    "cvss_v3": {
+      "vector_string": "CVSS:3.0/AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:H/A:H",
+      "score": 9.6
+    },
+    "cvss_v4": {
+      "vector_string": null,
+      "score": 0.0
+    }
+  },
+  "cwes": [
+    {
+      "cwe_id": "CWE-346",
+      "name": "Origin Validation Error"
+    },
+    {
+      "cwe_id": "CWE-940",
+      "name": "Improper Verification of Source of a Communication Channel"
+    }
+  ],
+  "credits": [],
+  "comments": 0,
+  "cvss": {
+    "vector_string": "CVSS:3.0/AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:H/A:H",
+    "score": 9.6
+  },
+  "epss": {
+    "percentage": 0.00414,
+    "percentile": 0.33591
+  }
+}

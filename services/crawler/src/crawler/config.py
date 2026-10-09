@@ -1,6 +1,24 @@
 import os
+import re
 from dataclasses import dataclass
 from urllib.parse import urlparse
+
+
+class Secret:
+    """A credential that cannot leak through repr, str, logging or a dataclass dump. Read it with reveal()."""
+
+    __slots__ = ("_value",)
+
+    def __init__(self, value: str):
+        self._value = value
+
+    def reveal(self) -> str:
+        return self._value
+
+    def __repr__(self) -> str:
+        return "Secret(***)"
+
+    __str__ = __repr__
 
 
 @dataclass(frozen=True)
@@ -38,6 +56,7 @@ class Settings:
     osv_base_url: str = "https://osv-vulnerabilities.storage.googleapis.com"
     kev_url: str = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
     limits: Limits = Limits()
+    github_token: Secret | None = None  # required only by ghsa runs; they fail before any request without it
     kafka_bootstrap: str = "127.0.0.1:19092"
     # Loopback by default; set CRAWLER_METRICS_HOST=0.0.0.0 in a container so Prometheus can scrape it.
     metrics_host: str = "127.0.0.1"
@@ -70,6 +89,17 @@ def check_source_url(url: str) -> str:
     raise RuntimeError("source URL must be https (http only for loopback)")
 
 
+def parse_github_token(raw: str | None) -> Secret | None:
+    """Unset or empty means "no token". Anything with whitespace or control characters is refused without
+    echoing it: it would corrupt the Authorization header, and the value is a secret."""
+    token = (raw or "").strip()
+    if not token:
+        return None
+    if not re.fullmatch(r"[!-~]+", token):
+        raise RuntimeError("CRAWLER_GITHUB_TOKEN must be a single token of printable ASCII characters")
+    return Secret(token)
+
+
 def _port(name: str, default: int) -> int:
     raw = os.environ.get(name, str(default))
     if not raw.isdigit() or not 0 < int(raw) < 65536:
@@ -88,6 +118,7 @@ def load() -> Settings:
         signing_keys=parse_signing_keys(_required("CRAWLER_SIGNING_KEYS")),
         osv_base_url=base,
         kev_url=check_source_url(os.environ.get("CRAWLER_KEV_URL", Settings.kev_url)),
+        github_token=parse_github_token(os.environ.get("CRAWLER_GITHUB_TOKEN")),
         kafka_bootstrap=os.environ.get("CRAWLER_KAFKA_BOOTSTRAP", Settings.kafka_bootstrap),
         metrics_host=os.environ.get("CRAWLER_METRICS_HOST", Settings.metrics_host),
         metrics_port=_port("CRAWLER_METRICS_PORT", Settings.metrics_port),

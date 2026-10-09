@@ -5,6 +5,7 @@ import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 
 import httpx
 
@@ -37,11 +38,22 @@ class Downloaded:
     size: int
     etag: str | None
     attempts: int
+    # Paginated sources only (ghsa): the lower bound requested and the newest modification time seen.
+    modified_from: datetime | None = None
+    watermark: datetime | None = None
 
 
 @dataclass(frozen=True)
 class NotModified:
     attempts: int
+
+
+def backoff_delay(limits: Limits, attempt: int, rand: Callable[[], float], retry_after: float | None = None) -> float:
+    """Exponential backoff with full jitter; a server's Retry-After raises it, up to the cap."""
+    delay = rand() * min(limits.backoff_cap, limits.backoff_base * 2 ** (attempt - 1))
+    if retry_after is not None:
+        delay = max(delay, min(retry_after, limits.backoff_cap))
+    return delay
 
 
 def _once(
@@ -111,9 +123,7 @@ def fetch(
                 reason = e.args[0] if isinstance(e, _Retryable) else f"{type(e).__name__}"
                 if attempt == limits.max_attempts:
                     raise FetchFailed(f"{reason} after {attempt} attempts", attempt) from e
-                delay = rand() * min(limits.backoff_cap, limits.backoff_base * 2 ** (attempt - 1))
-                if isinstance(e, _Retryable) and e.retry_after is not None:
-                    delay = max(delay, min(e.retry_after, limits.backoff_cap))
+                delay = backoff_delay(limits, attempt, rand, e.retry_after if isinstance(e, _Retryable) else None)
                 if time.monotonic() + delay >= deadline:
                     raise FetchFailed(
                         f"{reason}; total timeout of {limits.total_timeout:g}s exhausted after {attempt} attempts",

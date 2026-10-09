@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from . import contracts, events, signing
-from .config import Limits, Settings
+from . import contracts, events, ghsa, signing
+from .config import Limits, Secret, Settings
 from .fetch import Downloaded, FetchFailed, NotModified, fetch
 from .metrics import DOWNLOAD_BYTES, RETRIES
 from .runs import Run, Runs
@@ -17,6 +17,7 @@ log = logging.getLogger("crawler")
 # Source + ecosystem -> path under the configured base URL. Events never carry URLs.
 OSV_ECOSYSTEMS = {"npm": "npm", "PyPI": "PyPI"}
 KEV = ("cisa-kev", "none")  # one global catalog, so no ecosystem; contracts require a non-empty value
+GHSA = ("ghsa", "none")  # one global advisory database, so no ecosystem
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,9 @@ class Deps:
     limits: Limits = Limits()
     tmp_dir: str | None = None
     fetch_fn: Callable[..., Downloaded | NotModified] = fetch
+    github_token: Secret | None = None
+    github_base_url: str = ghsa.GITHUB_API  # only tests point this elsewhere; it is not operator config
+    ghsa_fn: Callable[..., Downloaded | NotModified] = ghsa.fetch_advisories
 
 
 def target(source: str, ecosystem: str, deps: Deps) -> Target | None:
@@ -44,6 +48,8 @@ def target(source: str, ecosystem: str, deps: Deps) -> Target | None:
         return Target(f"{deps.osv_base_url}/{OSV_ECOSYSTEMS[ecosystem]}/all.zip", "zip", b"PK")
     if (source, ecosystem) == KEV:
         return Target(deps.kev_url, "json", b"{")
+    if (source, ecosystem) == GHSA:
+        return Target(f"{deps.github_base_url}/advisories", "zip", b"PK")
     return None
 
 
@@ -54,7 +60,7 @@ def _drop(outcome: str, reason: str, event: dict[str, Any]) -> str:
 
 def handle(event: dict[str, Any], deps: Deps) -> str:
     """Process one crawl.requested. Returns the outcome:
-    dropped_invalid | dropped_signature | dropped_unsupported | skipped | unchanged | published | failed.
+    dropped_invalid | dropped_signature | dropped_unsupported | skipped | unchanged | published | failed | rate_limited.
     Exceptions (storage, database or broker down) propagate so the caller does not commit the offset."""
     try:
         contracts.validate("crawl.requested", event)
@@ -88,6 +94,29 @@ def handle(event: dict[str, Any], deps: Deps) -> str:
         raise
 
 
+def _download(t: Target, run: Run, previous: Run | None, deps: Deps) -> Downloaded | NotModified:
+    if (run.source, run.ecosystem) == GHSA:
+        return deps.ghsa_fn(
+            deps.github_token,
+            since=previous.watermark if previous else None,
+            limits=deps.limits,
+            tmp_dir=deps.tmp_dir,
+            base_url=deps.github_base_url,
+        )
+    return deps.fetch_fn(
+        t.url, etag=previous.etag if previous else None, limits=deps.limits, tmp_dir=deps.tmp_dir, magic=t.magic
+    )
+
+
+def _bundle_meta(result: Downloaded) -> dict[str, Any]:
+    """What the meta sidecar records about a GHSA bundle: its layout and the request window. No credentials."""
+    since = result.modified_from
+    return {
+        "bundleFormat": ghsa.BUNDLE_FORMAT,
+        "modifiedFrom": since.isoformat(timespec="seconds").replace("+00:00", "Z") if since else None,
+    }
+
+
 def _process(run: Run, deps: Deps) -> str:
     extra = {"runId": run.run_id, "correlationId": run.correlation_id}
     fetched_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -98,22 +127,16 @@ def _process(run: Run, deps: Deps) -> str:
             raise RuntimeError(f"unsupported {run.source}/{run.ecosystem}")
         previous = deps.runs.latest_published(run.source, run.ecosystem)
         try:
-            result = deps.fetch_fn(
-                t.url,
-                etag=previous.etag if previous else None,
-                limits=deps.limits,
-                tmp_dir=deps.tmp_dir,
-                magic=t.magic,
-            )
+            result = _download(t, run, previous, deps)
         except FetchFailed as e:
-            RETRIES.labels(run.source).inc(e.attempts - 1)
+            RETRIES.labels(run.source).inc(max(e.attempts - 1, 0))
             # Publish first, then mark: if we crash in between, the redelivery retries the whole run.
             deps.publish(
                 events.crawl_failed(run.run_id, run.correlation_id, run.source, run.ecosystem, e.reason, e.attempts)
             )
             deps.runs.mark_failed(run.run_id, e.reason, e.attempts)
             log.error("ingestion failed", extra={**extra, "reason": e.reason})
-            return "failed"
+            return "rate_limited" if isinstance(e, ghsa.RateLimited) else "failed"
 
         RETRIES.labels(run.source).inc(result.attempts - 1)
         if isinstance(result, NotModified):
@@ -123,6 +146,7 @@ def _process(run: Run, deps: Deps) -> str:
                 previous.sha256 if previous else None,
                 previous.size_bytes if previous else None,
                 result.attempts,
+                previous.watermark if previous else None,
             )
             log.info("upstream unchanged (304)", extra=extra)
             return "unchanged"
@@ -130,7 +154,9 @@ def _process(run: Run, deps: Deps) -> str:
         DOWNLOAD_BYTES.labels(run.source).inc(result.size)
         try:
             if previous and previous.sha256 == result.sha256:
-                deps.runs.mark_unchanged(run.run_id, result.etag, result.sha256, result.size, result.attempts)
+                deps.runs.mark_unchanged(
+                    run.run_id, result.etag, result.sha256, result.size, result.attempts, result.watermark
+                )
                 log.info("upstream content identical", extra=extra)
                 return "unchanged"
             key = deps.store.put(
@@ -144,10 +170,13 @@ def _process(run: Run, deps: Deps) -> str:
                 source_url=t.url,
                 ext=t.ext,
                 fetched_at=fetched_at,
+                extra_meta=_bundle_meta(result) if run.source == GHSA[0] else None,
             )
         finally:
             os.unlink(result.path)
-        deps.runs.mark_stored(run.run_id, key, result.sha256, result.etag, result.size, result.attempts)
+        deps.runs.mark_stored(
+            run.run_id, key, result.sha256, result.etag, result.size, result.attempts, result.watermark
+        )
         run = Run(
             **{
                 **run.__dict__,
@@ -155,6 +184,7 @@ def _process(run: Run, deps: Deps) -> str:
                 "artifact_key": key,
                 "sha256": result.sha256,
                 "size_bytes": result.size,
+                "watermark": result.watermark,
             }
         )
 

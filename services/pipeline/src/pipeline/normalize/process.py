@@ -10,7 +10,7 @@ from confluent_kafka import KafkaException
 
 from .. import contracts
 from . import archive, events, model
-from .adapters import kev, osv
+from .adapters import ghsa, kev, osv
 from .config import Limits
 from .metrics import ARTIFACTS, RECORDS, RETRIES, RUN_SECONDS
 from .store import Claim, LeaseLost, Store, TooManyRemovals
@@ -21,6 +21,7 @@ log = logging.getLogger("pipeline")
 ADAPTERS: dict[str, tuple[Callable[[dict[str, Any]], dict[str, Any]], int]] = {
     osv.SOURCE: (osv.normalize, osv.ADAPTER_VERSION),
     kev.SOURCE: (kev.normalize, kev.ADAPTER_VERSION),
+    ghsa.SOURCE: (ghsa.normalize, ghsa.ADAPTER_VERSION),
 }
 
 # Failures of something we depend on. These are released and retried for as long as the outage lasts,
@@ -131,7 +132,8 @@ def _pass(run_id: str, event: dict[str, Any], deps: Deps) -> None:
         failed.clear()
 
     with archive.download(deps.s3, deps.bucket, event["artifact"]["key"], sha256, limits.max_artifact_bytes) as f:
-        for entry in archive.entries(f, limits):
+        entries = archive.entries(f, limits)
+        for entry in ghsa.expand(entries) if source == ghsa.SOURCE else entries:
             seen += 1
             try:
                 if entry.error:

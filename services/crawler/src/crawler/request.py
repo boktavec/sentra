@@ -1,6 +1,6 @@
 """Publish one signed crawl.requested by hand, until SENTRA-10 schedules requests.
 
-    python -m crawler.request <source> <ecosystem>     e.g. cisa-kev none, osv npm
+    python -m crawler.request <source> <ecosystem>     e.g. cisa-kev none, osv npm, ghsa none
 
 Signs with the first key in CRAWLER_SIGNING_KEYS. Prints the runId, which is the row in ingestion_runs.
 """

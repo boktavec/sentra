@@ -215,7 +215,7 @@ def env(database, clean_bucket):
     e.q(
         "TRUNCATE group_conflicts, vulnerability_group_members, vulnerability_groups, kev_entries, findings, "
         "vulnerability_ranges, vulnerability_affected, vulnerabilities, normalization_runs, "
-        "normalization_failures"
+        "normalization_failures CASCADE"
     )
     yield e
     for store in e.stores:

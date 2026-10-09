@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 
 import psycopg
 from psycopg import sql
@@ -17,9 +18,13 @@ class Run:
     size_bytes: int | None
     attempts: int
     correlation_id: str
+    watermark: datetime | None  # newest upstream modification time this run covered (incremental sources)
 
 
-_COLUMNS = "run_id::text, source, ecosystem, status, artifact_key, sha256, etag, size_bytes, attempts, correlation_id"
+_COLUMNS = (
+    "run_id::text, source, ecosystem, status, artifact_key, sha256, etag, size_bytes, attempts, correlation_id, "
+    "watermark"
+)
 
 
 class Runs:
@@ -85,7 +90,16 @@ class Runs:
         if cur.rowcount != 1:
             raise RuntimeError(f"run {run_id}: cannot move to {status} (unexpected current state)")
 
-    def mark_stored(self, run_id: str, key: str, sha256: str, etag: str | None, size: int, attempts: int) -> None:
+    def mark_stored(
+        self,
+        run_id: str,
+        key: str,
+        sha256: str,
+        etag: str | None,
+        size: int,
+        attempts: int,
+        watermark: datetime | None = None,
+    ) -> None:
         # Stays leased: the same worker publishes next. Terminal states release the lease.
         self._set(
             run_id,
@@ -96,10 +110,17 @@ class Runs:
             etag=etag,
             size_bytes=size,
             attempts=attempts,
+            watermark=watermark,
         )
 
     def mark_unchanged(
-        self, run_id: str, etag: str | None, sha256: str | None, size: int | None, attempts: int
+        self,
+        run_id: str,
+        etag: str | None,
+        sha256: str | None,
+        size: int | None,
+        attempts: int,
+        watermark: datetime | None = None,
     ) -> None:
         self._set(
             run_id,
@@ -109,6 +130,7 @@ class Runs:
             sha256=sha256,
             size_bytes=size,
             attempts=attempts,
+            watermark=watermark,
         )
 
     def mark_published(self, run_id: str) -> None:

@@ -28,6 +28,7 @@ def main() -> None:
         osv_base_url=settings.osv_base_url,
         kev_url=settings.kev_url,
         limits=settings.limits,
+        github_token=settings.github_token,
     )
     worker = Worker(deps, settings.kafka_bootstrap)
     start_http_server(settings.metrics_port, addr=settings.metrics_host)
