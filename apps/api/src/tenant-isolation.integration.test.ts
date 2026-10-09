@@ -494,6 +494,8 @@ describe("findings", () => {
       "?status=all&sort=newest",
       "?severity=unavailable",
       "?status=resolved&severity=critical",
+      "?sort=priority&priority=p1",
+      "?status=all&sort=priority&priority=p3",
     ]) {
       const outsider = await call(world.outsider, "GET", {
         url: `${url(world.victim.orgId)}${query}`,

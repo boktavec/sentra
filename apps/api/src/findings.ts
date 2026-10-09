@@ -3,15 +3,23 @@ import { AppError } from "@sentra/ts-platform";
 import { isUuid } from "./org-input.ts";
 import type { TenantContext } from "./orgs.ts";
 import { findProject } from "./projects.ts";
-import { category, findingSql, type FindingRow, type SeverityCategory } from "./finding-sql.ts";
+import {
+  category,
+  findingSql,
+  toPriority,
+  type FindingRow,
+  type SeverityCategory,
+} from "./finding-sql.ts";
 import { getFindingDetail } from "./finding-detail.ts";
 
 export type FindingStatus = "open" | "resolved" | "all";
 export type Severity = SeverityCategory | "all";
-export type FindingSort = "severity" | "newest";
+export type FindingSort = "priority" | "severity" | "newest";
+export type PriorityFilter = "all" | "p1" | "p2" | "p3" | "p4";
 export interface FindingQuery {
   status: FindingStatus;
   severity: Severity;
+  priority: PriorityFilter;
   sort: FindingSort;
   limit: number;
   cursor?: string;
@@ -54,11 +62,13 @@ const toFinding = (row: FindingRow) => {
           : null,
     },
     kevStatus: row.kev_status,
+    priority: toPriority(row),
     sources: row.sources,
   };
 };
 
 interface Cursor {
+  tier: number;
   score: number | null;
   time: string;
   id: string;
@@ -68,11 +78,16 @@ function decodeCursor(query: FindingQuery): Cursor | null {
   if (!query.cursor) return null;
   if (query.cursor.length > 1024) throw invalid("cursor");
   try {
-    const [sort, status, severity, score, time, id] = JSON.parse(
+    const [sort, status, severity, priority, tier, score, time, id] = JSON.parse(
       Buffer.from(query.cursor, "base64url").toString("utf8"),
     ) as unknown[];
-    if (cursorMatches(query, sort, status, severity, score, time, id))
-      return { score: score as number | null, time: time as string, id: id as string };
+    if (cursorMatches(query, sort, status, severity, priority, tier, score, time, id))
+      return {
+        tier: tier as number,
+        score: score as number | null,
+        time: time as string,
+        id: id as string,
+      };
   } catch {
     // Invalid or mismatched cursors use the ordinary input error.
   }
@@ -80,11 +95,15 @@ function decodeCursor(query: FindingQuery): Cursor | null {
 }
 
 function cursorMatches(query: FindingQuery, ...parts: unknown[]): boolean {
-  const [sort, status, severity, score, time, id] = parts;
+  const [sort, status, severity, priority, tier, score, time, id] = parts;
   return (
     sort === query.sort &&
     status === query.status &&
     severity === query.severity &&
+    priority === query.priority &&
+    Number.isInteger(tier) &&
+    (tier as number) >= 1 &&
+    (tier as number) <= 4 &&
     validCursorScore(score) &&
     validCursorPosition(time, id)
   );
@@ -104,6 +123,8 @@ function encodeCursor(query: FindingQuery, row: FindingRow): string {
       query.sort,
       query.status,
       query.severity,
+      query.priority,
+      row.priority_tier,
       row.cvss_score === null ? null : Number(row.cvss_score),
       row.cursor_ts,
       row.id,
@@ -132,11 +153,23 @@ function pageConditions(query: FindingQuery, after: Cursor | null, values: unkno
     values.push(min, max);
     where.push(`s.cvss_score BETWEEN $${values.length - 1} AND $${values.length}`);
   }
+  if (query.priority !== "all") {
+    values.push(Number(query.priority.slice(1)));
+    where.push(`s.priority_tier = $${values.length}`);
+  }
   if (after) where.push(cursorCondition(query.sort, after, values));
   return where;
 }
 
 function cursorCondition(sort: FindingSort, after: Cursor, values: unknown[]): string {
+  if (sort !== "priority") return afterInOrder(sort, after, values);
+  values.push(after.tier);
+  const tier = `$${values.length}`;
+  return `(s.priority_tier > ${tier} OR (s.priority_tier = ${tier} AND ${afterInOrder(sort, after, values)}))`;
+}
+
+/** Keyset condition for the order after any tier: CVSS score (unless `newest`), then first seen, then id. */
+function afterInOrder(sort: FindingSort, after: Cursor, values: unknown[]): string {
   if (sort === "newest" || after.score === null) {
     values.push(after.time, after.id);
     const tie = `(s.group_first_seen_at < $${values.length - 1}::timestamptz OR
@@ -150,6 +183,7 @@ function cursorCondition(sort: FindingSort, after: Cursor, values: unknown[]): s
         (s.group_first_seen_at = $${values.length - 1}::timestamptz AND s.id > $${values.length}::uuid))))`;
 }
 
+const priorityOrder = `s.priority_tier, s.cvss_score DESC NULLS LAST, s.group_first_seen_at DESC, s.id`;
 const scoreOrder = "s.cvss_score DESC NULLS LAST, s.group_first_seen_at DESC, s.id";
 const newestOrder = "s.group_first_seen_at DESC, s.id";
 
@@ -163,7 +197,9 @@ export function createFindingStore(pool: Pool) {
       const values: unknown[] = [tenant.orgId, projectId];
       const where = pageConditions(query, after, values);
       values.push(query.limit + 1);
-      const order = query.sort === "severity" ? scoreOrder : newestOrder;
+      const order = { priority: priorityOrder, severity: scoreOrder, newest: newestOrder }[
+        query.sort
+      ];
       const { rows } = await pool.query<FindingRow>(
         findingSql({
           baseWhere: "f.org_id = $1 AND f.project_id = $2",

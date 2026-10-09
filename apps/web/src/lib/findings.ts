@@ -5,6 +5,30 @@ export type FindingStatus = "open" | "resolved" | "all";
 export type FindingSeverity =
   "all" | "critical" | "high" | "medium" | "low" | "none" | "unavailable";
 
+export type FindingSort = "priority" | "severity" | "newest";
+export type FindingPriorityFilter = "all" | "p1" | "p2" | "p3" | "p4";
+
+export interface FindingFilters {
+  status: FindingStatus;
+  severity: FindingSeverity;
+  sort: FindingSort;
+  priority: FindingPriorityFilter;
+}
+
+/** Sentra priority as computed by the API (see packages/contracts/models.md); the web never re-decides it. */
+export interface FindingPriority {
+  tier: "P1" | "P2" | "P3" | "P4";
+  modelVersion: number;
+  baseReason: "kev_listed" | "cvss_high" | "cvss_medium" | "cvss_unavailable" | "cvss_low";
+  scopeAdjusted: boolean;
+  factors: {
+    kev: "listed" | "not_listed" | "unavailable";
+    cvss: { score: number | null; category: string };
+    scope: "required" | "optional" | "excluded";
+    matchQuality: "confirmed" | "unverifiable";
+  };
+}
+
 export interface Finding {
   id: string;
   purl: string;
@@ -25,6 +49,7 @@ export interface Finding {
   };
   sources: { id: string; source: string; sourceId: string; aliases: string[] }[];
   kevStatus: "listed" | "not_listed" | "unavailable";
+  priority: FindingPriority;
 }
 
 interface FindingPage {
@@ -35,11 +60,10 @@ interface FindingPage {
 export function listFindings(
   orgId: string,
   projectSlug: string,
-  status: FindingStatus,
-  severity: FindingSeverity,
+  filters: FindingFilters,
   cursor?: string,
 ) {
-  const params = new URLSearchParams({ status, severity, sort: "severity", limit: "50" });
+  const params = new URLSearchParams({ ...filters, limit: "50" });
   if (cursor) params.set("cursor", cursor);
   return callApi((token) =>
     apiGet<FindingPage>(
@@ -111,6 +135,7 @@ export interface FindingDetail {
   groupId: string | null;
   vulnerability: Finding["vulnerability"];
   kevStatus: Finding["kevStatus"];
+  priority: FindingPriority;
   kev: KevEntry[] | null;
   members: FindingMember[];
   membersTruncated: boolean;

@@ -1,4 +1,4 @@
-import type { Finding } from "./findings.ts";
+import type { Finding, FindingPriority } from "./findings.ts";
 
 export const optionLabel = (value: string) =>
   value === "all" ? "All" : value[0]!.toUpperCase() + value.slice(1);
@@ -17,6 +17,32 @@ export function kevLabel(status: Finding["kevStatus"]) {
   if (status === "listed") return "In CISA KEV";
   if (status === "not_listed") return "Not listed in ingested CISA KEV catalog";
   return "Exploitation data unavailable";
+}
+
+export const priorityLabel = ({ tier, modelVersion }: FindingPriority) =>
+  `${tier} (model v${modelVersion})`;
+
+const BASE_REASONS: Record<FindingPriority["baseReason"], (score: number | null) => string> = {
+  kev_listed: () => "Listed in CISA KEV: base P1",
+  cvss_high: (score) => `High or critical severity (CVSS ${score?.toFixed(1)}): base P2`,
+  cvss_medium: (score) => `Medium severity (CVSS ${score?.toFixed(1)}): base P3`,
+  cvss_unavailable: () => "Severity unavailable: treated as P3",
+  cvss_low: (score) => `Low severity (CVSS ${score?.toFixed(1)}): base P4`,
+};
+
+/**
+ * One sentence per factor behind a tier, in the order the model applies them. The API decided the
+ * tier; this only words the codes it returned, and never claims exploitation data it does not have.
+ */
+export function explainPriority({ baseReason, scopeAdjusted, factors }: FindingPriority): string[] {
+  const reasons = [BASE_REASONS[baseReason](factors.cvss.score)];
+  if (factors.kev !== "listed") reasons.push(kevLabel(factors.kev));
+  if (scopeAdjusted) reasons.push(`Scope ${factors.scope}: lowered one tier`);
+  else if (factors.scope !== "required")
+    reasons.push(`Scope ${factors.scope}: already the lowest tier`);
+  if (factors.matchQuality === "unverifiable")
+    reasons.push("Version could not be verified: tier unchanged");
+  return reasons;
 }
 
 /**

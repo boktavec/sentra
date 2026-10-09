@@ -19,26 +19,30 @@ export function registerFindingsRoutes(
 
   routes.get("/v1/orgs/:orgId/projects/:slug/findings", async (request) => {
     await scope(request, { orgId: params(request).orgId });
-    const { limit, cursor, status, severity, sort } = request.query as Record<
+    const { limit, cursor, status, severity, sort, priority } = request.query as Record<
       string,
       string | undefined
     >;
     const statusValue = status ?? "open";
     const severityValue = severity ?? "all";
-    const sortValue = sort ?? "severity";
+    const sortValue = sort ?? "priority";
+    const priorityValue = priority ?? "all";
     if (!["open", "resolved", "all"].includes(statusValue))
       throw new AppError("invalid_input", 400, "Invalid input", { reason: "status" });
     if (
       !["critical", "high", "medium", "low", "none", "unavailable", "all"].includes(severityValue)
     )
       throw new AppError("invalid_input", 400, "Invalid input", { reason: "severity" });
-    if (!["severity", "newest"].includes(sortValue))
+    if (!["priority", "severity", "newest"].includes(sortValue))
       throw new AppError("invalid_input", 400, "Invalid input", { reason: "sort" });
+    if (!["all", "p1", "p2", "p3", "p4"].includes(priorityValue))
+      throw new AppError("invalid_input", 400, "Invalid input", { reason: "priority" });
     const query: FindingQuery = {
       limit: parseLimit(limit),
       cursor,
       status: statusValue as FindingQuery["status"],
       severity: severityValue as FindingQuery["severity"],
+      priority: priorityValue as FindingQuery["priority"],
       sort: sortValue as FindingQuery["sort"],
     };
     return deps.findings.list(request.tenant!, params(request).slug, query);

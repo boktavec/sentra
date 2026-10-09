@@ -5,6 +5,7 @@ import { expect, test } from "@playwright/test";
 import { createOrg, signUp } from "./helpers";
 
 const SHOTS = "../../docs/features/SENTRA-15-findings-list/screenshots";
+const PRIORITY_SHOTS = "../../docs/features/SENTRA-14-risk-priority/screenshots";
 const { Pool } = createRequire(new URL("../../api/package.json", import.meta.url))("pg");
 
 async function seed(orgSlug: string, projectSlug: string) {
@@ -81,6 +82,7 @@ test("members can review and filter findings without exposing them to outsiders"
   browser,
 }) => {
   mkdirSync(SHOTS, { recursive: true });
+  mkdirSync(PRIORITY_SHOTS, { recursive: true });
   const run = Date.now().toString(36);
   const orgSlug = `findings-${run}`;
   await signUp(page, `findings-owner-${run}@example.com`);
@@ -96,6 +98,8 @@ test("members can review and filter findings without exposing them to outsiders"
   await page.getByRole("button", { name: "Refresh" }).click();
   await expect(page.getByTestId("finding-row")).toHaveCount(2);
   await expect(page.getByTestId("finding-row").first()).toContainText("Critical 9.8");
+  await expect(page.getByTestId("priority-badge").first()).toHaveText("P1");
+  await expect(page.getByTestId("priority-badge").last()).toHaveText("P3");
   await expect(page.getByTestId("finding-row").first()).toContainText("In CISA KEV");
   await expect(page.getByTestId("finding-row").last()).toContainText("Severity unavailable");
   await expect(page.getByTestId("finding-row").last()).toContainText(
@@ -104,6 +108,20 @@ test("members can review and filter findings without exposing them to outsiders"
   await page.waitForLoadState("networkidle");
   await expect(page.getByTestId("finding-row")).toHaveCount(2);
   await page.screenshot({ path: `${SHOTS}/2-open.png`, fullPage: true });
+  await page.screenshot({ path: `${PRIORITY_SHOTS}/1-priority-list.png`, fullPage: true });
+
+  await page.getByLabel("Priority").selectOption("p3");
+  await page.getByRole("button", { name: "Apply filters" }).click();
+  await expect(page.getByTestId("finding-row")).toHaveCount(1);
+  await expect(page.getByTestId("finding-row")).toContainText("unknown@1.0");
+  await page.waitForLoadState("networkidle");
+  await expect(page.getByTestId("finding-row")).toHaveCount(1);
+  await page.screenshot({ path: `${PRIORITY_SHOTS}/2-p3-filter.png`, fullPage: true });
+  await page.getByLabel("Priority").selectOption("all");
+  await page.getByLabel("Sort").selectOption("newest");
+  await page.getByRole("button", { name: "Apply filters" }).click();
+  await expect(page.getByTestId("finding-row")).toHaveCount(2);
+  await page.getByLabel("Sort").selectOption("priority");
 
   await page.getByLabel("Severity").selectOption("critical");
   await page.getByRole("button", { name: "Apply filters" }).click();

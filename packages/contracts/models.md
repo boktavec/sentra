@@ -35,6 +35,23 @@ An unknown range type or event type is a normalization failure (quarantined), so
 
 The canonical `severity[]` vectors remain source evidence. Normalization also stores nullable `cvss_score`, `cvss_version`, and `cvss_calculated_at` on the global `vulnerabilities` row. It selects the highest supported **valid version** (v4.0, then v3.1, then v3.0), calculates the standard base score with `cvss` 3.6, and leaves score/version null when no usable vector exists. The operator backfill `task pipeline:normalize:cvss-backfill` processes older rows in bounded batches after migration 013. These columns are derived storage, not new fields in the versioned source contract, and do not represent tenant-specific risk priority. See the [SENTRA-15 spec](../../docs/features/SENTRA-15-findings-list/spec.md).
 
+## Risk priority (SENTRA-14; model version 1; [ADR 0008](../../docs/adr/0008-read-time-rule-based-risk-priority.md))
+
+Sentra priority is derived at read time per grouped finding and returned as `priority` on list items and the detail. It is never stored. Rules are evaluated in order:
+
+| Step | Rule | `baseReason` |
+| --- | --- | --- |
+| Base | KEV status `listed` gives P1 | `kev_listed` |
+| Base | else group CVSS >= 7.0 gives P2 | `cvss_high` |
+| Base | else 4.0 <= CVSS < 7.0 gives P3 | `cvss_medium` |
+| Base | else CVSS unavailable gives P3 | `cvss_unavailable` |
+| Base | else CVSS < 4.0 gives P4 | `cvss_low` |
+| Exposure | lead scope `optional` or `excluded` lowers the tier by one, never below P4; `scopeAdjusted` is true only if the tier changed | |
+| Match quality | `unverifiable` does not change the tier; reported as a factor | |
+| KEV unavailable | no completed catalog or no CVE linkage is scored as not listed; reported as `unavailable`, never as "not exploited" | |
+
+`factors` repeats `kev`, `cvss` (score and category), `scope` and `matchQuality` so the explanation is self-contained. The API returns codes; the web writes the sentences. Status does not affect the tier. `sort=priority` (the default list order) is tier, then group CVSS descending (unscored last), then group first-seen descending, then id. Any change to a rule, threshold or input bumps `modelVersion`.
+
 ## CISA KEV mapping (built in SENTRA-8; [ADR 0004](../../docs/adr/0004-kev-as-enrichment-plus-linked-vulnerability-rows.md))
 
 KEV is stored twice: the full entry in `kev_entries` (the source of truth for "is it in KEV"), and a linked canonical row below. Field names were **Verified** against the live catalog on 2026-10-08; the catalog also has `cwes`, `forensicTriage`, `requiredAction`, `dueDate`, `knownRansomwareCampaignUse` and `notes`.

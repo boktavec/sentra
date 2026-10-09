@@ -1,9 +1,11 @@
 import Link from "next/link";
 import {
   explainEvidence,
+  explainPriority,
   formatDate,
   kevLabel,
   optionLabel,
+  priorityLabel,
   resolvedReasonLabel,
   safeHref,
   severityLabel,
@@ -79,7 +81,14 @@ function RiskFactors({ finding }: { finding: FindingDetail }) {
   return (
     <section aria-labelledby="risk-heading" style={card}>
       <h2 id="risk-heading">Risk factors</h2>
-      <p data-testid="priority-note">Sentra priority is not yet calculated.</p>
+      <p data-testid="priority">
+        <strong>Sentra priority {priorityLabel(finding.priority)}</strong>
+      </p>
+      <ul data-testid="priority-reasons">
+        {explainPriority(finding.priority).map((reason) => (
+          <li key={reason}>{reason}</li>
+        ))}
+      </ul>
       <dl style={grid}>
         <dt>CVSS</dt>
         <dd style={value}>
