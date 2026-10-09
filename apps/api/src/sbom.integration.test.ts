@@ -4,6 +4,7 @@
 import { randomUUID } from "node:crypto";
 import { Writable } from "node:stream";
 import {
+  Admin,
   Consumer,
   MessagesStreamModes,
   Producer,
@@ -614,7 +615,16 @@ describe("publishing sbom.uploaded", () => {
         await consumer.close(true);
       }
     } finally {
-      await producer.close(true);
+      try {
+        await producer.close(true);
+      } finally {
+        const admin = new Admin({ clientId: "sbom-test-cleanup", bootstrapBrokers: kafka });
+        try {
+          await admin.deleteTopics({ topics: [topic] });
+        } finally {
+          await admin.close();
+        }
+      }
     }
   }, 60_000);
 

@@ -6,6 +6,8 @@ from typing import Any
 import psycopg
 from psycopg.types.json import Jsonb
 
+from .cvss_score import score
+
 # Records are (zip entry name, canonical vulnerability document).
 Record = tuple[str, dict[str, Any]]
 Failure = tuple[str, str]  # (zip entry name, error)
@@ -40,12 +42,15 @@ class RunRow:
 UPSERT = """
 INSERT INTO vulnerabilities
   (source, source_id, aliases, summary, details, published_at, modified_at, withdrawn_at, severity, refs,
+   cvss_score, cvss_version, cvss_calculated_at,
    source_artifact_sha256, source_entry, schema_version, adapter_version)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), %s, %s, %s, %s)
 ON CONFLICT (source, source_id) DO UPDATE SET
   aliases = EXCLUDED.aliases, summary = EXCLUDED.summary, details = EXCLUDED.details,
   published_at = EXCLUDED.published_at, modified_at = EXCLUDED.modified_at,
   withdrawn_at = EXCLUDED.withdrawn_at, severity = EXCLUDED.severity, refs = EXCLUDED.refs,
+  cvss_score = EXCLUDED.cvss_score, cvss_version = EXCLUDED.cvss_version,
+  cvss_calculated_at = EXCLUDED.cvss_calculated_at,
   source_artifact_sha256 = EXCLUDED.source_artifact_sha256, source_entry = EXCLUDED.source_entry,
   schema_version = EXCLUDED.schema_version, adapter_version = EXCLUDED.adapter_version, updated_at = now()
 WHERE EXCLUDED.modified_at > vulnerabilities.modified_at
@@ -173,6 +178,7 @@ class Store:
                                 d["withdrawnAt"],
                                 Jsonb(d["severity"]),
                                 Jsonb(d["references"]),
+                                *score(d["severity"]),
                                 sha256,
                                 name,
                                 schema_version,

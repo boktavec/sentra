@@ -20,7 +20,11 @@ def topic():
     admin = AdminClient({"bootstrap.servers": BOOTSTRAP})
     for fut in admin.create_topics([NewTopic(name, num_partitions=1, replication_factor=1)]).values():
         fut.result(15)
-    return name
+    try:
+        yield name
+    finally:
+        for fut in admin.delete_topics([name]).values():
+            fut.result(15)
 
 
 def normalized_events(sha: str, timeout: float = 20) -> list[dict]:

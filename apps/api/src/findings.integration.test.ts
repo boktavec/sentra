@@ -216,7 +216,7 @@ describe("listing findings", () => {
       quality: "unverifiable",
     });
 
-    const { items } = (await get(listUrl(org.id, slug), admin.headers)).json();
+    const { items } = (await get(listUrl(org.id, slug, "?status=all"), admin.headers)).json();
 
     const byPurl = Object.fromEntries(items.map((i: { purl: string }) => [i.purl, i]));
     expect(byPurl["pkg:pypi/a@1"]).toMatchObject({
@@ -316,6 +316,9 @@ describe("listing findings", () => {
     expect((await get(listUrl(org.id, slug, "?cursor=garbage"), admin.headers)).statusCode).toBe(
       400,
     );
+    for (const query of ["?status=closed", "?severity=urgent", "?sort=random"]) {
+      expect((await get(listUrl(org.id, slug, query), admin.headers)).statusCode).toBe(400);
+    }
     const missing = await get(listUrl(org.id, "no-such-project"), admin.headers);
     expect(missing.statusCode).toBe(404);
     expect(missing.json().reason).toBeUndefined(); // the reason is logged, never sent
@@ -324,6 +327,122 @@ describe("listing findings", () => {
   it("requires a signed-in user", async () => {
     const { org, slug } = await newProject();
     expect((await get(listUrl(org.id, slug))).statusCode).toBe(401);
+  });
+
+  it("sorts grouped issues by the strongest advisory CVSS score and filters the grouped result", async () => {
+    const { org, admin, slug, projectId } = await newProject();
+    const importId = await importFor(org.id, projectId, admin.id);
+    const canonical = await advisory("CANONICAL");
+    const severe = await advisory("SEVERE");
+    await group(canonical, severe);
+    await pool.query(
+      "UPDATE vulnerabilities SET cvss_score = 9.8, cvss_version = '3.1', cvss_calculated_at = now() WHERE id = $1",
+      [severe],
+    );
+    await finding({
+      orgId: org.id,
+      projectId,
+      importId,
+      purl: "pkg:pypi/grouped@1",
+      vulnerabilityId: canonical,
+    });
+    await finding({
+      orgId: org.id,
+      projectId,
+      importId,
+      purl: "pkg:pypi/grouped@1",
+      vulnerabilityId: severe,
+    });
+    const low = await advisory("LOW");
+    await pool.query(
+      "UPDATE vulnerabilities SET cvss_score = 3.1, cvss_version = '3.1', cvss_calculated_at = now() WHERE id = $1",
+      [low],
+    );
+    await finding({
+      orgId: org.id,
+      projectId,
+      importId,
+      purl: "pkg:pypi/low@1",
+      vulnerabilityId: low,
+    });
+    await finding({
+      orgId: org.id,
+      projectId,
+      importId,
+      purl: "pkg:pypi/resolved@1",
+      status: "resolved",
+    });
+
+    const first = (await get(listUrl(org.id, slug, "?limit=1"), admin.headers)).json();
+    expect(first.items).toHaveLength(1);
+    expect(first.items[0]).toMatchObject({
+      purl: "pkg:pypi/grouped@1",
+      vulnerability: {
+        cvssScore: 9.8,
+        severityCategory: "critical",
+        cvssSource: { source: "osv", sourceId: expect.stringContaining("SEVERE") },
+      },
+    });
+    const next = (
+      await get(
+        listUrl(org.id, slug, `?limit=1&cursor=${encodeURIComponent(first.nextCursor)}`),
+        admin.headers,
+      )
+    ).json();
+    expect(next.items.map((item: { purl: string }) => item.purl)).toEqual(["pkg:pypi/low@1"]);
+    expect(next.nextCursor).toBeNull();
+    const critical = (await get(listUrl(org.id, slug, "?severity=critical"), admin.headers)).json();
+    expect(critical.items.map((item: { purl: string }) => item.purl)).toEqual([
+      "pkg:pypi/grouped@1",
+    ]);
+    const resolved = (await get(listUrl(org.id, slug, "?status=resolved"), admin.headers)).json();
+    expect(resolved.items.map((item: { purl: string }) => item.purl)).toEqual([
+      "pkg:pypi/resolved@1",
+    ]);
+    expect(
+      (
+        await get(
+          listUrl(
+            org.id,
+            slug,
+            `?limit=1&severity=critical&cursor=${encodeURIComponent(first.nextCursor)}`,
+          ),
+          admin.headers,
+        )
+      ).statusCode,
+    ).toBe(400);
+  });
+
+  it("uses active KEV enrichment across a group, not a historical advisory stub", async () => {
+    const { org, admin, slug, projectId } = await newProject();
+    const importId = await importFor(org.id, projectId, admin.id);
+    const canonical = await advisory("KEV-CANONICAL");
+    const linked = await advisory("KEV-LINKED");
+    await group(canonical, linked);
+    const cve = `CVE-2026-${parseInt(randomUUID().replaceAll("-", "").slice(0, 8), 16)}`;
+    await pool.query("UPDATE vulnerabilities SET aliases = ARRAY[$1] WHERE id = $2", [cve, linked]);
+    await finding({
+      orgId: org.id,
+      projectId,
+      importId,
+      purl: "pkg:pypi/kev@1",
+      vulnerabilityId: canonical,
+    });
+    await pool.query(
+      `INSERT INTO normalization_runs (artifact_sha256, source, ecosystem, adapter_version, status, correlation_id)
+       VALUES ($1, 'cisa-kev', 'none', 1, 'published', $2)`,
+      [randomUUID().replaceAll("-", "").padEnd(64, "a"), `test-${run}`],
+    );
+    await pool.query(
+      `INSERT INTO kev_entries (cve_id, date_added, content_hash, catalog_version, date_released,
+         source_artifact_sha256, adapter_version)
+       VALUES ($1, CURRENT_DATE, $2, 'test', now(), $2, 1)`,
+      [cve, "b".repeat(64)],
+    );
+    const url = listUrl(org.id, slug);
+    expect((await get(url, admin.headers)).json().items[0].kevStatus).toBe("listed");
+    await pool.query("UPDATE kev_entries SET removed_at = now() WHERE cve_id = $1", [cve]);
+    expect((await get(url, admin.headers)).json().items[0].kevStatus).toBe("not_listed");
   });
 });
 

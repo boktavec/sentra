@@ -54,6 +54,12 @@ tasks:
       - "[ -f .env ] || cp .env.example .env"
       - uv run --env-file .env python -m pipeline.normalize.reprocess {{.CLI_ARGS}}
 
+  normalize:cvss-backfill:
+    desc: Backfill CVSS base scores for previously normalized advisories (migration 013 required)
+    cmds:
+      - "[ -f .env ] || cp .env.example .env"
+      - uv run --env-file .env python -m pipeline.normalize.backfill_cvss {{.CLI_ARGS}}
+
   correlate:run:
     desc: Run the correlator (findings) against the local stack (needs `task stack:up`, migrations applied and `task stack:correlator-role`)
     cmds:

@@ -1,6 +1,8 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { parseLimit, scopeTo, type Deps } from "./org-routes.ts";
 import type { FindingStore } from "./findings.ts";
+import { AppError } from "@sentra/ts-platform";
+import type { FindingQuery } from "./findings.ts";
 
 type Params = { orgId: string; slug: string };
 const params = (request: FastifyRequest) => request.params as Params;
@@ -18,7 +20,28 @@ export function registerFindingsRoutes(
 
   routes.get("/v1/orgs/:orgId/projects/:slug/findings", async (request) => {
     await scope(request, { orgId: params(request).orgId });
-    const { limit, cursor } = request.query as { limit?: string; cursor?: string };
-    return deps.findings.list(request.tenant!, params(request).slug, parseLimit(limit), cursor);
+    const { limit, cursor, status, severity, sort } = request.query as Record<
+      string,
+      string | undefined
+    >;
+    const statusValue = status ?? "open";
+    const severityValue = severity ?? "all";
+    const sortValue = sort ?? "severity";
+    if (!["open", "resolved", "all"].includes(statusValue))
+      throw new AppError("invalid_input", 400, "Invalid input", { reason: "status" });
+    if (
+      !["critical", "high", "medium", "low", "none", "unavailable", "all"].includes(severityValue)
+    )
+      throw new AppError("invalid_input", 400, "Invalid input", { reason: "severity" });
+    if (!["severity", "newest"].includes(sortValue))
+      throw new AppError("invalid_input", 400, "Invalid input", { reason: "sort" });
+    const query: FindingQuery = {
+      limit: parseLimit(limit),
+      cursor,
+      status: statusValue as FindingQuery["status"],
+      severity: severityValue as FindingQuery["severity"],
+      sort: sortValue as FindingQuery["sort"],
+    };
+    return deps.findings.list(request.tenant!, params(request).slug, query);
   });
 }

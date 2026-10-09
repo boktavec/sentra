@@ -31,6 +31,10 @@ Source adapters turn provider-specific records into these shapes. Everything aft
 
 An unknown range type or event type is a normalization failure (quarantined), so a new OSV feature is noticed instead of silently ignored.
 
+### Derived CVSS fields (SENTRA-15)
+
+The canonical `severity[]` vectors remain source evidence. Normalization also stores nullable `cvss_score`, `cvss_version`, and `cvss_calculated_at` on the global `vulnerabilities` row. It selects the highest supported **valid version** (v4.0, then v3.1, then v3.0), calculates the standard base score with `cvss` 3.6, and leaves score/version null when no usable vector exists. The operator backfill `task pipeline:normalize:cvss-backfill` processes older rows in bounded batches after migration 013. These columns are derived storage, not new fields in the versioned source contract, and do not represent tenant-specific risk priority. See the [SENTRA-15 spec](../../docs/features/SENTRA-15-findings-list/spec.md).
+
 ## CISA KEV mapping (built in SENTRA-8; [ADR 0004](../../docs/adr/0004-kev-as-enrichment-plus-linked-vulnerability-rows.md))
 
 KEV is stored twice: the full entry in `kev_entries` (the source of truth for "is it in KEV"), and a linked canonical row below. Field names were **Verified** against the live catalog on 2026-10-08; the catalog also has `cwes`, `forensicTriage`, `requiredAction`, `dueDate`, `knownRansomwareCampaignUse` and `notes`.
