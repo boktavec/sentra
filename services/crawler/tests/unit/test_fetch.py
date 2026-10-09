@@ -75,7 +75,7 @@ def test_other_4xx_fail_immediately_without_retry(osv, status):
 
 def test_non_zip_body_is_rejected_and_leaves_no_temp_file(osv, tmp_path):
     osv.serve(PATH, Response(body=b"<html>not a zip</html>"))
-    with pytest.raises(FetchFailed, match="not a ZIP"):
+    with pytest.raises(FetchFailed, match="not the expected file type"):
         fetch(osv.base_url + PATH, etag=None, limits=FAST, tmp_dir=str(tmp_path), sleep=lambda s: None)
     assert list(tmp_path.iterdir()) == []
 
@@ -120,3 +120,14 @@ def test_total_timeout_bounds_the_whole_fetch_not_each_attempt(osv):
     with pytest.raises(FetchFailed, match="total"):
         fetch(osv.base_url + PATH, etag=None, limits=limits)
     assert time.monotonic() - started < 1.0 + 0.6
+
+
+def test_json_magic_accepts_a_json_body_and_rejects_a_zip(osv, tmp_path):
+    osv.serve(PATH, Response(body=b'{"vulnerabilities": []}'))
+    result = fetch(osv.base_url + PATH, etag=None, limits=FAST, tmp_dir=str(tmp_path), magic=b"{")
+    assert isinstance(result, Downloaded)
+    os.unlink(result.path)
+
+    osv.serve(PATH, Response(body=make_zip()))
+    with pytest.raises(FetchFailed, match="not the expected file type"):
+        fetch(osv.base_url + PATH, etag=None, limits=FAST, tmp_dir=str(tmp_path), magic=b"{")

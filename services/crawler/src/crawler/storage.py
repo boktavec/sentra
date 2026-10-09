@@ -22,13 +22,13 @@ def make_client(endpoint: str, access_key: str, secret_key: str) -> Any:
 
 
 class ArtifactStore:
-    """Content-addressed raw artifacts: raw/<source>/<ecosystem>/<sha256>.zip plus a JSON sidecar."""
+    """Content-addressed raw artifacts: raw/<source>/<ecosystem>/<sha256>.<ext> plus a JSON sidecar."""
 
     def __init__(self, s3: Any, bucket: str):
         self.s3, self.bucket = s3, bucket
 
-    def key(self, source: str, ecosystem: str, sha256: str) -> str:
-        return f"raw/{source}/{ecosystem}/{sha256}.zip"
+    def key(self, source: str, ecosystem: str, sha256: str, ext: str = "zip") -> str:
+        return f"raw/{source}/{ecosystem}/{sha256}.{ext}"
 
     def _exists(self, key: str) -> bool:
         try:
@@ -51,15 +51,16 @@ class ArtifactStore:
         etag: str | None,
         source_url: str,
         fetched_at: str,
+        ext: str = "zip",
     ) -> str:
         """Store the file and return its key. Idempotent: identical content is stored once.
 
         Uploaded to a temporary key, size-checked, then copied into place, so a crash never leaves a
         partial object at the final key.
         """
-        key = self.key(source, ecosystem, sha256)
+        key = self.key(source, ecosystem, sha256, ext)
         if not self._exists(key):
-            tmp = f"tmp/{run_id}.zip"
+            tmp = f"tmp/{run_id}.{ext}"
             self.s3.upload_file(path, self.bucket, tmp, Config=_TRANSFER)
             try:
                 if self.s3.head_object(Bucket=self.bucket, Key=tmp)["ContentLength"] != size:
@@ -67,7 +68,8 @@ class ArtifactStore:
                 self.s3.copy_object(Bucket=self.bucket, Key=key, CopySource={"Bucket": self.bucket, "Key": tmp})
             finally:
                 self.s3.delete_object(Bucket=self.bucket, Key=tmp)
-        sidecar = f"raw/{source}/{ecosystem}/{sha256}.json"
+        # A JSON artifact would collide with the `<sha256>.json` sidecar, so its sidecar is `.meta.json`.
+        sidecar = f"raw/{source}/{ecosystem}/{sha256}.{'meta.json' if ext == 'json' else 'json'}"
         if not self._exists(sidecar):  # keep the first run's provenance
             meta = {
                 "runId": run_id,
