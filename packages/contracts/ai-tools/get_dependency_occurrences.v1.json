@@ -1,0 +1,34 @@
+{
+  "tool": "get_dependency_occurrences",
+  "version": 1,
+  "description": "Every version of the finding's package listed in the same SBOM import, with scope and occurrence counts. Takes no arguments; the import is fixed by the investigation.",
+  "arguments": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "result": {
+    "type": "object",
+    "required": ["importId", "importedAt", "occurrences"],
+    "additionalProperties": false,
+    "properties": {
+      "importId": { "type": "string" },
+      "importedAt": { "type": "string" },
+      "occurrences": {
+        "type": "array",
+        "maxItems": 20,
+        "items": {
+          "type": "object",
+          "required": ["purl", "version", "scope", "occurrences"],
+          "additionalProperties": false,
+          "properties": {
+            "purl": { "type": "string" },
+            "version": { "type": "string" },
+            "scope": { "enum": ["required", "optional", "excluded"] },
+            "occurrences": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,83 @@
+{
+  "tool": "get_finding_risk",
+  "version": 1,
+  "description": "Current state, risk priority, KEV status and lead advisory of the finding under investigation. Takes no arguments; the finding is fixed by the investigation.",
+  "arguments": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "result": {
+    "type": "object",
+    "required": ["finding", "priority", "kevStatus", "advisory"],
+    "additionalProperties": false,
+    "properties": {
+      "finding": {
+        "type": "object",
+        "required": [
+          "id", "purl", "version", "ecosystem", "scope", "status", "resolvedReason",
+          "matchQuality", "matchReason", "evidence", "firstSeenAt", "lastSeenAt"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "purl": { "type": "string" },
+          "version": { "type": "string" },
+          "ecosystem": { "type": "string" },
+          "scope": { "enum": ["required", "optional", "excluded"] },
+          "status": { "enum": ["open", "resolved"] },
+          "resolvedReason": { "type": ["string", "null"] },
+          "matchQuality": { "enum": ["confirmed", "unverifiable"] },
+          "matchReason": { "type": ["string", "null"] },
+          "evidence": { "description": "The matcher's evidence, or null when it exceeds the size cap.", "type": ["object", "null"] },
+          "firstSeenAt": { "type": "string" },
+          "lastSeenAt": { "type": "string" }
+        }
+      },
+      "priority": {
+        "type": "object",
+        "required": ["tier", "modelVersion", "baseReason", "scopeAdjusted", "factors"],
+        "additionalProperties": false,
+        "properties": {
+          "tier": { "enum": ["P1", "P2", "P3", "P4"] },
+          "modelVersion": { "type": "integer" },
+          "baseReason": { "type": "string" },
+          "scopeAdjusted": { "type": "boolean" },
+          "factors": {
+            "type": "object",
+            "required": ["kev", "cvss", "scope", "matchQuality"],
+            "additionalProperties": false,
+            "properties": {
+              "kev": { "enum": ["listed", "not_listed", "unavailable"] },
+              "cvss": {
+                "type": "object",
+                "required": ["score", "category"],
+                "additionalProperties": false,
+                "properties": {
+                  "score": { "type": ["number", "null"] },
+                  "category": { "type": "string" }
+                }
+              },
+              "scope": { "type": "string" },
+              "matchQuality": { "type": "string" }
+            }
+          }
+        }
+      },
+      "kevStatus": { "enum": ["listed", "not_listed", "unavailable"] },
+      "advisory": {
+        "type": "object",
+        "required": ["source", "sourceId", "aliases", "summary", "cvssScore", "cvssVersion"],
+        "additionalProperties": false,
+        "properties": {
+          "source": { "type": "string" },
+          "sourceId": { "type": "string" },
+          "aliases": { "type": "array", "maxItems": 10, "items": { "type": "string" } },
+          "summary": { "type": ["string", "null"] },
+          "cvssScore": { "type": ["number", "null"] },
+          "cvssVersion": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

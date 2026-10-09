@@ -17,12 +17,15 @@ import { createOrgStore } from "./orgs.ts";
 import { createFindingStore } from "./findings.ts";
 import { createInvestigationStore } from "./investigations.ts";
 import { createInvestigationRelay } from "./investigation-relay.ts";
+import { buildInternalApp } from "./investigation-tool-routes.ts";
+import { createInvestigationTools } from "./investigation-tools.ts";
 import { createProjectStore } from "./projects.ts";
 import { createSbomRelay, ensureDevTopic, type EventPublisher } from "./sbom-relay.ts";
 import { createSbomStorage } from "./sbom-storage.ts";
 import { createSbomStore } from "./sbom.ts";
 import { createProfileFetcher } from "./profile.ts";
 import { createUserStore } from "./users.ts";
+import { loadToolValidators } from "./tool-contracts.ts";
 import { createVerifier } from "./verifier.ts";
 
 function startEmailSender(smtpUrl: string, config: Config, pool: Pool, logger: Logger) {
@@ -146,6 +149,16 @@ export async function createApi(config: Config, logger: Logger) {
     },
   });
 
+  const internalApp = buildInternalApp({
+    logger,
+    serviceToken: config.investigationTools.serviceToken,
+    signingKeys: config.investigationTools.signingKeys,
+    tools: createInvestigationTools(pool, {
+      signingKeys: config.investigationTools.signingKeys,
+      validators: loadToolValidators(),
+    }),
+  });
+
   // ponytail: in-process sender, safe across replicas (SKIP LOCKED); move to a worker if sending load grows.
   const sender = config.smtpUrl
     ? startEmailSender(config.smtpUrl, config, pool, logger)
@@ -195,6 +208,7 @@ export async function createApi(config: Config, logger: Logger) {
 
   return {
     app,
+    internalApp,
     sbom,
     relay: relay?.relay,
     investigationRelay: investigationRelay?.poller,
@@ -209,6 +223,7 @@ export async function createApi(config: Config, logger: Logger) {
       await investigationRelay?.close();
       storage?.destroy();
       await app.close();
+      await internalApp.close();
       await pool.end();
       redis.disconnect();
     },

@@ -1,3 +1,5 @@
+import { assertSecretLength, parseSigningKeys, type SigningKey } from "./tool-token.ts";
+
 const required = (name: string): string => {
   const value = process.env[name];
   if (!value) throw new Error(`Missing required env var ${name}`);
@@ -42,8 +44,22 @@ export interface Config {
   investigationModelId: string;
   investigationMaxPendingPerOrg: number;
   investigationRelayPollSeconds: number;
+  /** Internal listener the intelligence worker's tools call (ADR 0009). Never a public interface. */
+  investigationTools: {
+    host: string;
+    port: number;
+    /** Static bearer secret shared with the worker. */
+    serviceToken: string;
+    signingKeys: SigningKey[];
+  };
   /** Fastify `trustProxy` value; unset means use the socket address and ignore X-Forwarded-For. */
   trustedProxies: string[] | false;
+}
+
+function toolServiceToken(): string {
+  const token = required("INTELLIGENCE_TOOL_TOKEN");
+  assertSecretLength("INTELLIGENCE_TOOL_TOKEN", token);
+  return token;
 }
 
 export function loadConfig(): Config {
@@ -85,6 +101,12 @@ export function loadConfig(): Config {
     investigationModelId: process.env["INVESTIGATION_MODEL_ID"] ?? "Qwen 3.8:27b",
     investigationMaxPendingPerOrg: int("INVESTIGATION_MAX_PENDING_PER_ORG", 5),
     investigationRelayPollSeconds: int("INVESTIGATION_RELAY_POLL_SECONDS", 2),
+    investigationTools: {
+      host: process.env["INVESTIGATION_TOOLS_HOST"] ?? "127.0.0.1",
+      port: int("INVESTIGATION_TOOLS_PORT", 4001),
+      serviceToken: toolServiceToken(),
+      signingKeys: parseSigningKeys(required("INVESTIGATION_TOOL_SIGNING_KEYS")),
+    },
     trustedProxies: process.env["TRUSTED_PROXIES"]
       ? process.env["TRUSTED_PROXIES"].split(",")
       : false,

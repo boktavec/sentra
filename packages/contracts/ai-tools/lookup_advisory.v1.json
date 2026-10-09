@@ -1,0 +1,181 @@
+{
+  "tool": "lookup_advisory",
+  "version": 1,
+  "description": "Look up one public security advisory by CVE, GHSA or OSV-style identifier. Returns global advisory data, its linked advisories, and the CISA KEV entry if listed. Contains no customer data.",
+  "arguments": {
+    "type": "object",
+    "required": [
+      "id"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "type": "string",
+        "maxLength": 80,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+      }
+    }
+  },
+  "result": {
+    "type": "object",
+    "required": [
+      "advisory",
+      "groupMembers",
+      "kev"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "advisory": {
+        "type": "object",
+        "required": [
+          "source",
+          "sourceId",
+          "aliases",
+          "summary",
+          "severity",
+          "cvssScore",
+          "cvssVersion"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "aliases": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+              "type": "string"
+            }
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "severity": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "type": "object",
+              "required": [
+                "type",
+                "vector"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "vector": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "cvssScore": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "cvssVersion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "groupMembers": {
+        "type": "array",
+        "maxItems": 20,
+        "items": {
+          "type": "object",
+          "required": [
+            "source",
+            "sourceId"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "source": {
+              "type": "string"
+            },
+            "sourceId": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "kev": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "required": [
+              "cveId",
+              "name",
+              "vendorProject",
+              "product",
+              "dateAdded",
+              "dueDate",
+              "knownRansomwareUse",
+              "requiredAction"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "cveId": {
+                "type": "string"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "vendorProject": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "product": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "dateAdded": {
+                "type": "string"
+              },
+              "dueDate": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "knownRansomwareUse": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "requiredAction": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          }
+        ]
+      }
+    }
+  }
+}
