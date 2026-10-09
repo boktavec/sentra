@@ -72,6 +72,18 @@ When the planning phase is complete, create a feature folder at `docs/features/<
 
 Verify claims about third-party behavior against the running system before relying on them, especially security-relevant defaults. Decode a real token, try the unhappy path (for example registering without verifying an email), and check which ports and defaults actually apply. Label each such claim in the spec as **Verified** (and how) or **Assumed**. Library documentation says what a tool can do; only the running system shows what it does by default.
 
+## Agent Pipeline
+
+Subagents live in `.claude/agents/` and do not invoke each other; the main agent orchestrates:
+
+1. **Plan:** `senior-engineering-planner` interviews the user (relay one question at a time, resuming it with the answer) and saves the approved spec.
+2. **Implement:** after the user approves the spec, run `senior-software-engineer` with the spec path.
+3. **Review:** run `staff-engineering-reviewer` with the spec path, the diff, and the implementer's handoff.
+4. **Fix loop:** on CHANGES REQUIRED, resume the implementer with the blocking findings, then re-run the reviewer. Repeat until PASS or PASS WITH ADVISORIES.
+5. **Escalate to the user** (do not loop) on planning-level findings, BLOCKED / INCONCLUSIVE, or after 3 review rounds without PASS.
+
+Commits, pushes, PRs, merges, and deploys still need explicit user instruction.
+
 ## Feature Branch and Worktree Lifecycle
 
 For each feature, create a dedicated branch and Git worktree from the latest default branch before writing its spec or implementation. Use `feature/<issue-id>-<short-slug>` for the branch when an issue ID exists; otherwise use a descriptive slug. Keep the feature's spec, code, tests, and documentation in that worktree. Agents working in parallel must use separate worktrees and avoid editing each other's branches. Stage explicit paths rather than `git add -A`, and check `git status` for untracked generated files before committing.
