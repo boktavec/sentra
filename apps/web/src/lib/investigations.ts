@@ -16,6 +16,8 @@ export interface Investigation {
   completedAt: string | null;
 }
 
+export type { InvestigationResult } from "./investigation-result.ts";
+
 export interface Page<T> {
   items: T[];
   nextCursor: string | null;

@@ -63,7 +63,7 @@ test("start and observe a finding investigation through the browser", async ({ p
     await expect(page.getByTestId("investigation-runs")).toContainText("completed", {
       timeout: 120_000,
     });
-    await expect(page.getByTestId("investigation-runs")).toContainText("Draft saved");
+    await expect(page.getByRole("button", { name: "View summary" })).toBeVisible();
     await page.screenshot({ path: `${SHOTS}/3-completed.png`, fullPage: true });
   }
 });

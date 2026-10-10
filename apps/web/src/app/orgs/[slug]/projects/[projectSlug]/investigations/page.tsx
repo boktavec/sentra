@@ -37,6 +37,7 @@ export default async function InvestigationsPage({
       {findings.ok ? (
         <InvestigationWorkspace
           orgId={org.data.id}
+          orgSlug={slug}
           projectSlug={project.data.slug}
           initial={findings.data}
         />
