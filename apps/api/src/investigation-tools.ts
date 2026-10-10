@@ -350,12 +350,16 @@ async function completeRun(
        VALUES ($1, $2, $3, $4, $5, $6)`,
       [investigationId, run.orgId, run.projectId, run.attempt, RESULT_SCHEMA_VERSION, built.value],
     );
-    await db.query(
+    // The run may have left `running` since findLiveRun (swept, re-queued, re-claimed) while the INSERT
+    // waited; completing it then would resurrect it. Zero rows rolls the INSERT back.
+    const completed = await db.query(
       `UPDATE investigations SET status = 'completed', failure_code = NULL, lease_owner = NULL,
          lease_expires_at = NULL, completed_at = now(), updated_at = now()
-       WHERE id = $1 AND org_id = $2`,
-      [investigationId, run.orgId],
+       WHERE id = $1 AND org_id = $2 AND status = 'running' AND lease_owner = $3
+       RETURNING id`,
+      [investigationId, run.orgId, leaseOwner],
     );
+    if (completed.rowCount === 0) throw leaseLost();
     return { outcome: "ok", orgId: run.orgId };
   });
 }

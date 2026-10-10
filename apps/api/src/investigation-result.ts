@@ -9,7 +9,10 @@ import type { ToolName } from "./tool-contracts.ts";
 export const RESULT_SCHEMA_VERSION = 1;
 // The table caps the result at 32 KiB of jsonb text, which spaces out keys and commas; stay clearly under it.
 const MAX_STORED_RESULT_BYTES = 28 * 1024;
+// API-assembled parts are bounded by construction: at most this many evidence targets across all entries
+// (each purl is capped by the tool contract), and the assembled part may not exceed the byte budget below.
 const MAX_EVIDENCE_TARGETS = 10;
+const MAX_ASSEMBLED_BYTES = 12 * 1024;
 
 export type ViolationCode =
   | "schema_invalid"
@@ -62,6 +65,12 @@ export interface Snapshot {
     matchQuality: string;
   };
   advisory: { source: string; sourceId: string; aliases: string[]; summary: string | null };
+  linkedAdvisories?: {
+    source: string;
+    sourceId: string;
+    cvssScore: number | null;
+    cvssVersion: string | null;
+  }[];
 }
 
 export interface RunFacts {
@@ -193,14 +202,19 @@ type EvidenceEntry = {
 const okCalls = (calls: LedgerCall[], tool: ToolName) =>
   calls.filter((c) => c.tool === tool && c.outcome === "ok");
 
-function resolveEvidence(call: LedgerCall): EvidenceEntry {
+/** `budget.left` is the number of evidence targets still available to this result as a whole. */
+function resolveEvidence(call: LedgerCall, budget: { left: number }): EvidenceEntry {
   const base = { ref: `call:${call.callNo}`, tool: call.tool };
-  const cap = <T>(items: T[]) => items.slice(0, MAX_EVIDENCE_TARGETS);
+  const cap = <T>(items: T[]) => {
+    const kept = items.slice(0, Math.max(0, budget.left));
+    budget.left -= kept.length;
+    return kept;
+  };
   switch (call.tool) {
     case "get_finding_risk": {
       const { finding } = call.result as RiskResult;
       const target = { findingId: finding.id, purl: finding.purl, version: finding.version };
-      return { ...base, kind: "finding", targets: [target] };
+      return { ...base, kind: "finding", targets: cap([target]) };
     }
     case "list_related_findings":
       return {
@@ -250,6 +264,9 @@ function assembleFacts(calls: LedgerCall[], run: RunFacts) {
     };
   }
   const { finding, advisory } = run.snapshot;
+  const scored = run.snapshot.linkedAdvisories?.find(
+    (a) => a.source === advisory.source && a.sourceId === advisory.sourceId,
+  );
   return {
     source: "snapshot",
     findingId: run.findingId,
@@ -264,8 +281,8 @@ function assembleFacts(calls: LedgerCall[], run: RunFacts) {
       sourceId: advisory.sourceId,
       aliases: advisory.aliases,
       summary: advisory.summary,
-      cvssScore: null,
-      cvssVersion: null,
+      cvssScore: scored?.cvssScore ?? null,
+      cvssVersion: scored?.cvssVersion ?? null,
     },
     kevStatus: null,
     priority: null,
@@ -275,7 +292,8 @@ function assembleFacts(calls: LedgerCall[], run: RunFacts) {
 type Facts = ReturnType<typeof assembleFacts>;
 
 export function deriveGaps(calls: LedgerCall[], facts: Facts): GapCode[] {
-  const called = (tool: ToolName) => calls.some((c) => c.tool === tool);
+  // A call that failed did not check anything, so only successful calls count.
+  const called = (tool: ToolName) => calls.some((c) => c.tool === tool && c.outcome === "ok");
   const present: Record<GapCode, boolean> = {
     advisory_not_found: calls.some(
       (c) => c.tool === "lookup_advisory" && c.outcome === "not_found",
@@ -305,17 +323,26 @@ export function buildResult(
   const attempt = calls.filter((c) => c.attempt === run.attempt);
   const facts = assembleFacts(attempt, run);
   const cited = new Set(model.claims.flatMap((c) => c.evidence.map(callNumber)));
+  const budget = { left: MAX_EVIDENCE_TARGETS };
+  const assembled = {
+    facts,
+    evidence: attempt.filter((c) => cited.has(c.callNo)).map((c) => resolveEvidence(c, budget)),
+    gaps: deriveGaps(attempt, facts),
+  };
+  // Bounded by construction; tripping this is an API bug, not something the model can fix.
+  if (jsonBytes(assembled) > MAX_ASSEMBLED_BYTES) {
+    throw new Error("assembled result parts exceed their size budget");
+  }
   const result = {
     ...model,
     claims: model.claims.map((c) => ({ ...c, evidence: [...new Set(c.evidence)] })),
-    facts,
-    evidence: attempt.filter((c) => cited.has(c.callNo)).map(resolveEvidence),
-    gaps: deriveGaps(attempt, facts),
+    ...assembled,
     modelId: run.modelId,
     promptVersion: run.promptVersion,
     generatedAt: now.toISOString(),
   };
-  // Only reachable with pathological multi-byte text; the repair turn lets the model shorten it.
+  // With the assembled parts bounded above, only the model's own text can get here (pathological multi-byte
+  // text); the repair turn lets it shorten that.
   if (jsonBytes(result) > MAX_STORED_RESULT_BYTES)
     return { ok: false, violations: ["schema_invalid"] };
   return { ok: true, value: result };

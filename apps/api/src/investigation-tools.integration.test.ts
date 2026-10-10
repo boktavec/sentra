@@ -1228,6 +1228,32 @@ describe("complete: validated structured result (SENTRA-19)", () => {
     expect(await storedResults(finished.r.id)).toEqual([]);
   });
 
+  it("does not complete a run that left running while the result insert waited (nothing written, 409)", async () => {
+    const { r, token } = await runWithCalls();
+    // Hold the results table so `complete` pauses after it has seen a live run.
+    const blocker = await pool.connect();
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("LOCK TABLE investigation_results IN SHARE MODE");
+      const pending = complete(r, answer(), { token });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      // Meanwhile the worker's expiry sweep ends the attempt.
+      await pool.query(
+        `UPDATE investigations SET status = 'failed', failure_code = 'attempts_exhausted', lease_owner = NULL,
+           lease_expires_at = NULL, completed_at = now() WHERE id = $1 AND status = 'running'`,
+        [r.id],
+      );
+      await blocker.query("COMMIT");
+      const res = await pending;
+      expect(res.statusCode).toBe(409);
+      expect(res.json().type).toBe("urn:sentra:error:lease_lost");
+    } finally {
+      blocker.release();
+    }
+    expect(await storedResults(r.id)).toEqual([]);
+    expect((await runRow(r.id)).status).toBe("failed");
+  });
+
   it("requires the service secret and this run's token, and a well-formed envelope", async () => {
     const { r, token } = await runWithCalls();
     const other = await startRun(a2, f["otherProject"]!, { promptVersion: 3 });
