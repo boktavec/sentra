@@ -2,7 +2,7 @@
 
 - Status: Implemented (awaiting independent review); see "Implementation notes" for where the build refined this spec
 - YouTrack: http://localhost:8080/issue/SENTRA-19
-- Architecture decision: [ADR 0010](../../adr/0010-validated-structured-investigation-results.md) (structured result with API-side grounding); amends [ADR 0007](../../adr/0007-durable-investigation-runs.md) and [ADR 0009](../../adr/0009-tenant-safe-investigation-tools.md)
+- Architecture decision: [ADR 0011](../../adr/0011-validated-structured-investigation-results.md) (structured result with API-side grounding); amends [ADR 0007](../../adr/0007-durable-investigation-runs.md) and [ADR 0009](../../adr/0009-tenant-safe-investigation-tools.md)
 - Owner: Project member (user outcome); operational owners: API maintainers (validation, result store, routes) and intelligence worker maintainers (prompt, repair turn)
 
 ## Problem and outcome

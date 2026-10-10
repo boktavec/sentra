@@ -1,4 +1,4 @@
-# 0010: Investigation results are structured, validated by the API against the tool ledger, and stored immutably
+# 0011: Investigation results are structured, validated by the API against the tool ledger, and stored immutably
 
 - Status: Accepted
 - Date: 2026-10-09

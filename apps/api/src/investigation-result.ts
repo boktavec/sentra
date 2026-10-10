@@ -1,4 +1,4 @@
-// Turns the model's answer into a stored result (ADR 0010). The model writes only the explanation and its
+// Turns the model's answer into a stored result (ADR 0011). The model writes only the explanation and its
 // citations. Everything the story calls retrieved fact or known gap is derived here from the tool-call
 // ledger, so a model cannot supply or contradict it. Pure functions: the caller loads the ledger.
 import { readFileSync } from "node:fs";

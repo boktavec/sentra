@@ -1,4 +1,4 @@
-"""The bounded tool-calling loop for prompt versions 2 and 3 (ADR 0009, ADR 0010).
+"""The bounded tool-calling loop for prompt versions 2 and 3 (ADR 0009, ADR 0011).
 
 Everything the model emits is untrusted: a tool name is checked against the known set, arguments must parse
 as a JSON object, and the API decides what they may touch. Tool results go back as `role: tool` messages
