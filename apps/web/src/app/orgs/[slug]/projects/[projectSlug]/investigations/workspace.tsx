@@ -1,8 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import type { Finding, Investigation, Page } from "@/lib/investigations";
-import { moreFindings, runsForFinding, startInvestigation } from "./actions";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { Finding, Investigation, InvestigationResult, Page } from "@/lib/investigations";
+import { moreFindings, resultForRun, runsForFinding, startInvestigation } from "./actions";
+import { ResultView } from "./result-view";
+
+/** What the page shows for the run whose summary was requested. */
+type Summary =
+  | { runId: string; state: "loading" }
+  | { runId: string; state: "missing" }
+  | { runId: string; state: "error"; correlationId: string }
+  | { runId: string; state: "ready"; data: InvestigationResult };
 
 const active = (run: Investigation) => run.status === "queued" || run.status === "running";
 const failureText = (code: string | null) =>
@@ -63,10 +71,12 @@ function RunHistory({
   runs,
   hasMore,
   loadMore,
+  viewSummary,
 }: {
   runs: Investigation[];
   hasMore: boolean;
   loadMore: () => void;
+  viewSummary: (run: Investigation) => void;
 }) {
   return (
     <>
@@ -80,7 +90,12 @@ function RunHistory({
               <strong>{run.status}</strong> · {new Date(run.createdAt).toLocaleString()}
               {run.status === "failed" && <span> · {failureText(run.failureCode)}</span>}
               {run.status === "completed" && (
-                <span> · Draft saved; a reviewed summary is not available yet.</span>
+                <>
+                  {" · "}
+                  <button type="button" onClick={() => viewSummary(run)}>
+                    View summary
+                  </button>
+                </>
               )}
             </li>
           ))}
@@ -114,20 +129,34 @@ function StartControl({
   );
 }
 
+function SummaryPanel({ summary, findingBase }: { summary: Summary; findingBase: string }) {
+  if (summary.state === "loading") return <p>Loading summary…</p>;
+  if (summary.state === "missing") return <p>No structured summary for this run.</p>;
+  if (summary.state === "error")
+    return <p role="alert">Could not load the summary. Reference: {summary.correlationId}</p>;
+  return <ResultView data={summary.data} findingBase={findingBase} />;
+}
+
 function RunPanel({
   finding,
   runs,
   busy,
   hasMore,
+  summary,
+  findingBase,
   start,
   loadMore,
+  viewSummary,
 }: {
   finding: Finding;
   runs: Investigation[];
   busy: boolean;
   hasMore: boolean;
+  summary: Summary | null;
+  findingBase: string;
   start: () => void;
   loadMore: () => void;
+  viewSummary: (run: Investigation) => void;
 }) {
   return (
     <section>
@@ -136,17 +165,20 @@ function RunPanel({
       {finding.vulnerability.summary && <p>{finding.vulnerability.summary}</p>}
       <StartControl finding={finding} activeRun={runs.some(active)} busy={busy} start={start} />
       {finding.status === "resolved" && <p>Resolved findings cannot be investigated.</p>}
-      <RunHistory runs={runs} hasMore={hasMore} loadMore={loadMore} />
+      <RunHistory runs={runs} hasMore={hasMore} loadMore={loadMore} viewSummary={viewSummary} />
+      {summary && <SummaryPanel summary={summary} findingBase={findingBase} />}
     </section>
   );
 }
 
 export function InvestigationWorkspace({
   orgId,
+  orgSlug,
   projectSlug,
   initial,
 }: {
   orgId: string;
+  orgSlug: string;
   projectSlug: string;
   initial: Page<Finding>;
 }) {
@@ -155,6 +187,9 @@ export function InvestigationWorkspace({
   const [selected, setSelected] = useState<Finding | null>(null);
   const [runs, setRuns] = useState<Investigation[]>([]);
   const [runCursor, setRunCursor] = useState<string | null>(null);
+  const [summary, setSummary] = useState<Summary | null>(null);
+  // The run whose summary the user asked for last; a slower earlier answer must not replace it.
+  const wantedRun = useRef<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -182,8 +217,24 @@ export function InvestigationWorkspace({
     setSelected(finding);
     setRuns([]);
     setRunCursor(null);
+    wantedRun.current = null;
+    setSummary(null);
     setError(null);
     await refresh(finding.id, true);
+  }
+
+  async function viewSummary(run: Investigation) {
+    wantedRun.current = run.id;
+    setSummary({ runId: run.id, state: "loading" });
+    const result = await resultForRun(orgId, projectSlug, run.findingId, run.id);
+    if (wantedRun.current !== run.id) return;
+    setSummary(
+      result.ok
+        ? { runId: run.id, state: "ready", data: result.data }
+        : result.status === 404
+          ? { runId: run.id, state: "missing" }
+          : { runId: run.id, state: "error", correlationId: result.correlationId },
+    );
   }
 
   async function start() {
@@ -239,8 +290,11 @@ export function InvestigationWorkspace({
           runs={runs}
           busy={busy}
           hasMore={!!runCursor}
+          summary={summary}
+          findingBase={`/orgs/${encodeURIComponent(orgSlug)}/projects/${encodeURIComponent(projectSlug)}/findings`}
           start={() => void start()}
           loadMore={() => void loadMoreRuns()}
+          viewSummary={(run) => void viewSummary(run)}
         />
       )}
       {error && <p role="alert">{error}</p>}

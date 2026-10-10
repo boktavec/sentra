@@ -7,6 +7,7 @@ import {
   listInvestigationFindings,
   type Finding,
   type Investigation,
+  type InvestigationResult,
   type Page,
 } from "@/lib/investigations";
 
@@ -34,5 +35,19 @@ export async function runsForFinding(
 export async function startInvestigation(orgId: string, slug: string, findingId: string) {
   return callApi((token) =>
     apiPost<Investigation>(investigationsPath(orgId, slug, findingId), token, undefined),
+  );
+}
+
+export async function resultForRun(
+  orgId: string,
+  slug: string,
+  findingId: string,
+  investigationId: string,
+) {
+  return callApi((token) =>
+    apiGet<InvestigationResult>(
+      `${investigationsPath(orgId, slug, findingId)}/${encodeURIComponent(investigationId)}/result`,
+      token,
+    ),
   );
 }
