@@ -13,11 +13,11 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _envelope(event_type: str, run_id: str, correlation_id: str) -> dict[str, Any]:
+def _envelope(event_type: str, run_id: str, correlation_id: str, version: int = 1) -> dict[str, Any]:
     return {
         "eventId": str(uuid.uuid5(_NS, f"{run_id}:{event_type}")),
         "type": event_type,
-        "version": 1,
+        "version": version,
         "timestamp": _now(),
         "correlationId": correlation_id,
         "runId": run_id,
@@ -47,14 +47,21 @@ def artifact_ingested(
 
 
 def crawl_failed(
-    run_id: str, correlation_id: str, source: str, ecosystem: str, reason: str, attempts: int
+    run_id: str,
+    correlation_id: str,
+    source: str,
+    ecosystem: str,
+    reason: str,
+    attempts: int,
+    failure_kind: str,
 ) -> dict[str, Any]:
     event = {
-        **_envelope("crawl.failed", run_id, correlation_id),
+        **_envelope("crawl.failed", run_id, correlation_id, version=2),
         "source": source,
         "ecosystem": ecosystem,
         "reason": reason[:500],
         "attempts": max(attempts, 1),
+        "failureKind": failure_kind,
     }
-    contracts.validate("crawl.failed", event)
+    contracts.validate("crawl.failed", event, version=2)
     return event

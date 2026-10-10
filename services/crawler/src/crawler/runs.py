@@ -27,6 +27,9 @@ _COLUMNS = (
 )
 
 
+TERMINAL = ("published", "unchanged", "failed")
+
+
 class Runs:
     """ingestion_runs access. Autocommit: every statement is its own atomic step."""
 
@@ -51,8 +54,9 @@ class Runs:
         return self._conn
 
     def claim(self, run_id: str, source: str, ecosystem: str, correlation_id: str, lease_seconds: int) -> Run | None:
-        """Create the run if new, then take a lease on it. None means: already finished, or another
-        worker holds a live lease. Redelivered requests therefore resolve to the same row."""
+        """Create the run if new (a manual request), then take a lease on it. A run the scheduler recorded as
+        `requested` moves to `fetching` here. None means: already finished or expired, or another worker holds
+        a live lease. Redelivered requests therefore resolve to the same row."""
         with self.conn.cursor(row_factory=class_row(Run)) as cur:
             cur.execute(
                 "INSERT INTO ingestion_runs (run_id, source, ecosystem, correlation_id) VALUES (%s, %s, %s, %s) "
@@ -60,8 +64,11 @@ class Runs:
                 (run_id, source, ecosystem, correlation_id),
             )
             cur.execute(
-                f"UPDATE ingestion_runs SET claimed_until = now() + make_interval(secs => %s), updated_at = now() "
-                f"WHERE run_id = %s AND source = %s AND ecosystem = %s AND status IN ('fetching', 'stored') "
+                f"UPDATE ingestion_runs SET claimed_until = now() + make_interval(secs => %s), updated_at = now(), "
+                f"status = CASE WHEN status = 'requested' THEN 'fetching' ELSE status END, "
+                f"started_at = COALESCE(started_at, now()) "
+                f"WHERE run_id = %s AND source = %s AND ecosystem = %s "
+                f"AND status IN ('requested', 'fetching', 'stored') "
                 f"AND (claimed_until IS NULL OR claimed_until < now()) RETURNING {_COLUMNS}",
                 (lease_seconds, run_id, source, ecosystem),
             )
@@ -81,11 +88,12 @@ class Runs:
     def _set(self, run_id: str, status: str, frm: tuple[str, ...], **fields: object) -> None:
         # Field names come from the mark_* methods below (never from input); values are bound parameters.
         assignments = sql.SQL(", ").join(sql.SQL("{} = %s").format(sql.Identifier(k)) for k in fields)
+        completed = sql.SQL("completed_at = now(), ") if status in TERMINAL else sql.SQL("")
         query = sql.SQL(
-            "UPDATE ingestion_runs SET status = %s, {}"
+            "UPDATE ingestion_runs SET status = %s, {}{}"
             "claimed_until = CASE WHEN %s = 'stored' THEN claimed_until ELSE NULL END, "
             "updated_at = now() WHERE run_id = %s AND status = ANY(%s)"
-        ).format(assignments + sql.SQL(", ") if fields else sql.SQL(""))
+        ).format(assignments + sql.SQL(", ") if fields else sql.SQL(""), completed)
         cur = self.conn.execute(query, (status, *fields.values(), status, run_id, list(frm)))
         if cur.rowcount != 1:
             raise RuntimeError(f"run {run_id}: cannot move to {status} (unexpected current state)")
@@ -136,12 +144,20 @@ class Runs:
     def mark_published(self, run_id: str) -> None:
         self._set(run_id, "published", ("stored",))
 
-    def mark_failed(self, run_id: str, error: str, attempts: int) -> None:
-        self._set(run_id, "failed", ("fetching", "stored"), error=error[:500], attempts=attempts)
+    def mark_failed(self, run_id: str, error: str, attempts: int, failure_kind: str) -> None:
+        self._set(
+            run_id,
+            "failed",
+            ("requested", "fetching", "stored"),
+            error=error[:500],
+            attempts=attempts,
+            failure_kind=failure_kind,
+        )
 
     def release(self, run_id: str) -> None:
         """Drop the lease on a run that stays open so a redelivery can resume it immediately."""
         self.conn.execute(
-            "UPDATE ingestion_runs SET claimed_until = NULL WHERE run_id = %s AND status IN ('fetching', 'stored')",
+            "UPDATE ingestion_runs SET claimed_until = NULL, updated_at = now() "
+            "WHERE run_id = %s AND status IN ('fetching', 'stored')",
             (run_id,),
         )

@@ -1,6 +1,8 @@
 import os
 import re
+import tomllib
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlparse
 
 
@@ -122,4 +124,93 @@ def load() -> Settings:
         kafka_bootstrap=os.environ.get("CRAWLER_KAFKA_BOOTSTRAP", Settings.kafka_bootstrap),
         metrics_host=os.environ.get("CRAWLER_METRICS_HOST", Settings.metrics_host),
         metrics_port=_port("CRAWLER_METRICS_PORT", Settings.metrics_port),
+    )
+
+
+# --- Scheduler (SENTRA-10) ---
+
+SOURCE_PATTERN = re.compile(r"[a-z][a-z0-9_-]{0,63}")  # same rule as the event contracts
+DEFAULT_SCHEDULES = Path(__file__).resolve().parents[2] / "schedules.toml"
+
+
+@dataclass(frozen=True)
+class Schedule:
+    source: str
+    ecosystem: str
+    interval_seconds: int
+
+    @property
+    def name(self) -> str:
+        return f"{self.source}/{self.ecosystem}"
+
+
+def parse_schedules(data: dict) -> list[Schedule]:
+    """The `[[schedule]]` tables of schedules.toml. Operator config, so every problem is reported by name."""
+    entries = data.get("schedule")
+    if not isinstance(entries, list) or not entries:
+        raise RuntimeError("schedules: at least one [[schedule]] table is required")
+    schedules: list[Schedule] = []
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {"source", "ecosystem", "interval_seconds"}:
+            raise RuntimeError("schedules: each [[schedule]] needs exactly source, ecosystem and interval_seconds")
+        source, ecosystem, interval = entry["source"], entry["ecosystem"], entry["interval_seconds"]
+        if not isinstance(source, str) or not SOURCE_PATTERN.fullmatch(source):
+            raise RuntimeError(f"schedules: invalid source {source!r}")
+        if not isinstance(ecosystem, str) or not 1 <= len(ecosystem) <= 64:
+            raise RuntimeError(f"schedules: invalid ecosystem {ecosystem!r}")
+        if isinstance(interval, bool) or not isinstance(interval, int) or interval < 1:
+            raise RuntimeError(f"schedules: {source}/{ecosystem} interval_seconds must be a positive integer")
+        schedules.append(Schedule(source, ecosystem, interval))
+    if len({s.name for s in schedules}) != len(schedules):
+        raise RuntimeError("schedules: a source/ecosystem pair is listed twice")
+    return schedules
+
+
+def load_schedules(path: Path) -> list[Schedule]:
+    try:
+        with path.open("rb") as f:
+            return parse_schedules(tomllib.load(f))
+    except tomllib.TOMLDecodeError as e:
+        raise RuntimeError(f"schedules: {path} is not valid TOML: {e}") from e
+
+
+@dataclass(frozen=True)
+class SchedulerSettings:
+    database_url: str
+    signing_keys: dict[str, bytes]
+    schedules: list[Schedule]
+    kafka_bootstrap: str = Settings.kafka_bootstrap
+    tick_seconds: float = 30.0  # how often due schedules, retries and expiries are looked at
+    expiry_seconds: int = 15 * 60  # an unclaimed request or lapsed lease this old is presumed lost
+    max_active_runs: int = 2  # per source + ecosystem
+    metrics_host: str = "127.0.0.1"
+    metrics_port: int = 9103
+
+
+def scheduler_enabled() -> bool:
+    """The kill switch. Read first, so a disabled scheduler needs no other configuration."""
+    raw = os.environ.get("SCHEDULER_ENABLED", "true").strip().lower()
+    if raw not in ("true", "false"):
+        raise RuntimeError(f"SCHEDULER_ENABLED must be true or false, got {raw!r}")
+    return raw == "true"
+
+
+def _positive_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, str(default))
+    if not raw.isdigit() or int(raw) < 1:
+        raise RuntimeError(f"{name} must be a positive integer, got {raw!r}")
+    return int(raw)
+
+
+def load_scheduler() -> SchedulerSettings:
+    return SchedulerSettings(
+        database_url=_required("SCHEDULER_DATABASE_URL"),
+        signing_keys=parse_signing_keys(_required("CRAWLER_SIGNING_KEYS")),
+        schedules=load_schedules(Path(os.environ.get("SCHEDULER_CONFIG", DEFAULT_SCHEDULES))),
+        kafka_bootstrap=os.environ.get("CRAWLER_KAFKA_BOOTSTRAP", Settings.kafka_bootstrap),
+        tick_seconds=_positive_int("SCHEDULER_TICK_SECONDS", 30),
+        expiry_seconds=_positive_int("SCHEDULER_EXPIRY_SECONDS", 15 * 60),
+        max_active_runs=_positive_int("SCHEDULER_MAX_ACTIVE_RUNS", 2),
+        metrics_host=os.environ.get("SCHEDULER_METRICS_HOST", "127.0.0.1"),
+        metrics_port=_port("SCHEDULER_METRICS_PORT", 9103),
     )

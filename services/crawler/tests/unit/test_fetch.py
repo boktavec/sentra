@@ -131,3 +131,13 @@ def test_json_magic_accepts_a_json_body_and_rejects_a_zip(osv, tmp_path):
     osv.serve(PATH, Response(body=make_zip()))
     with pytest.raises(FetchFailed, match="not the expected file type"):
         fetch(osv.base_url + PATH, etag=None, limits=FAST, tmp_dir=str(tmp_path), magic=b"{")
+
+
+def test_exhausted_retries_are_transient_but_a_fatal_status_is_not(osv):
+    osv.serve(PATH, Response(status=503))
+    with pytest.raises(FetchFailed) as retried:
+        run(osv)
+    osv.serve(PATH, Response(status=404))
+    with pytest.raises(FetchFailed) as fatal:
+        run(osv)
+    assert retried.value.transient is True and fatal.value.transient is False

@@ -15,9 +15,10 @@ from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
 from crawler import signing
-from crawler.config import Limits, Secret
-from crawler.ingest import Deps
+from crawler.config import Limits, Schedule, SchedulerSettings, Secret
+from crawler.ingest import Deps, handle
 from crawler.runs import Runs
+from crawler.scheduler import Scheduler
 from crawler.storage import ArtifactStore, make_client
 
 MIGRATIONS = Path(__file__).resolve().parents[4] / "apps" / "api" / "migrations"
@@ -47,6 +48,13 @@ def database():
 
 
 @pytest.fixture(scope="session")
+def scheduler_url(database):
+    """The scratch database as the least-privilege scheduler role. The role is cluster-wide, so we assume it
+    with `-c role=` instead of setting its password, which would replace a real environment's."""
+    return make_conninfo(database[0], options="-c role=sentra_scheduler")
+
+
+@pytest.fixture(scope="session")
 def bucket():
     s3 = make_client(S3_ENDPOINT, *S3_KEYS)
     name = f"crawler-test-{uuid.uuid4().hex[:8]}"
@@ -61,7 +69,7 @@ def bucket():
 def admin(database):
     """Admin connection to the scratch DB; truncates runs before each test."""
     with psycopg.connect(database[0], autocommit=True) as conn:
-        conn.execute("TRUNCATE ingestion_runs")
+        conn.execute("TRUNCATE ingestion_runs, scheduler_leases")
         yield conn
 
 
@@ -133,3 +141,60 @@ def make_request(run_id: str | None = None, ecosystem: str = "npm", key_id: str 
     event.update(over)
     event["signature"] = signing.sign(event, KEYS.get(key_id, b"unknown"))
     return event
+
+
+NPM_SCHEDULE = Schedule("osv", "npm", 3600)
+PYPI_SCHEDULE = Schedule("osv", "PyPI", 3600)
+
+
+class Rig:
+    def __init__(self, scheduler_url, admin, **settings):
+        self.url, self.admin = scheduler_url, admin
+        self.published: list[dict] = []
+        self.publish_error: Exception | None = None
+        self.settings = {"schedules": [NPM_SCHEDULE], "max_active_runs": 2, "expiry_seconds": 900, **settings}
+
+    def publish(self, event: dict) -> None:
+        if self.publish_error:
+            raise self.publish_error
+        self.published.append(event)
+
+    def scheduler(self, publish=None) -> Scheduler:
+        """A new instance each time, as a restarted or second replica would be."""
+        settings = SchedulerSettings(self.url, KEYS, kafka_bootstrap="unused", **self.settings)
+        return Scheduler(settings, publish or self.publish)
+
+    def tick(self) -> None:
+        self.scheduler().run_once()
+
+    def make_due(self) -> None:
+        self.admin.execute("UPDATE scheduler_leases SET next_due_at = now() - interval '1 second'")
+
+    def runs(self, **where) -> list[dict]:
+        cur = self.admin.execute(
+            "SELECT run_id::text, source, ecosystem, status, trigger, retry_of::text, failure_kind, error, "
+            "started_at, completed_at FROM ingestion_runs ORDER BY created_at, run_id"
+        )
+        cols = [d.name for d in cur.description or []]
+        return [
+            r
+            for r in (dict(zip(cols, row, strict=True)) for row in cur.fetchall())
+            if all(r[k] == v for k, v in where.items())
+        ]
+
+    def advance(self, seconds: int) -> None:
+        """Let `seconds` pass for the runs, keeping their order. Schedules are moved with `make_due`."""
+        self.admin.execute(
+            "UPDATE ingestion_runs SET created_at = created_at - make_interval(secs => %s), "
+            "completed_at = completed_at - make_interval(secs => %s)",
+            (seconds, seconds),
+        )
+
+    def work(self, harness, event: dict) -> str:
+        """The crawler worker handling a published request."""
+        return handle(event, harness.deps())
+
+
+@pytest.fixture
+def rig(scheduler_url, admin):
+    return Rig(scheduler_url, admin)
