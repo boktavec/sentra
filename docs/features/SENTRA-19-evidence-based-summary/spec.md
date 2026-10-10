@@ -98,7 +98,7 @@ Gap rules (each is a table-driven unit test): `advisory_not_found` (any `lookup_
 
 Citation rules, checked by the API: every cited `call:<n>` exists for this investigation and this attempt, has outcome `ok`, and is not a `token_exchange` row. A claim with no valid citation is a violation. Violation codes are fixed: `schema_invalid`, `unknown_evidence_ref`, `cross_attempt_ref`, `evidence_not_ok`, `uncited_claim`, `forbidden_field`, `missing_uncertainty_reason`.
 
-### Storage (migration `017_investigation_results.sql`, additive)
+### Storage (migration `018_investigation_results.sql`, additive)
 
 - `investigation_results`: `investigation_id` (PK and FK), `org_id`, `project_id` (composite FK matching the run), `attempt`, `schema_version`, `result jsonb` (bounded at 32 KiB by CHECK), `created_at`. Written only by the API; no grant to `sentra_intelligence`. One row per run, immutable (no update path).
 - Extend the existing `draft` / `status` CHECK so a v3 run reaches `completed` with a result row and a null `draft`. Legacy v1/v2 runs are unchanged.
