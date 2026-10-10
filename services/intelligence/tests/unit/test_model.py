@@ -77,3 +77,33 @@ def test_failures_are_classified_without_leaking_response(
         client.close()
     assert error.value.code == code
     assert error.value.retryable is retryable
+
+
+def test_complete_offers_tools_only_when_given_and_reads_tool_calls(server: str):
+    call = {"id": "c1", "type": "function", "function": {"name": "get_finding_risk", "arguments": "{}"}}
+    Handler.body = {"choices": [{"message": {"content": None, "tool_calls": [call]}}]}
+    specs = [{"type": "function", "function": {"name": "get_finding_risk", "parameters": {"type": "object"}}}]
+    client = ModelClient(server, "secret", 2)
+    try:
+        reply = client.complete("local-model", [{"role": "user", "content": "hi"}], specs)
+        assert Handler.seen["tools"] == specs
+        assert [(c.id, c.name, c.arguments) for c in reply.tool_calls] == [("c1", "get_finding_risk", "{}")]
+        assert reply.content is None
+
+        Handler.body = {"choices": [{"message": {"content": "A plain answer."}}]}
+        reply = client.complete("local-model", [{"role": "user", "content": "hi"}], None)
+        assert "tools" not in Handler.seen
+        assert (reply.content, reply.tool_calls) == ("A plain answer.", ())
+    finally:
+        client.close()
+
+
+def test_complete_rejects_an_empty_turn(server: str):
+    Handler.body = {"choices": [{"message": {"content": None, "tool_calls": []}}]}
+    client = ModelClient(server, "secret", 2)
+    try:
+        with pytest.raises(ModelError) as error:
+            client.complete("local-model", [{"role": "user", "content": "hi"}], None)
+    finally:
+        client.close()
+    assert (error.value.code, error.value.retryable) == ("invalid_output", False)
