@@ -56,4 +56,9 @@ export function registerInvestigationRoutes(
     await scope(request, { orgId: p.orgId });
     return deps.investigations.get(request.tenant!, p.slug, p.findingId, p.investigationId);
   });
+  routes.get(`${base}/:investigationId/result`, async (request) => {
+    const p = params(request);
+    await scope(request, { orgId: p.orgId });
+    return deps.investigations.result(request.tenant!, p.slug, p.findingId, p.investigationId);
+  });
 }

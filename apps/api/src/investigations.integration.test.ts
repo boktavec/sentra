@@ -153,7 +153,7 @@ describe("investigation lifecycle API", () => {
       finding_id: findingId,
       created_by: owner,
       draft: null,
-      prompt_version: 2, // new runs use tools; rows queued before SENTRA-18 keep 1
+      prompt_version: 3, // new runs end with a structured result; earlier versions keep theirs
       action: "investigation.created",
     });
     expect(db.rows[0].context_snapshot).toMatchObject({
@@ -195,6 +195,47 @@ describe("investigation lifecycle API", () => {
     const status = await call(member, "GET", `${base()}/${first}`);
     expect(status.json().status).toBe("completed");
     expect(status.body).not.toContain("private model text");
+  });
+
+  it("serves a stored result to current members only, and hides it from status and history", async () => {
+    const extra = (
+      await users.resolve({ issuer: "http://investigation.test", subject: randomUUID() })
+    ).id;
+    await pool.query("INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')", [
+      orgId,
+      extra,
+    ]);
+    const run = (
+      await pool.query<{ id: string }>(
+        `INSERT INTO investigations (org_id, project_id, finding_id, created_by, context_snapshot, model_id,
+           prompt_version, status, completed_at)
+         VALUES ($1, $2, $3, $4, '{}', 'm', 3, 'completed', now()) RETURNING id`,
+        [orgId, projectId, findingId, extra],
+      )
+    ).rows[0]!.id;
+    await pool.query(
+      `INSERT INTO investigation_results (investigation_id, org_id, project_id, attempt, schema_version, result)
+       VALUES ($1, $2, $3, 1, 1, '{"summary":"stored explanation"}')`,
+      [run, orgId, projectId],
+    );
+    const read = (user: string) => call(user, "GET", `${base()}/${run}/result`);
+
+    const ok = await read(member);
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toMatchObject({
+      investigationId: run,
+      schemaVersion: 1,
+      result: { summary: "stored explanation" },
+    });
+    expect((await call(member, "GET", `${base()}/${run}`)).body).not.toContain(
+      "stored explanation",
+    );
+    expect((await call(member, "GET", base())).body).not.toContain("stored explanation");
+
+    // The creator of the run loses membership: the result is no longer theirs to read.
+    await pool.query("DELETE FROM memberships WHERE org_id = $1 AND user_id = $2", [orgId, extra]);
+    expect((await read(extra)).statusCode).toBe(404);
+    expect((await read(member)).statusCode).toBe(200);
   });
 
   it("refuses resolved findings and unknown IDs without writing", async () => {

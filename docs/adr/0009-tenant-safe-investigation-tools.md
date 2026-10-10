@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-09
+- Amended by: [ADR 0011](0011-validated-structured-investigation-results.md): the internal listener also serves `POST /internal/v1/investigations/:id/complete`, and tool responses carry a `call` number.
 - Related: [SENTRA-18 spec](../features/SENTRA-18-tenant-safe-ai-tools/spec.md), [ADR 0007](0007-durable-investigation-runs.md) (amended: the model no longer has "no tools"), [ADR 0008](0008-read-time-rule-based-risk-priority.md)
 
 ## Context

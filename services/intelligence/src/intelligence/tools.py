@@ -23,6 +23,8 @@ class ToolResult:
     data: Any = None
     error: str | None = None
     truncated: bool = False
+    # The number the API gave a successful call; the model cites it as call:<n>.
+    call: int | None = None
 
 
 def load_tool_specs(contracts_dir: Path) -> list[dict[str, Any]]:
@@ -39,6 +41,14 @@ def load_tool_specs(contracts_dir: Path) -> list[dict[str, Any]]:
             }
         )
     return specs
+
+
+def load_result_schema(contracts_dir: Path) -> dict[str, Any]:
+    """The JSON Schema of the model-written part of the result, from the contract the API validates against."""
+    schema = json.loads((contracts_dir / "investigation-result.v1.json").read_text())["model"]
+    if not isinstance(schema, dict):
+        raise ValueError("investigation-result.v1.json has no model schema")
+    return schema
 
 
 class ToolClient:
@@ -101,7 +111,33 @@ class ToolClient:
         try:
             body = response.json()
             if body["outcome"] == "ok":
-                return ToolResult(data=body["data"], truncated=bool(body.get("truncated")))
+                return ToolResult(data=body["data"], truncated=bool(body.get("truncated")), call=body.get("call"))
             return ToolResult(error=str(body["error"]["code"]))
+        except (ValueError, KeyError, TypeError) as exc:
+            raise RunError("tool_unavailable", True) from exc
+
+    def complete(self, investigation_id: str, attempt: int, token: str, round_number: int, result: Any) -> list[str]:
+        """Hands the model's answer to the API, which validates and stores it. Returns the violation codes, or an
+        empty list when the result was stored."""
+        response = self._post(
+            f"investigations/{investigation_id}/complete",
+            f"{investigation_id}.{attempt}",
+            {"round": round_number, "result": result},
+            token,
+        )
+        if response.status_code != 200:
+            raise (
+                RunError("tool_unavailable", True)
+                if response.status_code >= 500
+                else RunError("processing_error", False)
+            )
+        try:
+            body = response.json()
+            if body["outcome"] == "ok":
+                return []
+            violations = body["violations"]
+            if body["outcome"] != "invalid_result" or not violations or not all(isinstance(v, str) for v in violations):
+                raise ValueError("unexpected complete response")
+            return violations
         except (ValueError, KeyError, TypeError) as exc:
             raise RunError("tool_unavailable", True) from exc

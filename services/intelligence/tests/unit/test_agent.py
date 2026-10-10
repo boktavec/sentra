@@ -9,7 +9,7 @@ from intelligence.agent import Attempt, Investigator
 from intelligence.config import DEFAULT_CONTRACTS_DIR, Settings
 from intelligence.errors import LeaseLost, RunError
 from intelligence.model import SYSTEM_V2, ModelClient
-from intelligence.tools import TOOL_NAMES, ToolClient, load_tool_specs
+from intelligence.tools import TOOL_NAMES, ToolClient, load_result_schema, load_tool_specs
 
 SERVICE_TOKEN = "s" * 32
 RUN_TOKEN = "run-token"
@@ -71,7 +71,12 @@ class World:
         self.renewals = 0
         self.lease_ok = True
         self.investigator = Investigator(
-            base, self.model, self.tools, load_tool_specs(DEFAULT_CONTRACTS_DIR), clock=lambda: self.clock_now
+            base,
+            self.model,
+            self.tools,
+            load_tool_specs(DEFAULT_CONTRACTS_DIR),
+            load_result_schema(DEFAULT_CONTRACTS_DIR),
+            clock=lambda: self.clock_now,
         )
 
     def renew(self) -> bool:
@@ -300,7 +305,7 @@ def test_a_bad_service_secret_fails_at_the_token_exchange_without_calling_the_mo
     tools = ToolClient(settings.tools_url, SERVICE_TOKEN, 1)
     model_client = ModelClient(settings.model_url, "", 1)
     try:
-        investigator = Investigator(settings, model_client, tools, [])
+        investigator = Investigator(settings, model_client, tools, [], {})
         with pytest.raises(RunError) as error:
             investigator.investigate(RUN, lambda: True, 10**9)
     finally:

@@ -168,6 +168,8 @@ def test_the_worker_role_reaches_only_investigation_lifecycle_rows(admin, store)
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
         store.conn.execute("SELECT 1 FROM investigation_tool_calls LIMIT 1")
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        store.conn.execute("SELECT 1 FROM investigation_results LIMIT 1")
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
         store.conn.execute("UPDATE investigations SET org_id = org_id")
 
 
@@ -186,3 +188,36 @@ def test_rollback_runbook_fails_unfinished_v2_runs_and_leaves_everything_else(ad
         v2_queued: ("failed", "processing_error"),
         v2_running: ("failed", "processing_error"),
     }
+
+
+def test_rollback_runbook_for_v3_fails_unfinished_v3_runs_and_leaves_everything_else(admin):
+    v2, v3_queued, v3_running = seed_run(admin, 2), seed_run(admin, 3), seed_run(admin, 3)
+    admin.execute(
+        """UPDATE investigations SET status = 'running', attempts = 1, lease_owner = gen_random_uuid(),
+             lease_expires_at = now() + interval '1 minute' WHERE id = %s""",
+        (v3_running,),
+    )
+    runbook = Path(__file__).resolve().parents[2] / "runbooks" / "rollback-prompt-v3.sql"
+    admin.execute(sql.SQL(cast(LiteralString, runbook.read_text())))
+    rows = admin.execute("SELECT id::text, status, failure_code FROM investigations").fetchall()
+    assert {r[0]: (r[1], r[2]) for r in rows} == {
+        v2: ("queued", None),
+        v3_queued: ("failed", "processing_error"),
+        v3_running: ("failed", "processing_error"),
+    }
+
+
+def complete_without_draft(admin: psycopg.Connection, run_id: str) -> None:
+    admin.execute("UPDATE investigations SET status = 'completed', completed_at = now() WHERE id = %s", (run_id,))
+
+
+def test_only_a_v3_run_may_complete_without_a_draft(admin):
+    v2, v3 = seed_run(admin, 2), seed_run(admin, 3)
+    with pytest.raises(psycopg.errors.CheckViolation):
+        complete_without_draft(admin, v2)
+    complete_without_draft(admin, v3)  # its result lives in investigation_results
+    queued = seed_run(admin, 3)
+    with pytest.raises(psycopg.errors.CheckViolation):
+        admin.execute(
+            "UPDATE investigations SET draft = 'text' WHERE id = %s", (queued,)
+        )  # a draft only when completed
