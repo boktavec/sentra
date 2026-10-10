@@ -1,0 +1,20 @@
+# What the scheduler requests, and how often (SENTRA-10). Read at startup: a change needs a restart.
+# Intervals are assumptions (feeds change often; unchanged runs are cheap conditional GETs): validate them
+# against the `unchanged` rate and each feed's real change frequency.
+# Only sources the crawler supports belong here (see ingest.target); ghsa needs CRAWLER_GITHUB_TOKEN, so it
+# is not scheduled by default.
+
+[[schedule]]
+source = "osv"
+ecosystem = "npm"
+interval_seconds = 3600
+
+[[schedule]]
+source = "osv"
+ecosystem = "PyPI"
+interval_seconds = 3600
+
+[[schedule]]
+source = "cisa-kev"
+ecosystem = "none"
+interval_seconds = 21600

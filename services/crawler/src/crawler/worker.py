@@ -157,13 +157,19 @@ class Worker:
             if not signing.verify(event, self.deps.signing_keys):
                 return
             failed = events.crawl_failed(
-                event["runId"], event["correlationId"], event["source"], event["ecosystem"], reason, self.max_attempts
+                event["runId"],
+                event["correlationId"],
+                event["source"],
+                event["ecosystem"],
+                reason,
+                self.max_attempts,
+                "permanent",
             )
         except Exception:  # noqa: BLE001 - not a verifiable request, or anything unexpected: nothing to record
             return
         try:
             self.publish(failed)
-            self.deps.runs.mark_failed(event["runId"], reason, self.max_attempts)
+            self.deps.runs.mark_failed(event["runId"], reason, self.max_attempts, "permanent")
         except TRANSIENT:
             raise
         except Exception:  # noqa: BLE001 - e.g. the run already finished; nothing more to record
