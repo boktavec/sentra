@@ -184,7 +184,6 @@ export function createSbomStore(
           action: "sbom.upload_completed",
           targetType: "sbom_import",
           targetId: id,
-          metadata: { filename: rows[0].filename },
         });
         return rows[0];
       });

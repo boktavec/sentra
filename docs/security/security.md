@@ -88,7 +88,7 @@ Security-sensitive actions should emit structured audit records containing relev
 - result
 - correlation/request ID
 
-Audit records should not be mutable through standard product APIs.
+Audit records should not be mutable through standard product APIs. Organization administrators can read only their organization’s allowlisted audit history; metadata, request payloads, tokens, and raw errors are never returned. Failed API requests emit a sanitized operator log event, while failed sensitive tenant mutations are recorded best-effort only after membership resolution. Log events are operational signals, not a durable audit archive.
 
 ## Supply Chain
 
