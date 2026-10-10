@@ -96,8 +96,8 @@ function Explanation({
         <>
           <h4>Suggested next steps</h4>
           <ul>
-            {result.nextSteps.map((step) => (
-              <li key={step}>{step}</li>
+            {result.nextSteps.map((step, index) => (
+              <li key={`${index}-${step}`}>{step}</li>
             ))}
           </ul>
         </>
@@ -122,8 +122,8 @@ function Gaps({ result }: { result: InvestigationResult["result"] }) {
       <h4>The model is unsure about</h4>
       {result.uncertainties.length > 0 ? (
         <ul>
-          {result.uncertainties.map((text) => (
-            <li key={text}>{text}</li>
+          {result.uncertainties.map((text, index) => (
+            <li key={`${index}-${text}`}>{text}</li>
           ))}
         </ul>
       ) : (

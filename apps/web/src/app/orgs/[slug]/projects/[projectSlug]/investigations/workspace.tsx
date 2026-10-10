@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Finding, Investigation, InvestigationResult, Page } from "@/lib/investigations";
 import { moreFindings, resultForRun, runsForFinding, startInvestigation } from "./actions";
 import { ResultView } from "./result-view";
@@ -188,6 +188,8 @@ export function InvestigationWorkspace({
   const [runs, setRuns] = useState<Investigation[]>([]);
   const [runCursor, setRunCursor] = useState<string | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
+  // The run whose summary the user asked for last; a slower earlier answer must not replace it.
+  const wantedRun = useRef<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -215,14 +217,17 @@ export function InvestigationWorkspace({
     setSelected(finding);
     setRuns([]);
     setRunCursor(null);
+    wantedRun.current = null;
     setSummary(null);
     setError(null);
     await refresh(finding.id, true);
   }
 
   async function viewSummary(run: Investigation) {
+    wantedRun.current = run.id;
     setSummary({ runId: run.id, state: "loading" });
     const result = await resultForRun(orgId, projectSlug, run.findingId, run.id);
+    if (wantedRun.current !== run.id) return;
     setSummary(
       result.ok
         ? { runId: run.id, state: "ready", data: result.data }
