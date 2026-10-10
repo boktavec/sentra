@@ -1,4 +1,4 @@
--- SENTRA-19: validated, structured investigation results (ADR 0010). Additive; legacy runs are untouched.
+-- SENTRA-19: validated, structured investigation results (ADR 0011). Additive; legacy runs are untouched.
 
 -- The number the model cites as `call:<n>`: 1-based per (investigation, attempt), assigned by the API when it
 -- records a tool call. Token exchanges and rows written before this migration have none.

@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-08
-- Amended by: [ADR 0009](0009-tenant-safe-investigation-tools.md): the "no tools" statement below no longer holds for prompt version 2. [ADR 0010](0010-validated-structured-investigation-results.md): prompt version 3 runs finish with a stored structured result instead of a draft.
+- Amended by: [ADR 0009](0009-tenant-safe-investigation-tools.md): the "no tools" statement below no longer holds for prompt version 2. [ADR 0011](0011-validated-structured-investigation-results.md): prompt version 3 runs finish with a stored structured result instead of a draft.
 - Related: [SENTRA-17 spec](../features/SENTRA-17-start-finding-investigation/spec.md), [ADR 0002](0002-event-conventions-for-async-ingestion.md)
 
 ## Context

@@ -19,3 +19,22 @@ GITHUB_RATE_LIMIT_REMAINING = Gauge(
 GITHUB_RATE_LIMIT_WAIT = Counter(
     "crawler_github_ratelimit_wait_seconds_total", "Seconds spent sleeping because of GitHub rate limits"
 )
+
+# The scheduler process (SENTRA-10). Gauges are refreshed from the database each pass, so any replica reports
+# the shared state. `failures_total` counts failures this process observed since it started: with several
+# replicas use max(), not sum().
+SCHEDULER_REQUESTS = Counter(
+    "scheduler_requests_total", "crawl.requested events published by the scheduler", ["source", "trigger"]
+)
+SCHEDULER_TICKS_SKIPPED = Counter(
+    "scheduler_ticks_skipped_total", "Due ticks or retries not requested", ["source", "ecosystem", "reason"]
+)
+SCHEDULER_ACTIVE_RUNS = Gauge("scheduler_active_runs", "Runs requested, fetching or stored", ["source", "ecosystem"])
+SCHEDULER_RETRIES = Counter("scheduler_retries_total", "Retries requested after a transient failure", ["source"])
+SCHEDULER_LAST_SUCCESS = Gauge(
+    "scheduler_last_success_timestamp_seconds",
+    "Completion time of the newest published or unchanged run",
+    ["source", "ecosystem"],
+)
+SCHEDULER_FAILURES = Counter("scheduler_failures_total", "Failed runs observed by the scheduler", ["source", "kind"])
+SCHEDULER_ERRORS = Counter("scheduler_loop_errors_total", "Scheduler passes that failed and will be retried")

@@ -47,3 +47,15 @@ tasks:
     cmds:
       - "[ -f .env ] || cp .env.example .env"
       - uv run --env-file .env python -m crawler.request {{.CLI_ARGS}}
+
+  scheduler:
+    desc: Run the ingestion scheduler against the local stack (needs `task stack:up`, migrations and `task stack:scheduler-role`)
+    cmds:
+      - "[ -f .env ] || cp .env.example .env"
+      - uv run --env-file .env python -m crawler.scheduler
+
+  runs:
+    desc: "List recent ingestion runs per source, e.g. `task crawler:runs -- --status failed --limit 5`"
+    cmds:
+      - "[ -f .env ] || cp .env.example .env"
+      - uv run --env-file .env python -m crawler.runs_cli {{.CLI_ARGS}}

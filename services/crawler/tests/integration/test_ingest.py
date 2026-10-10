@@ -115,8 +115,12 @@ def test_exhausted_retries_fail_the_run_and_publish_crawl_failed(harness, admin)
     r = row(admin, req["runId"])
     assert r["status"] == "failed" and r["attempts"] == 3 and "503" in r["error"] and r["lease"] is None
     (event,) = harness.published
-    contracts.validate("crawl.failed", event)
-    assert event["runId"] == req["runId"] and event["attempts"] == 3
+    contracts.validate("crawl.failed", event, version=2)
+    assert event["runId"] == req["runId"] and event["attempts"] == 3 and event["failureKind"] == "transient"
+    kind, started, completed = admin.execute(
+        "SELECT failure_kind, started_at, completed_at FROM ingestion_runs WHERE run_id = %s", (req["runId"],)
+    ).fetchone()
+    assert kind == "transient" and started is not None and completed >= started
     # A redelivery does not resurrect it: retrying means a new request with a new runId.
     assert handle(req, harness.deps()) == "skipped"
     assert harness.osv.count(NPM) == 3 and len(harness.published) == 1
@@ -127,6 +131,8 @@ def test_non_retryable_error_fails_immediately(harness, admin):
     req = make_request()
     assert handle(req, harness.deps()) == "failed"
     assert harness.osv.count(NPM) == 1 and row(admin, req["runId"])["attempts"] == 1
+    assert harness.published[0]["failureKind"] == "permanent"
+    assert admin.execute("SELECT failure_kind FROM ingestion_runs").fetchone() == ("permanent",)
 
 
 def test_crash_between_stored_and_published_resumes_without_refetching(harness, admin):

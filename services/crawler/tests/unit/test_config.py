@@ -74,3 +74,63 @@ def test_a_malformed_github_token_is_refused_without_echoing_it(bad):
     with pytest.raises(RuntimeError, match="CRAWLER_GITHUB_TOKEN") as e:
         config.parse_github_token(bad)
     assert bad.strip() not in str(e.value)
+
+
+def schedule(**over):
+    return {"source": "osv", "ecosystem": "npm", "interval_seconds": 3600, **over}
+
+
+def test_the_shipped_schedules_load_and_match_the_default_cadence():
+    schedules = config.load_schedules(config.DEFAULT_SCHEDULES)
+    assert {(s.name, s.interval_seconds) for s in schedules} == {
+        ("osv/npm", 3600),
+        ("osv/PyPI", 3600),
+        ("cisa-kev/none", 6 * 3600),
+    }
+
+
+@pytest.mark.parametrize(
+    "data, message",
+    [
+        ({}, "at least one"),
+        ({"schedule": []}, "at least one"),
+        ({"schedule": [{"source": "osv", "ecosystem": "npm"}]}, "exactly"),
+        ({"schedule": [schedule(extra=1)]}, "exactly"),
+        ({"schedule": [schedule(source="OSV")]}, "invalid source"),
+        ({"schedule": [schedule(ecosystem="")]}, "invalid ecosystem"),
+        ({"schedule": [schedule(interval_seconds=0)]}, "positive integer"),
+        ({"schedule": [schedule(interval_seconds="1h")]}, "positive integer"),
+        ({"schedule": [schedule(interval_seconds=True)]}, "positive integer"),
+        ({"schedule": [schedule(), schedule()]}, "twice"),
+    ],
+)
+def test_invalid_schedules_are_refused_by_name(data, message):
+    with pytest.raises(RuntimeError, match=message):
+        config.parse_schedules(data)
+
+
+def test_a_malformed_schedule_file_is_refused(tmp_path):
+    path = tmp_path / "schedules.toml"
+    path.write_text("[[schedule]\nsource =")
+    with pytest.raises(RuntimeError, match="not valid TOML"):
+        config.load_schedules(path)
+
+
+def test_the_kill_switch_defaults_on_and_rejects_ambiguous_values(monkeypatch):
+    monkeypatch.delenv("SCHEDULER_ENABLED", raising=False)
+    assert config.scheduler_enabled() is True
+    monkeypatch.setenv("SCHEDULER_ENABLED", "FALSE")
+    assert config.scheduler_enabled() is False
+    monkeypatch.setenv("SCHEDULER_ENABLED", "0")
+    with pytest.raises(RuntimeError, match="SCHEDULER_ENABLED"):
+        config.scheduler_enabled()
+
+
+def test_scheduler_settings_come_from_validated_config(monkeypatch):
+    monkeypatch.setenv("SCHEDULER_DATABASE_URL", "postgresql://x")
+    monkeypatch.setenv("CRAWLER_SIGNING_KEYS", "k1=s")
+    settings = config.load_scheduler()
+    assert (settings.tick_seconds, settings.expiry_seconds, settings.max_active_runs) == (30, 900, 2)
+    monkeypatch.setenv("SCHEDULER_MAX_ACTIVE_RUNS", "0")
+    with pytest.raises(RuntimeError, match="SCHEDULER_MAX_ACTIVE_RUNS"):
+        config.load_scheduler()

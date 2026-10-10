@@ -9,7 +9,7 @@ Events are JSON documents on Kafka-API topics (Redpanda locally). Each has a ver
 | `sbom.uploaded` | [`sbom.uploaded.v1.json`](events/sbom.uploaded.v1.json) | A tenant's SBOM upload was accepted and is ready for validation |
 | `sbom.parsed` | [`sbom.parsed.v1.json`](events/sbom.parsed.v1.json) | An SBOM import was parsed; wakes correlation for its project |
 | `vulnerabilities.normalized` | [`vulnerabilities.normalized.v1.json`](events/vulnerabilities.normalized.v1.json) | A raw artifact was normalized into the vulnerability tables |
-| `crawl.failed` | [`crawl.failed.v1.json`](events/crawl.failed.v1.json) | A run failed permanently |
+| `crawl.failed` | [`crawl.failed.v2.json`](events/crawl.failed.v2.json) | A run failed; `failureKind` is `transient` or `permanent`. v1 ([`crawl.failed.v1.json`](events/crawl.failed.v1.json)) has no `failureKind`: treat it as `permanent`. Producers emit v2 only |
 
 ## Envelope
 
