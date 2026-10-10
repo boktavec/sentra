@@ -17,6 +17,7 @@ class Run:
     context: dict[str, Any]
     attempts: int
     lease_owner: str
+    prompt_version: int
 
 
 class Store:
@@ -48,7 +49,7 @@ class Store:
             self.conn.execute("SELECT pg_advisory_unlock(%s, %s)", (LOCK_KEY, self._slot))
             self._slot = None
 
-    def claim(self, lease_seconds: int, max_attempts: int) -> Run | None:
+    def claim(self, lease_seconds: int, max_attempts: int, deadline_seconds: int) -> Run | None:
         # A crash can consume an attempt without reaching fail(). Retire expired
         # leases before selecting work so restarts cannot retry forever.
         self.conn.execute(
@@ -61,16 +62,29 @@ class Store:
         owner = str(uuid4())
         row = self.conn.execute(
             """UPDATE investigations i SET status = 'running', attempts = attempts + 1,
-                 lease_owner = %s, lease_expires_at = now() + make_interval(secs => %s),
+                 lease_owner = %s, attempt_deadline_at = now() + make_interval(secs => %s),
+                 lease_expires_at = LEAST(now() + make_interval(secs => %s), now() + make_interval(secs => %s)),
                  started_at = coalesce(started_at, now()), updated_at = now()
                WHERE id = (SELECT id FROM investigations
                  WHERE (status = 'queued' AND next_attempt_at <= now() AND attempts < %s)
                     OR (status = 'running' AND lease_expires_at < now() AND attempts < %s)
                  ORDER BY next_attempt_at, id LIMIT 1 FOR UPDATE SKIP LOCKED)
-               RETURNING i.id::text, i.org_id::text, i.model_id, i.context_snapshot, i.attempts""",
-            (owner, lease_seconds, max_attempts, max_attempts),
+               RETURNING i.id::text, i.org_id::text, i.model_id, i.context_snapshot, i.attempts, i.prompt_version""",
+            (owner, deadline_seconds, lease_seconds, deadline_seconds, max_attempts, max_attempts),
         ).fetchone()
-        return Run(str(row[0]), str(row[1]), row[2], row[3], row[4], owner) if row else None
+        return Run(str(row[0]), str(row[1]), row[2], row[3], row[4], owner, row[5]) if row else None
+
+    def renew_lease(self, run: Run, lease_seconds: int) -> bool:
+        """Extends the lease, never past the attempt deadline. False means the run is no longer ours."""
+        row = self.conn.execute(
+            """UPDATE investigations
+               SET lease_expires_at = LEAST(now() + make_interval(secs => %s), attempt_deadline_at), updated_at = now()
+               WHERE id = %s AND org_id = %s AND status = 'running' AND lease_owner = %s
+                 AND lease_expires_at > now()
+               RETURNING id""",
+            (lease_seconds, run.id, run.org_id, run.lease_owner),
+        ).fetchone()
+        return row is not None
 
     def complete(self, run: Run, draft: str) -> bool:
         row = self.conn.execute(

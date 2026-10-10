@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-08
+- Amended by: [ADR 0009](0009-tenant-safe-investigation-tools.md): the "no tools" statement below no longer holds for prompt version 2.
 - Related: [SENTRA-17 spec](../features/SENTRA-17-start-finding-investigation/spec.md), [ADR 0002](0002-event-conventions-for-async-ingestion.md)
 
 ## Context

@@ -9,6 +9,10 @@
 //   member    plain member of B on B's admin-only routes                     -> 403
 // After every attempt, every org_id table (plus the org row) is compared with its snapshot.
 //
+// Worker-facing routes under /internal/v1 (SENTRA-18) are never addressed by a tenant caller: scope comes
+// from the investigation row, behind a service secret and a per-run token. Each needs an EXEMPT entry that
+// names where its isolation is proven, and the public app must not serve them.
+//
 // Adding a route under /v1: add a case to CASES (or an EXEMPT entry with a reason), or the
 // coverage test fails. Adding a tenant-scoped resource: add its cases, and replace its `it.todo`.
 import { randomUUID } from "node:crypto";
@@ -24,9 +28,13 @@ import { migrate } from "./migrate.ts";
 import { createOrgStore } from "./orgs.ts";
 import { createFindingStore } from "./findings.ts";
 import { createInvestigationStore } from "./investigations.ts";
+import { buildInternalApp } from "./investigation-tool-routes.ts";
+import { createInvestigationTools } from "./investigation-tools.ts";
 import { createProjectStore } from "./projects.ts";
 import { createSbomStorage } from "./sbom-storage.ts";
 import { createSbomStore } from "./sbom.ts";
+import { loadToolValidators } from "./tool-contracts.ts";
+import { parseSigningKeys } from "./tool-token.ts";
 import { createUserStore } from "./users.ts";
 
 const need = (name: string) => {
@@ -206,19 +214,24 @@ const EXEMPT: Record<string, string> = {
   "GET /v1/orgs": "lists the caller's own orgs; checked separately below",
   "POST /v1/invitations/accept":
     "bearer-secret invitation token plus verified email; covered in invitations.integration.test.ts",
+  "POST /internal/v1/investigations/:id/token":
+    "worker-facing: service secret plus lease owner, no tenant caller; covered in investigation-tools.integration.test.ts",
+  "POST /internal/v1/investigations/:id/tools/:tool":
+    "worker-facing: scope comes from the run row; two-org and two-project isolation in investigation-tools.integration.test.ts",
 };
 
-/** Tenant-scoped routes (anything under /v1) with neither a case nor an exemption. */
+/** Tenant-scoped routes (anything under /v1 or /internal/v1) with neither a case nor an exemption. */
 function uncovered(routes: string[], covered: string[]) {
   const known = new Set(covered);
-  return routes.filter((r) => r.split(" ")[1]!.startsWith("/v1/") && !known.has(r));
+  return routes.filter((r) => r.split(" ")[1]!.match(/^\/(internal\/)?v1\//) && !known.has(r));
 }
 
-/** "METHOD /path" for every /v1 route; filled by the onRoute hook added in beforeAll. */
+/** "METHOD /path" for every /v1 and /internal/v1 route; filled by onRoute hooks added in beforeAll. */
 const registered: string[] = [];
 
 let pool: Pool;
 let app: ReturnType<typeof buildApp>;
+let internalApp: ReturnType<typeof buildInternalApp>;
 const run = randomUUID().slice(0, 8);
 const headersOf = (id: string) => ({ "x-test-user": id });
 
@@ -448,13 +461,42 @@ beforeAll(async () => {
   app.addHook("onRoute", (o) => {
     for (const m of [o.method].flat()) if (m !== "HEAD") registered.push(`${m} ${o.url}`);
   });
-  await app.ready();
+  const signingKeys = parseSigningKeys(`k1:${randomUUID().replaceAll("-", "").repeat(2)}`);
+  internalApp = buildInternalApp({
+    logger,
+    serviceToken: randomUUID().repeat(2),
+    signingKeys,
+    tools: createInvestigationTools(pool, { signingKeys, validators: loadToolValidators() }),
+  });
+  internalApp.addHook("onRoute", (o) => {
+    for (const m of [o.method].flat()) if (m !== "HEAD") registered.push(`${m} ${o.url}`);
+  });
+  await Promise.all([app.ready(), internalApp.ready()]);
   world = await seed();
 });
 afterAll(async () => {
   await app.close();
+  await internalApp.close();
   await pool.end();
   storage.destroy();
+});
+
+describe("the public listener does not serve the worker-facing routes", () => {
+  it("answers 404, with or without a caller, for every internal route", async () => {
+    const { victim, dual } = world;
+    const run = randomUUID();
+    for (const url of [
+      `/internal/v1/investigations/${run}/token`,
+      `/internal/v1/investigations/${run}/tools/get_finding_risk`,
+      "/internal/v1",
+    ]) {
+      for (const user of [undefined, dual]) {
+        const res = await call(user, "POST", { url, payload: { leaseOwner: run } });
+        expect(res.statusCode, url).toBe(404);
+        expect(res.body).not.toContain(victim.orgId);
+      }
+    }
+  });
 });
 
 describe("route coverage", () => {

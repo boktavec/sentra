@@ -2,7 +2,8 @@
 // Reads the bootstrap machine user's PAT from the compose volume, configures the
 // instance, and writes app credentials to the gitignored .env.sentra.
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { appendFileSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 
 const env = Object.fromEntries(
   readFileSync(".env", "utf8")
@@ -210,6 +211,22 @@ if (!testUserId) {
 const testClientId = json.clientId;
 const testClientSecret = json.clientSecret;
 
+// SENTRA-18 secrets are not Zitadel's, so a re-bootstrap must not drop them. Keep the shared tool token from
+// .env (the worker reads it there) or the previous .env.sentra; generate only when neither has one.
+const previous = existsSync(OUT)
+  ? Object.fromEntries(
+      readFileSync(OUT, "utf8")
+        .split("\n")
+        .filter((l) => l.includes("="))
+        .map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
+    )
+  : {};
+const generated = () => randomBytes(32).toString("base64");
+const toolToken =
+  env.INTELLIGENCE_TOOL_TOKEN || previous.INTELLIGENCE_TOOL_TOKEN || generated();
+const signingKeys =
+  previous.INVESTIGATION_TOOL_SIGNING_KEYS || `k1:${generated()}`;
+
 writeFileSync(
   OUT,
   [
@@ -231,9 +248,17 @@ writeFileSync(
     `KAFKA_BOOTSTRAP=127.0.0.1:${env.REDPANDA_KAFKA_PORT}`,
     // Local dev sends invitation email to Mailpit (read it at http://localhost:${env.MAILPIT_UI_PUBLISHED_PORT}).
     `SMTP_URL=smtp://127.0.0.1:${env.MAILPIT_SMTP_PUBLISHED_PORT}`,
+    // Investigation tool listener (SENTRA-18). The worker needs the same INTELLIGENCE_TOOL_TOKEN in .env.
+    `INTELLIGENCE_TOOL_TOKEN=${toolToken}`,
+    `INVESTIGATION_TOOL_SIGNING_KEYS=${signingKeys}`,
     "",
   ].join("\n"),
 );
 console.log(
   `Zitadel configured. Wrote ${OUT} (issuer ${ISSUER}, project ${projectId}).`,
 );
+if (!env.INTELLIGENCE_TOOL_TOKEN) {
+  // The worker reads the shared token from .env; write it there rather than printing a secret.
+  appendFileSync(".env", `\nINTELLIGENCE_TOOL_TOKEN=${toolToken}\n`);
+  console.log("Added INTELLIGENCE_TOOL_TOKEN to .env for the intelligence worker.");
+}

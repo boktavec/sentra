@@ -2,12 +2,26 @@
 const counters = new Map<string, number>();
 const gauges = new Map<string, number>();
 
-export function inc(name: string, labels: Record<string, string> = {}): void {
-  const key = `${name}${Object.entries(labels)
+const labelled = (name: string, labels: Record<string, string>) =>
+  `${name}${Object.entries(labels)
     .map(([k, v]) => `${k}="${v}"`)
     .join(",")
     .replace(/^(.+)$/, "{$1}")}`;
+
+export function inc(name: string, labels: Record<string, string> = {}): void {
+  const key = labelled(name, labels);
   counters.set(key, (counters.get(key) ?? 0) + 1);
+}
+
+/** A duration or size: exposes `<name>_sum` and `<name>_count`, enough for averages until real histograms arrive. */
+export function observe(name: string, labels: Record<string, string>, value: number): void {
+  for (const [suffix, amount] of [
+    ["_sum", value],
+    ["_count", 1],
+  ] as const) {
+    const key = labelled(name + suffix, labels);
+    counters.set(key, (counters.get(key) ?? 0) + amount);
+  }
 }
 
 /** A value that goes up and down (queue depth), set by whoever owns it. */

@@ -68,7 +68,11 @@ services:
       - seaweedfs-data:/data:rw
 
   intelligence:
-    build: ../../services/intelligence
+    build:
+      context: ../../services/intelligence
+      # The tool contracts are the model's tool list; the image reads them from /app/contracts.
+      additional_contexts:
+        contracts: ../../packages/contracts/ai-tools
     profiles: ["intelligence"]
     restart: unless-stopped
     ports:
@@ -83,6 +87,9 @@ services:
       INTELLIGENCE_KAFKA_BOOTSTRAP: redpanda:9092
       INTELLIGENCE_MODEL_URL: http://host.docker.internal:8000/v1
       INTELLIGENCE_MODEL_API_KEY: ${OMLX_API_KEY:-}
+      # The API's internal tool listener on the host. The worker refuses to start with an empty token.
+      INTELLIGENCE_TOOLS_URL: http://host.docker.internal:4001/internal/v1
+      INTELLIGENCE_TOOL_TOKEN: ${INTELLIGENCE_TOOL_TOKEN:-}
 
   mailpit:
     image: ${MAILPIT_IMAGE}

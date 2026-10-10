@@ -92,6 +92,7 @@ tasks:
     desc: Run integration tests (needs `task stack:up` and `task stack:bootstrap`)
     cmds:
       - task: api:test:integration
+      - task: intelligence:test:integration
       - task: web:test:e2e
 
   check:

@@ -141,7 +141,7 @@ describe("investigation lifecycle API", () => {
     const id = a.json().id as string;
     const db = await pool.query(
       `SELECT i.org_id, i.project_id, i.finding_id, i.created_by, i.context_snapshot,
-              i.draft, o.payload, a.action
+              i.draft, i.prompt_version, o.payload, a.action
        FROM investigations i JOIN investigation_outbox o ON o.investigation_id = i.id
        JOIN audit_events a ON a.target_id = i.id WHERE i.id = $1`,
       [id],
@@ -153,6 +153,7 @@ describe("investigation lifecycle API", () => {
       finding_id: findingId,
       created_by: owner,
       draft: null,
+      prompt_version: 2, // new runs use tools; rows queued before SENTRA-18 keep 1
       action: "investigation.created",
     });
     expect(db.rows[0].context_snapshot).toMatchObject({

@@ -6,6 +6,9 @@ import { recordAudit } from "./org-tx.ts";
 import { inTransaction, type TenantContext } from "./orgs.ts";
 import { findProject } from "./projects.ts";
 
+/** Prompt version 2 runs the tool loop; rows queued before SENTRA-18 keep version 1 and finish on the single call. */
+const PROMPT_VERSION = 2;
+
 const missing = () =>
   new AppError("not_found", 404, "Not found", { reason: "investigation_not_found" });
 
@@ -151,9 +154,18 @@ export function createInvestigationStore(
         const id = randomUUID();
         const eventId = randomUUID();
         const { rows } = await db.query<RunRow>(
-          `INSERT INTO investigations (id, org_id, project_id, finding_id, created_by, context_snapshot, model_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING ${FIELDS}`,
-          [id, tenant.orgId, projectId, findingId, tenant.userId, snapshot, options.modelId],
+          `INSERT INTO investigations (id, org_id, project_id, finding_id, created_by, context_snapshot, model_id, prompt_version)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING ${FIELDS}`,
+          [
+            id,
+            tenant.orgId,
+            projectId,
+            findingId,
+            tenant.userId,
+            snapshot,
+            options.modelId,
+            PROMPT_VERSION,
+          ],
         );
         await db.query(
           "INSERT INTO investigation_outbox (event_id, investigation_id, payload) VALUES ($1, $2, $3)",

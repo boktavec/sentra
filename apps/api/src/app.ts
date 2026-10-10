@@ -1,4 +1,4 @@
-import Fastify from "fastify";
+import Fastify, { type FastifyInstance } from "fastify";
 import {
   AppError,
   requestLogger,
@@ -70,25 +70,7 @@ export function buildApp({
 }: Deps) {
   const app = Fastify({ trustProxy: trustedProxies });
 
-  app.decorateRequest("ctx");
-  app.addHook("onRequest", async (request, reply) => {
-    const incoming = request.headers["x-correlation-id"];
-    const correlationId = resolveCorrelationId(typeof incoming === "string" ? incoming : undefined);
-    request.ctx = { correlationId, log: requestLogger(logger, correlationId) };
-    reply.header("x-correlation-id", correlationId);
-  });
-
-  app.setErrorHandler((err, request, reply) => {
-    const { correlationId, log } = request.ctx;
-    const safeError = err instanceof AppError ? err : fastifyClientError(err);
-    request.failureCode = safeError instanceof AppError ? safeError.code : "internal_error";
-    const response = toErrorResponse(safeError, correlationId);
-    if (response.status >= 500) log.error({ err }, "request_failed");
-    return reply.status(response.status).headers(response.headers).send(response.body);
-  });
-  app.setNotFoundHandler(() => {
-    throw new AppError("not_found", 404, "Not found");
-  });
+  installRequestContext(app, logger);
   app.addHook("onSend", failedResponse(audits));
 
   app.get("/healthz", async () => ({ status: "ok" }));
@@ -122,7 +104,29 @@ export function buildApp({
   return app;
 }
 
-/** Fastify's own 4xx errors (bad JSON, etc.) keep their status but get a generic message. */
+/** Correlation ID, per-request logger, and the one place errors become responses; shared by both listeners. */
+export function installRequestContext(app: FastifyInstance, logger: Logger) {
+  app.decorateRequest("ctx");
+  app.addHook("onRequest", async (request, reply) => {
+    const incoming = request.headers["x-correlation-id"];
+    const correlationId = resolveCorrelationId(typeof incoming === "string" ? incoming : undefined);
+    request.ctx = { correlationId, log: requestLogger(logger, correlationId) };
+    reply.header("x-correlation-id", correlationId);
+  });
+
+  app.setErrorHandler((err, request, reply) => {
+    const { correlationId, log } = request.ctx;
+    const safeError = err instanceof AppError ? err : fastifyClientError(err);
+    request.failureCode = safeError instanceof AppError ? safeError.code : "internal_error";
+    const response = toErrorResponse(safeError, correlationId);
+    if (response.status >= 500) log.error({ err }, "request_failed");
+    return reply.status(response.status).headers(response.headers).send(response.body);
+  });
+  app.setNotFoundHandler(() => {
+    throw new AppError("not_found", 404, "Not found");
+  });
+}
+
 const FAILURE_ACTIONS: Record<
   string,
   {
@@ -195,6 +199,7 @@ function failedResponse(audits: AuditStore | undefined) {
   };
 }
 
+/** Fastify's own 4xx errors (bad JSON, etc.) keep their status but get a generic message. */
 function fastifyClientError(err: unknown): unknown {
   const status = (err as { statusCode?: number }).statusCode;
   return status && status >= 400 && status < 500

@@ -32,6 +32,7 @@
     "@aws-sdk/s3-presigned-post": "^3.1147.0",
     "@platformatic/kafka": "^2.13.0",
     "@sentra/ts-platform": "workspace:*",
+    "ajv": "^8.20.0",
     "fastify": "^5.12.5",
     "ioredis": "^6.0.0",
     "jose": "^6.2.12",

@@ -2,7 +2,7 @@
 
 - Status: Implemented on feature branch; pending PR review
 - YouTrack: http://localhost:8080/issue/SENTRA-17
-- Architecture decision: [ADR 0007](../../adr/0007-durable-investigation-runs.md)
+- Architecture decision: [ADR 0007](../../adr/0007-durable-investigation-runs.md); its "no tools" statement is amended by [ADR 0009](../../adr/0009-tenant-safe-investigation-tools.md) (SENTRA-18)
 - Owner: Project member; operational owners: API and intelligence worker maintainers
 
 ## Problem and outcome
