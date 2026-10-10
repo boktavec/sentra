@@ -198,6 +198,53 @@ describe("buildResult", () => {
     expect(out.value.gaps).not.toContain("no_cvss");
   });
 
+  it("assembles with every field at its tool cap and stays under the table CHECK", () => {
+    n = 0;
+    const purl = `pkg:pypi/${"p".repeat(500)}@1`;
+    const aliases = Array.from({ length: 10 }, (_, i) => `${i}`.padEnd(128, "a"));
+    const fullRisk = risk();
+    Object.assign(fullRisk.finding, { purl: "x".repeat(512), version: "v".repeat(128) });
+    Object.assign(fullRisk.advisory, {
+      sourceId: "s".repeat(256),
+      aliases,
+      summary: "m".repeat(1024),
+    });
+    const ledger: LedgerCall[] = [
+      call("get_finding_risk", { result: fullRisk }),
+      call("list_related_findings", {
+        result: {
+          items: Array.from({ length: 10 }, (_, i) => ({
+            findingId: `${"f".repeat(30)}${i}`,
+            purl,
+            version: "v".repeat(128),
+          })),
+        },
+      }),
+      ...Array.from({ length: 5 }, () =>
+        call("lookup_advisory", { result: { advisory: { sourceId: "a".repeat(256) } } }),
+      ),
+    ];
+    const refs = ledger.map((c) => `call:${c.callNo}`);
+    const text = "😀";
+    const model = answer({
+      summary: text.repeat(1200),
+      tenantImpact: text.repeat(1200),
+      claims: Array.from({ length: 12 }, () => ({
+        text: "x".repeat(400),
+        evidence: refs.slice(0, 4),
+      })),
+    });
+    // Cite everything through several claims so every entry is assembled.
+    (model["claims"] as { evidence: string[] }[])[1]!.evidence = refs.slice(4);
+    const out = build(model, ledger) as { ok: boolean; value: { evidence: unknown[] } };
+    expect(out.ok).toBe(true);
+    expect(out.value.evidence).toHaveLength(7);
+    const lean = out;
+    // jsonb text spaces out keys and commas; the stored form must stay under the 32 KiB CHECK.
+    const spaced = JSON.stringify(lean.value).replace(/([,:])/g, "$1 ");
+    expect(Buffer.byteLength(spaced)).toBeLessThan(32 * 1024);
+  });
+
   it("caps evidence targets across all cited calls, so assembled parts stay bounded", () => {
     n = 0;
     const many = (prefix: string) =>

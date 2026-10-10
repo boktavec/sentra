@@ -10,9 +10,11 @@ export const RESULT_SCHEMA_VERSION = 1;
 // The table caps the result at 32 KiB of jsonb text, which spaces out keys and commas; stay clearly under it.
 const MAX_STORED_RESULT_BYTES = 28 * 1024;
 // API-assembled parts are bounded by construction: at most this many evidence targets across all entries
-// (each purl is capped by the tool contract), and the assembled part may not exceed the byte budget below.
+// (each purl is capped by the tool contract), and the assembled part is trimmed to the byte budget below.
+// Worst case at the tool caps is about 14 KB (facts ~4 KB, 10 targets ~7.5 KB, 8 advisory entries ~2.5 KB),
+// so the budget is not reached in practice; it leaves 12 KiB of the 28 KiB total for the model's text.
 const MAX_EVIDENCE_TARGETS = 10;
-const MAX_ASSEMBLED_BYTES = 12 * 1024;
+const MAX_ASSEMBLED_BYTES = 16 * 1024;
 
 export type ViolationCode =
   | "schema_invalid"
@@ -309,6 +311,15 @@ export function deriveGaps(calls: LedgerCall[], facts: Facts): GapCode[] {
   return GAP_CODES.filter((code) => present[code]);
 }
 
+/** Drops evidence targets from the end until the assembled part fits; facts and gaps are never cut. */
+function trimEvidenceToBudget(assembled: { evidence: EvidenceEntry[] }) {
+  while (jsonBytes(assembled) > MAX_ASSEMBLED_BYTES) {
+    const last = assembled.evidence.findLast((e) => e.targets && e.targets.length > 0);
+    if (!last) return;
+    last.targets!.pop();
+  }
+}
+
 /** Validates the model's answer and, when it holds, returns the result to store. `calls` is the whole investigation. */
 export function buildResult(
   contract: ResultContract,
@@ -329,10 +340,7 @@ export function buildResult(
     evidence: attempt.filter((c) => cited.has(c.callNo)).map((c) => resolveEvidence(c, budget)),
     gaps: deriveGaps(attempt, facts),
   };
-  // Bounded by construction; tripping this is an API bug, not something the model can fix.
-  if (jsonBytes(assembled) > MAX_ASSEMBLED_BYTES) {
-    throw new Error("assembled result parts exceed their size budget");
-  }
+  trimEvidenceToBudget(assembled);
   const result = {
     ...model,
     claims: model.claims.map((c) => ({ ...c, evidence: [...new Set(c.evidence)] })),
