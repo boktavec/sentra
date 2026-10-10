@@ -29,3 +29,5 @@ Integration tests default to the compose ports; set `TEST_ADMIN_DATABASE_URL`, `
 ## Configuration
 
 See `.env.example`. Source URLs (`CRAWLER_OSV_BASE_URL`, `CRAWLER_KEV_URL`) are operator config and must be https (http only for loopback); events never carry URLs.
+
+`CRAWLER_GITHUB_TOKEN` is required only for `ghsa` runs (a run without it fails before any request). It is held in a redacting `Secret`, sent only to `https://api.github.com` (the GitHub API origin is not configurable), and never logged, published, or written to the artifact sidecar. `ghsa` pages the REST advisories API into one zip of unmodified page bodies and resumes from a per-run watermark (`ingestion_runs.watermark`); see the [SENTRA-9 spec](../../docs/features/SENTRA-9-ingest-ghsa/spec.md).

@@ -4,6 +4,7 @@ import { createTransport } from "nodemailer";
 import { Pool } from "pg";
 import type { Logger } from "@sentra/ts-platform";
 import { buildApp } from "./app.ts";
+import { createAuditStore } from "./audits.ts";
 import { createAuthenticator } from "./auth.ts";
 import type { Config } from "./config.ts";
 import { JwksCache } from "./jwks.ts";
@@ -127,6 +128,7 @@ export async function createApi(config: Config, logger: Logger) {
     }),
     sbom,
     sbomMaxBytes: config.sbomMaxBytes,
+    audits: createAuditStore(pool, logger),
     invitations: createInvitationStore(pool, {
       fetchProfile: createProfileFetcher(config.issuer),
       webUrl: config.webUrl,

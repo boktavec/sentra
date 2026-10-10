@@ -193,7 +193,9 @@ class Store:
                         if row:
                             changed.append((row[0], doc))
                         cur.nextset()
-            self._replace_affected(changed)
+            # The same advisory can appear twice in one batch (GHSA bundles overlap pages). Each applied copy is
+            # newer than the one before, so the last one is what the row now holds; replace its affected rows only.
+            self._replace_affected(list({vulnerability_id: doc for vulnerability_id, doc in changed}.items()))
             if failed:
                 with self.conn.cursor() as cur:
                     cur.executemany(

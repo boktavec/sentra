@@ -52,6 +52,7 @@ class ArtifactStore:
         source_url: str,
         fetched_at: str,
         ext: str = "zip",
+        extra_meta: dict[str, Any] | None = None,
     ) -> str:
         """Store the file and return its key. Idempotent: identical content is stored once.
 
@@ -77,6 +78,7 @@ class ArtifactStore:
                 "fetchedAt": fetched_at,
                 "etag": etag,
                 "sizeBytes": size,
+                **(extra_meta or {}),
             }
             self.s3.put_object(
                 Bucket=self.bucket,

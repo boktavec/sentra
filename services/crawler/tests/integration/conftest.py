@@ -15,7 +15,7 @@ from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
 from crawler import signing
-from crawler.config import Limits
+from crawler.config import Limits, Secret
 from crawler.ingest import Deps
 from crawler.runs import Runs
 from crawler.storage import ArtifactStore, make_client
@@ -26,6 +26,7 @@ S3_ENDPOINT = os.environ.get("TEST_S3_ENDPOINT", "http://localhost:8333")
 S3_KEYS = ("sentra-dev", "sentra-dev-secret")
 KEYS = {"k1": b"integration-secret"}
 CRAWLER_PASSWORD = "crawler-test-pw"
+GITHUB_TOKEN = Secret("ghp_integration_test_token_0123456789")
 
 
 @pytest.fixture(scope="session")
@@ -75,10 +76,11 @@ def clean_bucket(bucket):
 class Harness:
     """Wires Deps against the real services and records what was published."""
 
-    def __init__(self, database, bucket, osv, tmp_path):
+    def __init__(self, database, bucket, osv, github, tmp_path):
         self.s3, self.bucket = bucket
         self.crawler_url = database[1]
         self.osv = osv
+        self.github = github
         self.published: list[dict] = []
         self.publish_failures = 0  # next N publishes raise, simulating a broker outage
         self._lock = threading.Lock()
@@ -103,6 +105,8 @@ class Harness:
             kev_url=self.osv.base_url + "/kev.json",
             limits=self.limits,
             tmp_dir=str(self.tmp_path),
+            github_token=GITHUB_TOKEN,
+            github_base_url=self.github.base_url,
         )
 
     def objects(self) -> list[str]:
@@ -110,8 +114,8 @@ class Harness:
 
 
 @pytest.fixture
-def harness(database, clean_bucket, osv, admin, tmp_path):
-    return Harness(database, clean_bucket, osv, tmp_path)
+def harness(database, clean_bucket, osv, github, admin, tmp_path):
+    return Harness(database, clean_bucket, osv, github, tmp_path)
 
 
 def make_request(run_id: str | None = None, ecosystem: str = "npm", key_id: str = "k1", **over) -> dict:

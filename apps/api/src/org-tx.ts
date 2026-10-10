@@ -36,9 +36,9 @@ interface AuditEvent {
   actorUserId: string;
   correlationId: string;
   action: string;
-  targetType: "user" | "invitation" | "project" | "sbom_import" | "investigation";
-  targetId: string;
-  metadata: Record<string, string>;
+  targetType: "organization" | "user" | "invitation" | "project" | "sbom_import" | "investigation";
+  targetId: string | null;
+  metadata?: Record<string, string>;
 }
 
 /** Runs inside the caller's transaction, so the event commits or rolls back with the change. */
@@ -53,6 +53,6 @@ export const recordAudit = (client: PoolClient, event: AuditEvent) =>
       event.targetType,
       event.targetId,
       event.correlationId,
-      event.metadata,
+      event.metadata ?? {},
     ],
   );
