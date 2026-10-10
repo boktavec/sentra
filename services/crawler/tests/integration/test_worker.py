@@ -10,7 +10,7 @@ from confluent_kafka.admin import AdminClient, NewTopic  # pyright: ignore[repor
 from prometheus_client import REGISTRY
 
 from conftest import make_request
-from crawler import contracts
+from crawler import contracts, request
 from crawler.worker import Topics, Worker
 from fake_osv import Response, make_zip
 
@@ -113,6 +113,18 @@ def test_end_to_end_request_to_event(harness, topics):
     assert sample("published") == before + 1
 
 
+def test_a_scheduled_request_travels_through_kafka_to_a_finished_run(harness, topics, rig, admin):
+    harness.osv.serve(NPM, Response(body=make_zip(), etag='"v1"'))
+    producer = Producer({"bootstrap.servers": BOOTSTRAP})
+    scheduler = rig.scheduler(publish=lambda event: request.publish(producer, event, topics.requested))
+    with Running(harness, topics) as w:
+        scheduler.run_once()
+        (event,) = read(topics.ingested, 1)
+        wait_for(lambda: w.committed() == 1)
+    row = admin.execute("SELECT run_id::text, status, trigger, completed_at IS NOT NULL FROM ingestion_runs").fetchone()
+    assert row == (event["runId"], "published", "schedule", True)
+
+
 def test_duplicate_requests_yield_one_event_and_one_download(harness, topics):
     harness.osv.serve(NPM, Response(body=make_zip(), etag='"v1"'))
     req = make_request()
@@ -143,7 +155,7 @@ def test_permanent_failure_publishes_crawl_failed_and_moves_on(harness, topics):
         produce(topics.requested, req)
         (event,) = read(topics.failed, 1)
         wait_for(lambda: w.committed() == 1)
-    contracts.validate("crawl.failed", event)
+    contracts.validate("crawl.failed", event, version=2)
     assert event["runId"] == req["runId"] and event["attempts"] == 3
     assert read(topics.ingested, 1, timeout=2) == []
 
@@ -341,6 +353,7 @@ def test_abandoning_a_validly_signed_request_fails_its_run_and_announces_it(harn
     worker.consumer.close()
     (event,) = read(topics.failed, 1)
     assert event["runId"] == req["runId"] and status(admin, req["runId"]) == "failed"
+    assert event["failureKind"] == "permanent"
 
 
 @pytest.mark.parametrize("tamper", ["bad-signature", "unknown-key", "not-json"])

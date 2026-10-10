@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentra.dev/contracts/events/crawl.failed.v2.json",
+  "title": "crawl.failed v2",
+  "description": "An ingestion run failed (retries exhausted or non-retryable error). `failureKind` says whether another attempt can help: `transient` (upstream unavailable, rate limited, timeout) or `permanent` (bad response, unsupported source, bug). Retrying means a new crawl.requested with a new runId. Supersedes v1, which lacks failureKind; consumers treat v1 as permanent.",
+  "type": "object",
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "type": {
+      "const": "crawl.failed"
+    },
+    "version": {
+      "const": 2
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "correlationId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,128}$"
+    },
+    "runId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "source": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+    },
+    "ecosystem": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "attempts": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "failureKind": {
+      "enum": [
+        "transient",
+        "permanent"
+      ]
+    }
+  },
+  "required": [
+    "eventId",
+    "type",
+    "version",
+    "timestamp",
+    "correlationId",
+    "runId",
+    "source",
+    "ecosystem",
+    "reason",
+    "attempts",
+    "failureKind"
+  ],
+  "additionalProperties": false
+}

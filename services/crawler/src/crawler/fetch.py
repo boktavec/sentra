@@ -13,12 +13,16 @@ from .config import Limits
 
 
 class FetchFailed(Exception):
-    """The download failed for good: a non-retryable error, or retries were exhausted."""
+    """The download failed for good: a non-retryable error, or retries were exhausted.
 
-    def __init__(self, reason: str, attempts: int):
+    `transient` says whether trying again later can help (upstream down, rate limited, timeout). It
+    defaults to False so an unclassified failure is never retried automatically."""
+
+    def __init__(self, reason: str, attempts: int, transient: bool = False):
         super().__init__(reason)
         self.reason = reason
         self.attempts = attempts
+        self.transient = transient
 
 
 class _Retryable(Exception):
@@ -122,12 +126,13 @@ def fetch(
             except (_Retryable, httpx.TransportError) as e:
                 reason = e.args[0] if isinstance(e, _Retryable) else f"{type(e).__name__}"
                 if attempt == limits.max_attempts:
-                    raise FetchFailed(f"{reason} after {attempt} attempts", attempt) from e
+                    raise FetchFailed(f"{reason} after {attempt} attempts", attempt, transient=True) from e
                 delay = backoff_delay(limits, attempt, rand, e.retry_after if isinstance(e, _Retryable) else None)
                 if time.monotonic() + delay >= deadline:
                     raise FetchFailed(
                         f"{reason}; total timeout of {limits.total_timeout:g}s exhausted after {attempt} attempts",
                         attempt,
+                        transient=True,
                     ) from e
                 sleep(delay)
                 continue

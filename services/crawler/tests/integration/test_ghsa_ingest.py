@@ -125,8 +125,8 @@ def test_rate_limit_beyond_the_budget_is_a_distinct_outcome_and_leaves_no_artifa
 
     assert harness.objects() == []
     (failed,) = harness.published
-    contracts.validate("crawl.failed", failed)
-    assert "rate limited" in failed["reason"]
+    contracts.validate("crawl.failed", failed, version=2)
+    assert "rate limited" in failed["reason"] and failed["failureKind"] == "transient"
     r = run_row(admin, req["runId"])
     assert r["status"] == "failed" and "rate limited" in r["error"] and r["watermark"] is None
 

@@ -131,10 +131,13 @@ def _process(run: Run, deps: Deps) -> str:
         except FetchFailed as e:
             RETRIES.labels(run.source).inc(max(e.attempts - 1, 0))
             # Publish first, then mark: if we crash in between, the redelivery retries the whole run.
+            kind = "transient" if e.transient else "permanent"
             deps.publish(
-                events.crawl_failed(run.run_id, run.correlation_id, run.source, run.ecosystem, e.reason, e.attempts)
+                events.crawl_failed(
+                    run.run_id, run.correlation_id, run.source, run.ecosystem, e.reason, e.attempts, kind
+                )
             )
-            deps.runs.mark_failed(run.run_id, e.reason, e.attempts)
+            deps.runs.mark_failed(run.run_id, e.reason, e.attempts, kind)
             log.error("ingestion failed", extra={**extra, "reason": e.reason})
             return "rate_limited" if isinstance(e, ghsa.RateLimited) else "failed"
 
