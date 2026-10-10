@@ -12,6 +12,8 @@ import { isToolName } from "./tool-contracts.ts";
 import { verifyToken, type SigningKey } from "./tool-token.ts";
 
 const MAX_BODY_BYTES = 16 * 1024;
+// The model's whole answer; the worker already caps it at 16 KiB, so this leaves room for the envelope.
+const MAX_COMPLETE_BODY_BYTES = 32 * 1024;
 
 interface Deps {
   logger: Logger;
@@ -31,6 +33,9 @@ const digest = (value: string) => createHash("sha256").update(value).digest();
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isRound = (value: unknown): value is number =>
+  Number.isInteger(value) && (value as number) >= 1 && (value as number) <= MAX_ROUNDS;
 
 export function buildInternalApp({ logger, serviceToken, signingKeys, tools }: Deps) {
   // "ignore" keeps `__proto__` and `constructor` keys as ordinary own properties, so the argument schema
@@ -81,12 +86,30 @@ export function buildInternalApp({ logger, serviceToken, signingKeys, tools }: D
           throw new AppError("not_found", 404, "Not found", { reason: "unknown_tool" });
         const body = isObject(request.body) ? request.body : {};
         const { round, args } = body;
-        if (!Number.isInteger(round) || (round as number) < 1 || (round as number) > MAX_ROUNDS) {
-          throw invalid("round");
-        }
+        if (!isRound(round)) throw invalid("round");
         if (!isObject(args)) throw invalid("args");
         return tools.callTool(
-          { investigationId: id, leaseOwner: claims.lease, tool, round: round as number, args },
+          { investigationId: id, leaseOwner: claims.lease, tool, round, args },
+          request.ctx.log,
+        );
+      },
+    );
+
+    routes.post<{ Params: { id: string } }>(
+      "/internal/v1/investigations/:id/complete",
+      { bodyLimit: MAX_COMPLETE_BODY_BYTES },
+      async (request) => {
+        const claims = authorizeRun(request, request.params.id);
+        const body = isObject(request.body) ? request.body : {};
+        if (!isRound(body["round"])) throw invalid("round");
+        if (!("result" in body)) throw invalid("result");
+        return tools.complete(
+          {
+            investigationId: request.params.id,
+            leaseOwner: claims.lease,
+            round: body["round"],
+            result: body["result"],
+          },
           request.ctx.log,
         );
       },

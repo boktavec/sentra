@@ -6,8 +6,10 @@ const dir = new URL("../../../packages/contracts/ai-tools/", import.meta.url);
 const validators = loadToolValidators();
 
 describe("tool contracts", () => {
-  it("has one versioned contract file per tool and nothing else", () => {
-    expect(readdirSync(dir).toSorted()).toEqual(TOOL_NAMES.map((t) => `${t}.v1.json`).toSorted());
+  it("has one versioned contract file per tool, plus the result contract, and nothing else", () => {
+    expect(readdirSync(dir).toSorted()).toEqual(
+      [...TOOL_NAMES, "investigation-result"].map((t) => `${t}.v1.json`).toSorted(),
+    );
     for (const tool of TOOL_NAMES) {
       const contract = JSON.parse(readFileSync(new URL(`${tool}.v1.json`, dir), "utf8"));
       expect(contract).toMatchObject({ tool, version: 1 });

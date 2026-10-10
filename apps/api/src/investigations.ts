@@ -6,8 +6,11 @@ import { recordAudit } from "./org-tx.ts";
 import { inTransaction, type TenantContext } from "./orgs.ts";
 import { findProject } from "./projects.ts";
 
-/** Prompt version 2 runs the tool loop; rows queued before SENTRA-18 keep version 1 and finish on the single call. */
-const PROMPT_VERSION = 2;
+/**
+ * Version 3 runs the tool loop and ends with a validated structured result (SENTRA-19). Rows queued earlier
+ * keep their version: 1 finishes on a single call, 2 on the tool loop, both with a plain-text draft.
+ */
+const PROMPT_VERSION = 3;
 
 const missing = () =>
   new AppError("not_found", 404, "Not found", { reason: "investigation_not_found" });
@@ -70,6 +73,21 @@ export function createInvestigationStore(
   async function scoped(tenant: TenantContext, slug: string, findingId: string) {
     if (!isUuid(findingId)) throw missing();
     return { projectId: await findProject(pool, tenant, slug), findingId };
+  }
+
+  /** The one row `query` returns for a run of this finding ($1 run, $2 org, $3 project, $4 finding), or the 404. */
+  async function runRow<T extends object>(
+    tenant: TenantContext,
+    slug: string,
+    findingId: string,
+    id: string,
+    query: string,
+  ): Promise<T> {
+    const { projectId } = await scoped(tenant, slug, findingId);
+    if (!isUuid(id)) throw missing();
+    const { rows } = await pool.query<T>(query, [id, tenant.orgId, projectId, findingId]);
+    if (!rows[0]) throw missing();
+    return rows[0];
   }
 
   return {
@@ -228,15 +246,36 @@ export function createInvestigationStore(
     },
 
     async get(tenant: TenantContext, slug: string, findingId: string, id: string) {
-      const { projectId } = await scoped(tenant, slug, findingId);
-      if (!isUuid(id)) throw missing();
-      const { rows } = await pool.query<RunRow>(
-        `SELECT ${FIELDS} FROM investigations
-         WHERE id = $1 AND org_id = $2 AND project_id = $3 AND finding_id = $4`,
-        [id, tenant.orgId, projectId, findingId],
+      return toRun(
+        await runRow<RunRow>(
+          tenant,
+          slug,
+          findingId,
+          id,
+          `SELECT ${FIELDS} FROM investigations
+           WHERE id = $1 AND org_id = $2 AND project_id = $3 AND finding_id = $4`,
+        ),
       );
-      if (!rows[0]) throw missing();
-      return toRun(rows[0]);
+    },
+
+    /** The stored result of a completed run. Absent, other-tenant and legacy (draft-only) runs are all one 404. */
+    async result(tenant: TenantContext, slug: string, findingId: string, id: string) {
+      const row = await runRow<{ schema_version: number; result: object; created_at: Date }>(
+        tenant,
+        slug,
+        findingId,
+        id,
+        `SELECT r.schema_version, r.result, r.created_at
+         FROM investigation_results r
+         JOIN investigations i ON i.id = r.investigation_id AND i.org_id = r.org_id AND i.project_id = r.project_id
+         WHERE r.investigation_id = $1 AND r.org_id = $2 AND r.project_id = $3 AND i.finding_id = $4`,
+      );
+      return {
+        investigationId: id,
+        schemaVersion: row.schema_version,
+        createdAt: row.created_at.toISOString(),
+        result: row.result,
+      };
     },
   };
 }

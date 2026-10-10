@@ -14,14 +14,14 @@ from .errors import LeaseLost, RunError
 from .events import valid_requested
 from .model import ModelClient
 from .store import Run, Store
-from .tools import ToolClient, load_tool_specs
+from .tools import ToolClient, load_result_schema, load_tool_specs
 
 log = logging.getLogger("intelligence")
 OUTCOMES = Counter("investigation_worker_outcomes_total", "Worker outcomes", ["outcome"])
 MODEL_SECONDS = Histogram("investigation_model_duration_seconds", "Local model call duration")
 QUEUE_AGE = Gauge("investigation_queue_oldest_age_seconds", "Oldest queued investigation age")
 TOOL_ROUNDS = Histogram(
-    "investigation_tool_rounds", "Model rounds per completed prompt version 2 run", buckets=(1, 2, 3, 4)
+    "investigation_tool_rounds", "Model rounds per completed prompt version 2 and 3 run", buckets=(1, 2, 3, 4)
 )
 
 # Failure codes that get their own outcome label, so tool trouble is visible next to the state counts.
@@ -29,19 +29,28 @@ TOOL_OUTCOMES = {"tool_unavailable", "tool_unauthorized", "deadline_exceeded"}
 
 
 def execute(run: Run, settings: Settings, store: Store, model: ModelClient, investigator: Investigator) -> None:
-    """Runs one claimed attempt to a stored result. Prompt version 1 is the single call queued before SENTRA-18."""
+    """Runs one claimed attempt to a stored result. Version 1 is the single call queued before SENTRA-18, version 2
+    the tool loop with a plain-text draft, version 3 the tool loop whose structured result the API stores."""
     started = time.monotonic()
     deadline = started + settings.attempt_deadline_seconds
     try:
+        completed = False
         if run.prompt_version == 1:
-            draft = model.draft(run.model_id, run.context)
+            completed = store.complete(run, model.draft(run.model_id, run.context))
         else:
             attempt = Attempt(run.id, run.lease_owner, run.attempts, run.model_id, run.context)
-            draft, rounds = investigator.investigate(
-                attempt, lambda: store.renew_lease(run, settings.lease_seconds), deadline
-            )
+
+            def renew() -> bool:
+                return store.renew_lease(run, settings.lease_seconds)
+
+            if run.prompt_version == 2:
+                draft, rounds = investigator.investigate(attempt, renew, deadline)
+                completed = store.complete(run, draft)
+            else:
+                rounds = investigator.investigate_v3(attempt, renew, deadline)
+                completed = True  # the API completed the run in the transaction that stored the result
             TOOL_ROUNDS.observe(rounds)
-        if store.complete(run, draft):
+        if completed:
             OUTCOMES.labels("completed").inc()
             log.info("investigation completed id=%s org=%s", run.id, run.org_id)
     except LeaseLost:
@@ -67,7 +76,13 @@ def main() -> None:
     store = Store(settings.database_url)
     model = ModelClient(settings.model_url, settings.model_api_key, settings.model_timeout_seconds)
     tools = ToolClient(settings.tools_url, settings.tools_token, settings.tool_timeout_seconds)
-    investigator = Investigator(settings, model, tools, load_tool_specs(settings.contracts_dir))
+    investigator = Investigator(
+        settings,
+        model,
+        tools,
+        load_tool_specs(settings.contracts_dir),
+        load_result_schema(settings.contracts_dir),
+    )
     consumer = Consumer(
         {
             "bootstrap.servers": settings.kafka_bootstrap,

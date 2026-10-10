@@ -191,6 +191,13 @@ const CASES: Case[] = [
     }),
   },
   {
+    route:
+      "GET /v1/orgs/:orgId/projects/:slug/findings/:findingId/investigations/:investigationId/result",
+    build: (t) => ({
+      url: `${org(t)}/projects/${t.sharedProject}/findings/${t.findingId}/investigations/${t.investigationId}/result`,
+    }),
+  },
+  {
     route: "POST /v1/orgs/:orgId/projects/:slug/sboms/:importId/complete",
     build: (t) => ({ url: `${sbom(t, t.sharedProject)}/${t.importId}/complete` }),
   },
@@ -218,6 +225,8 @@ const EXEMPT: Record<string, string> = {
     "worker-facing: service secret plus lease owner, no tenant caller; covered in investigation-tools.integration.test.ts",
   "POST /internal/v1/investigations/:id/tools/:tool":
     "worker-facing: scope comes from the run row; two-org and two-project isolation in investigation-tools.integration.test.ts",
+  "POST /internal/v1/investigations/:id/complete":
+    "worker-facing: scope comes from the run row and the ledger of this attempt; cross-run and cross-attempt citations in investigation-tools.integration.test.ts",
 };
 
 /** Tenant-scoped routes (anything under /v1 or /internal/v1) with neither a case nor an exemption. */
@@ -275,6 +284,9 @@ interface World {
 }
 let world: World;
 
+/** Text inside the victim's stored result; it must never appear in any response to another tenant. */
+const RESULT_MARKER = "victim-result-marker";
+
 /** The purl of the finding seeded into the victim's shared-app project. */
 const FINDING_PURL = `pkg:pypi/isolation-${run}@1.0.0`;
 
@@ -326,6 +338,17 @@ async function seed(): Promise<World> {
     url: `/v1/orgs/${victimOrg.id}/projects/shared-app/findings/${findingId}/investigations`,
   });
   expect(createdRun.statusCode).toBe(201);
+  // Completed as a prompt version 3 run would be, so the result route has something to protect.
+  const investigationId = createdRun.json().id as string;
+  await pool.query(
+    `UPDATE investigations SET status = 'completed', prompt_version = 3, completed_at = now() WHERE id = $1`,
+    [investigationId],
+  );
+  await pool.query(
+    `INSERT INTO investigation_results (investigation_id, org_id, project_id, attempt, schema_version, result)
+     SELECT id, org_id, project_id, 1, 1, $2 FROM investigations WHERE id = $1`,
+    [investigationId, { summary: RESULT_MARKER }],
+  );
   const inv = await call(victimAdmin, "POST", {
     url: `/v1/orgs/${victimOrg.id}/invitations`,
     payload: { email: `victim-${run}@example.com`, role: "member" },
@@ -346,7 +369,7 @@ async function seed(): Promise<World> {
       importId: imp.json().id as string,
       invitationId: inv.json().id as string,
       findingId,
-      investigationId: createdRun.json().id as string,
+      investigationId,
     },
   };
 }
@@ -488,6 +511,7 @@ describe("the public listener does not serve the worker-facing routes", () => {
     for (const url of [
       `/internal/v1/investigations/${run}/token`,
       `/internal/v1/investigations/${run}/tools/get_finding_risk`,
+      `/internal/v1/investigations/${run}/complete`,
       "/internal/v1",
     ]) {
       for (const user of [undefined, dual]) {
@@ -672,6 +696,77 @@ describe("findings", () => {
       expect(res.statusCode).toBe(404);
       expect(res.body).not.toContain(FINDING_PURL);
     });
+  });
+});
+
+describe("investigation results", () => {
+  const resultUrl = (orgId: string, project: string, findingId: string, investigationId: string) =>
+    `/v1/orgs/${orgId}/projects/${project}/findings/${findingId}/investigations/${investigationId}`;
+
+  it("are readable by a member of the owning org, and stay out of the status and history routes", async () => {
+    const { member, victim } = world;
+    const run = resultUrl(victim.orgId, "shared-app", victim.findingId, victim.investigationId);
+    const res = await call(member, "GET", { url: `${run}/result` });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      investigationId: victim.investigationId,
+      result: { summary: RESULT_MARKER },
+    });
+    for (const url of [run, run.slice(0, run.lastIndexOf("/"))]) {
+      expect((await call(member, "GET", { url })).body).not.toContain(RESULT_MARKER);
+    }
+  });
+
+  it("answers every way of reaching the victim's result like a run that does not exist", async () => {
+    const { outsider, dual, home, victim } = world;
+    const reference = seen(
+      await call(dual, "GET", {
+        url: `${resultUrl(home.id, "shared-app", randomUUID(), randomUUID())}/result`,
+      }),
+    );
+    expect(reference.status).toBe(404);
+    const attempts = await Promise.all([
+      // The victim's IDs under the caller's own org and a same-named project.
+      call(dual, "GET", {
+        url: `${resultUrl(home.id, "shared-app", victim.findingId, victim.investigationId)}/result`,
+      }),
+      // The victim's org, by a caller who is not a member.
+      call(outsider, "GET", {
+        url: `${resultUrl(victim.orgId, "shared-app", victim.findingId, victim.investigationId)}/result`,
+      }),
+      // The right org and project, but another finding's ID, and a malformed run ID.
+      call(world.member, "GET", {
+        url: `${resultUrl(victim.orgId, "shared-app", randomUUID(), victim.investigationId)}/result`,
+      }),
+      call(world.member, "GET", {
+        url: `${resultUrl(victim.orgId, "shared-app", victim.findingId, "not-a-uuid")}/result`,
+      }),
+    ]);
+    for (const res of attempts) {
+      expect(res.statusCode).toBe(404);
+      expect(res.body).not.toContain(RESULT_MARKER);
+      expect(res.body).not.toContain(victim.orgId);
+    }
+    for (const res of [attempts[0]!, attempts[2]!, attempts[3]!])
+      expect(seen(res)).toEqual(reference);
+  });
+
+  it("answer 404 for a run that has no result, the same as for another tenant's", async () => {
+    const { member, victim } = world;
+    const legacy = (
+      await pool.query<{ id: string }>(
+        `INSERT INTO investigations (org_id, project_id, finding_id, created_by, context_snapshot, model_id,
+           prompt_version, status, draft, completed_at)
+         SELECT org_id, project_id, finding_id, created_by, '{}', 'm', 2, 'completed', 'private draft', now()
+         FROM investigations WHERE id = $1 RETURNING id`,
+        [victim.investigationId],
+      )
+    ).rows[0]!.id;
+    const res = await call(member, "GET", {
+      url: `${resultUrl(victim.orgId, "shared-app", victim.findingId, legacy)}/result`,
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.body).not.toContain("private draft");
   });
 });
 
