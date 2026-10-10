@@ -172,6 +172,53 @@ describe("buildResult", () => {
     expect(out.value.gaps).toContain("no_cvss");
   });
 
+  it("takes CVSS from the snapshot's linked advisory when get_finding_risk was not called", () => {
+    n = 0;
+    const ledger = [call("lookup_advisory", { result: { advisory: { sourceId: "GHSA-aaaa" } } })];
+    const withScore = {
+      ...run,
+      snapshot: {
+        ...run.snapshot,
+        linkedAdvisories: [
+          { source: "osv", sourceId: "OTHER", cvssScore: 1, cvssVersion: "3.1" },
+          { source: "osv", sourceId: "GHSA-aaaa", cvssScore: 8.1, cvssVersion: "3.1" },
+        ],
+      },
+    };
+    const out = buildResult(
+      contract,
+      answer({ claims: [{ text: "x", evidence: ["call:1"] }] }),
+      ledger,
+      withScore,
+      NOW,
+    ) as {
+      value: { facts: { advisory: { cvssScore: number } }; gaps: string[] };
+    };
+    expect(out.value.facts.advisory.cvssScore).toBe(8.1);
+    expect(out.value.gaps).not.toContain("no_cvss");
+  });
+
+  it("caps evidence targets across all cited calls, so assembled parts stay bounded", () => {
+    n = 0;
+    const many = (prefix: string) =>
+      Array.from({ length: 10 }, (_, i) => ({
+        findingId: `${prefix}${i}`,
+        purl: `pkg:pypi/${prefix}${i}@1`,
+        version: "1",
+      }));
+    const ledger = [
+      call("list_related_findings", { result: { items: many("a") } }),
+      call("list_related_findings", { result: { items: many("b") } }),
+    ];
+    const out = build(
+      answer({ claims: [{ text: "x", evidence: ["call:1", "call:2"] }] }),
+      ledger,
+    ) as {
+      value: { evidence: { targets: unknown[] }[] };
+    };
+    expect(out.value.evidence.map((e) => e.targets.length)).toEqual([10, 0]);
+  });
+
   it("rejects a result that outgrows the stored size", () => {
     const claims = Array.from({ length: 12 }, () => ({
       text: "😀".repeat(400),
@@ -306,6 +353,11 @@ describe("gap rules", () => {
     [
       "related_findings_not_checked",
       fullLedger().filter((c) => c.tool !== "list_related_findings"),
+      ["related_findings_not_checked"],
+    ],
+    [
+      "related_findings_not_checked (a failed call checked nothing)",
+      replace(1, { outcome: "error", result: null }),
       ["related_findings_not_checked"],
     ],
     [
