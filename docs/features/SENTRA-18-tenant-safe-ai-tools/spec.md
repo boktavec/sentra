@@ -152,7 +152,7 @@ All tools are read-only. Org, project, and finding always come from the investig
 | `get_dependency_occurrences` | `{}` | Rows of `sbom_dependencies` in the finding's own `import_id` (same org and project) with the same ecosystem and package name, any version: purl, version, scope, occurrences. At most 20 rows, plus `truncated`, `importId`, and `importedAt`. |
 | `lookup_advisory` | `{id: string}`, max 80 chars, pattern for CVE / GHSA / OSV-style IDs | Global intelligence: normalized advisory (source, sourceId, aliases, summary, severity, CVSS), group members (max 20), and KEV entry or `null`. It has no tenant data. Unknown IDs return outcome `not_found`. |
 
-### Storage (migration `015_investigation_tools.sql`, additive)
+### Storage (migration `016_investigation_tools.sql`, additive)
 
 - `investigation_tool_calls`:
   - Columns: `id`; `investigation_id` (FK); `org_id`; `project_id`; `attempt`; `round`; `tool` (CHECK in the four names plus `token_exchange`); `args jsonb` (validated arguments only, or NULL when invalid); `outcome` (CHECK `ok`/`invalid_args`/`not_found`/`limit`/`error`); `result jsonb` (bounded, 8 KiB, nullable); `result_bytes`; `duration_ms`; `created_at`.
@@ -304,7 +304,7 @@ The story is L-sized. Split it into two stacked PRs: PR 1 (API: steps 1 to 5) is
 
    **Status (2026-10-09): the oMLX facts are Verified (see Context). The Docker-to-host bind check is covered by the implementer's run; see Implementation notes.** PR 1 did not depend on it.
 1. **ADR 0009 and contracts.** Write ADR 0009 (internal tool listener, layered auth, API-owned ledger, run-scoped authority) and the four tool JSON Schemas. Tests: schema files validate.
-2. **Migration 015.** Ledger table, `attempt_deadline_at` plus its grant, failure codes. Tests: migration applies; worker role grant and denial assertions.
+2. **Migration 016.** Ledger table, `attempt_deadline_at` plus its grant, failure codes. Tests: migration applies; worker role grant and denial assertions.
 3. **Internal listener and auth.** Config (required, length checks), separate Fastify instance, bearer check, signing keyring with `kid`, token exchange, and the run/lease check helper. Tests: every auth unhappy path; the public app does not serve `/internal`; startup fails without config.
 4. **Tools and ledger.** The four handlers reuse `findingSql()`/`toPriority()`, plus bounded truncation, the API-side call cap, ledger writes, metrics, and logs. Tests: per-tool happy path, two-org/two-project isolation, scope arguments rejected, truncation and cursor, resolved finding, Q6 pinned test, ledger rows.
 5. **SENTRA-21 extension.** The coverage check includes internal routes. Add cases or exemptions. Run `task api:test:isolation`.
