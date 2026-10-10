@@ -14,7 +14,7 @@ class JsonFormatter(logging.Formatter):
             "service": "crawler",
             "message": record.getMessage(),
         }
-        for field in ("correlationId", "runId", "reason", "source", "ecosystem"):
+        for field in ("correlationId", "runId", "reason", "source", "ecosystem", "trigger"):
             if hasattr(record, field):
                 entry[field] = getattr(record, field)
         return json.dumps(entry)

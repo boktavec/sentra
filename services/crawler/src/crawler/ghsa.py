@@ -87,7 +87,9 @@ class _Pager:
     def pause(self, seconds: float) -> None:
         """Sleep through a rate limit if the run has time for it; otherwise give up as `rate_limited`."""
         if time.monotonic() + seconds >= self.deadline:
-            raise RateLimited(f"rate limited for {seconds:.0f}s, more than the run has left", 1 + self.retries)
+            raise RateLimited(
+                f"rate limited for {seconds:.0f}s, more than the run has left", 1 + self.retries, transient=True
+            )
         log.info("github rate limit: waiting", extra={"waitSeconds": round(seconds)})
         self.sleep(seconds)
         GITHUB_RATE_LIMIT_WAIT.inc(seconds)
@@ -133,10 +135,14 @@ class _Pager:
                     raise FetchFailed(f"http {r.status_code}", attempt + self.retries)
                 reason = f"http {r.status_code}"
             if attempt == self.limits.max_attempts:
-                raise FetchFailed(f"{reason} after {attempt} attempts", attempt + self.retries)
+                raise FetchFailed(f"{reason} after {attempt} attempts", attempt + self.retries, transient=True)
             delay = backoff_delay(self.limits, attempt, self.rand)
             if time.monotonic() + delay >= self.deadline:
-                raise FetchFailed(f"{reason}; total timeout exhausted after {attempt} attempts", attempt + self.retries)
+                raise FetchFailed(
+                    f"{reason}; total timeout exhausted after {attempt} attempts",
+                    attempt + self.retries,
+                    transient=True,
+                )
             self.sleep(delay)
             attempt += 1
             self.retries += 1
