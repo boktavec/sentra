@@ -40,6 +40,13 @@ Read the relevant skill file before starting that kind of work. The files live i
 | Debugging | [`.agents/skills/debugging/SKILL.md`](.agents/skills/debugging/SKILL.md) | Bugs, incidents, failing jobs, and wrong results. |
 | Distributed systems review | [`.agents/skills/distributed-systems-review/SKILL.md`](.agents/skills/distributed-systems-review/SKILL.md) | Production paths involving concurrency, external dependencies, queues, latency, scaling, or tenant isolation. Apply lightly to local-only work. |
 | Herdr | [`.agents/skills/herdr/SKILL.md`](.agents/skills/herdr/SKILL.md) | Only when the user explicitly asks for Herdr and the agent is inside a Herdr-managed pane. |
+| UI/UX Pro Max | [`.agents/skills/ui-ux-pro-max/SKILL.md`](.agents/skills/ui-ux-pro-max/SKILL.md) | Designing, building, or reviewing any UI: pages, components, layout, accessibility, typography, color, charts. |
+| UI styling | [`.agents/skills/ui-styling/SKILL.md`](.agents/skills/ui-styling/SKILL.md) | Implementing UI with shadcn/ui, Tailwind, theming, and dark mode in `apps/web`. |
+| Design system | [`.agents/skills/design-system/SKILL.md`](.agents/skills/design-system/SKILL.md) | Design tokens (primitive → semantic → component), CSS variables, component specs. |
+| Brand | [`.agents/skills/brand/SKILL.md`](.agents/skills/brand/SKILL.md) | Brand voice, visual identity, and style-guide consistency. |
+| Design | [`.agents/skills/design/SKILL.md`](.agents/skills/design/SKILL.md) | Umbrella design skill: logos, icons, banners, social images, brand identity. |
+| Banner design | [`.agents/skills/banner-design/SKILL.md`](.agents/skills/banner-design/SKILL.md) | Banners and hero/marketing graphics. |
+| Slides | [`.agents/skills/slides/SKILL.md`](.agents/skills/slides/SKILL.md) | HTML presentations, only when the user asks for slides. |
 
 ## MCP Tools
 
@@ -47,6 +54,9 @@ These MCP servers are configured for the user's local Codex, Claude Code, and Pi
 
 - **`youtrack`** is the source of truth for Sentra projects, boards, and user stories. Story URLs have the form `http://localhost:8080/issue/<ID>` (for example `http://localhost:8080/issue/SENTRA-1`); use that URL, not just the ID, wherever a story is linked. Read the story and its links before planning; after the spec is agreed, use it to create or update story details, acceptance criteria, dependencies, and status. Search before creating an issue to avoid duplicates. Delete projects, boards, or stories only when the user explicitly requests deletion.
 - **`context7`** provides current third-party library and framework documentation. Use it when a spec or implementation depends on a version-specific API, configuration, or integration behavior. Record the library version and relevant finding in the spec or PR. Sentra's repository and agreed spec remain the authority for Sentra requirements and decisions.
+- **`shadcn`** (project `.mcp.json`) searches and installs shadcn/ui components and registry items. Use it, with the `ui-styling` skill, before hand-writing a UI component: search the registry, view examples, and use its add command rather than copying code. The CLI is the `shadcn` devDependency in the root `package.json`.
+- **`playwright`** and **`chrome-devtools`** (global) drive a real browser. Use `playwright` for UI verification and PR screenshots; use `chrome-devtools` for console, network, and performance debugging.
+- **`refero`** (global) searches real-world product UI screenshots and flows. Use it for design references and layout/pattern inspiration before designing a new screen, alongside the `ui-ux-pro-max` skill; cite what was borrowed in the spec or PR.
 
 Keep MCP credentials out of the repository and do not paste them into issues, specs, logs, or PRs. If a server is unavailable, say which lookup could not be completed and continue with the work that does not depend on it.
 
@@ -74,13 +84,16 @@ Verify claims about third-party behavior against the running system before relyi
 
 ## Agent Pipeline
 
-Subagents live in `.claude/agents/` and do not invoke each other; the main agent orchestrates:
+Agent definitions live in `.claude/agents/` (Claude Code) and `.pi/agents/` (Pi); the Pi definitions reuse the corresponding Claude prompt as their role source of truth. Agents do not invoke one another; the main agent orchestrates the pipeline using the client's available subagent mechanism:
 
-1. **Plan:** `senior-engineering-planner` interviews the user (relay one question at a time, resuming it with the answer) and saves the approved spec.
-2. **Implement:** after the user approves the spec, run `senior-software-engineer` with the spec path.
-3. **Review:** run `staff-engineering-reviewer` with the spec path, the diff, and the implementer's handoff.
+1. **Plan:** use `senior-engineering-planner` to interview the user (relay one question at a time, resuming it with the answer) and save the approved spec.
+2. **Implement:** after the user approves the spec, use `senior-software-engineer` with the spec path.
+   For stories with UI scope, also use `senior-ux-design-engineer` with the spec path (after any API/contract it consumes exists or is agreed). It builds the screens in `apps/web`, verifies them in a browser, and produces the PR screenshots. Run it and the software engineer in separate worktrees or sequentially; never in the same files at once.
+3. **Review:** use `staff-engineering-reviewer` with the spec path, the diff, and the implementer's handoff.
 4. **Fix loop:** on CHANGES REQUIRED, resume the implementer with the blocking findings, then re-run the reviewer. Repeat until PASS or PASS WITH ADVISORIES.
 5. **Escalate to the user** (do not loop) on planning-level findings, BLOCKED / INCONCLUSIVE, or after 3 review rounds without PASS.
+
+In Pi, use its `pi-subagents` extension with these project agents. Keep the parent responsible for routing, relaying the planner's one-at-a-time questions, reviewing results, and final decisions. If the extension is unavailable, report that blocker rather than silently pretending a subagent ran.
 
 Commits, pushes, PRs, merges, and deploys still need explicit user instruction.
 

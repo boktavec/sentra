@@ -51,6 +51,7 @@ out/
 target/
 
 # Local data, databases, logs, and temporary files
+.pi/subagents/
 data/
 .local/
 *.db
