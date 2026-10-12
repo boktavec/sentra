@@ -2,5 +2,11 @@
   "name": "sentra",
   "private": true,
   "version": "0.0.0",
-  "packageManager": "pnpm@12.9.1"
+  "packageManager": "pnpm@12.9.1",
+  "scripts": {
+    "shadcn": "shadcn"
+  },
+  "devDependencies": {
+    "shadcn": "^4.21.4"
+  }
 }
