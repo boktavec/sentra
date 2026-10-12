@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test";
-import { createOrg, signUp } from "./helpers";
+import { createOrg, signUp, screenshotPath } from "./helpers";
 
-const SHOTS = "../../docs/features/SENTRA-5-upload-sbom/screenshots";
 const FIXTURES = new URL("./fixtures/", import.meta.url).pathname;
 
 // Needs the whole stack: `task stack:up`, the API (migrated), the pipeline worker, and the
@@ -20,7 +19,7 @@ test("upload SBOMs, watch them validate or get rejected, and keep them private t
   const projectUrl = `http://localhost:3000/orgs/${orgSlug}/projects/web-app`;
   await expect(page).toHaveURL(projectUrl);
   await expect(page.getByTestId("no-sboms")).toBeVisible();
-  await page.screenshot({ path: `${SHOTS}/1-empty-uploads.png` });
+  await page.screenshot({ path: screenshotPath("SENTRA-5-upload-sbom", "1-empty-uploads.png") });
 
   // The browser refuses obviously wrong files without calling the API.
   const picker = page.getByTestId("sbom-file");
@@ -37,7 +36,9 @@ test("upload SBOMs, watch them validate or get rejected, and keep them private t
   });
   await expect(page.getByTestId("sbom-error")).toContainText("10 MiB");
   await expect(page.getByTestId("no-sboms")).toBeVisible();
-  await page.screenshot({ path: `${SHOTS}/2-blocked-in-browser.png` });
+  await page.screenshot({
+    path: screenshotPath("SENTRA-5-upload-sbom", "2-blocked-in-browser.png"),
+  });
 
   // A real CycloneDX file ends parsed, without a page reload.
   await picker.setInputFiles(`${FIXTURES}valid-bom.cdx.json`);
@@ -48,7 +49,7 @@ test("upload SBOMs, watch them validate or get rejected, and keep them private t
   });
   await expect(rows.first()).toContainText("valid-bom.cdx.json");
   await expect(rows.first().getByTestId("sbom-dependencies")).toHaveText("2 dependencies");
-  await page.screenshot({ path: `${SHOTS}/3-parsed.png` });
+  await page.screenshot({ path: screenshotPath("SENTRA-5-upload-sbom", "3-parsed.png") });
 
   // JSON that is not an SBOM is rejected with a reason a person can act on.
   await picker.setInputFiles(`${FIXTURES}not-cyclonedx.json`);
@@ -56,7 +57,7 @@ test("upload SBOMs, watch them validate or get rejected, and keep them private t
   const rejected = rows.filter({ hasText: "not-cyclonedx.json" });
   await expect(rejected.getByTestId("sbom-status")).toHaveText("Rejected", { timeout: 30_000 });
   await expect(rejected.getByTestId("sbom-reason")).toContainText("not a CycloneDX SBOM");
-  await page.screenshot({ path: `${SHOTS}/4-rejected.png` });
+  await page.screenshot({ path: screenshotPath("SENTRA-5-upload-sbom", "4-rejected.png") });
 
   // Text that is not JSON at all.
   await picker.setInputFiles({

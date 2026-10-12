@@ -1,12 +1,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
-import { createOrg, signUp } from "./helpers";
+import { createOrg, signUp, screenshotPath } from "./helpers";
 
-const PRIORITY_SHOTS = "../../docs/features/SENTRA-14-risk-priority/screenshots";
-const SHOTS = "../../docs/features/SENTRA-16-finding-detail/screenshots";
 const { Pool } = createRequire(new URL("../../api/package.json", import.meta.url))("pg");
 
 const HUGE_GROUP = 52;
@@ -261,8 +258,6 @@ test("members can read the evidence behind a finding, and outsiders cannot", asy
   page,
   browser,
 }) => {
-  mkdirSync(SHOTS, { recursive: true });
-  mkdirSync(PRIORITY_SHOTS, { recursive: true });
   const run = Date.now().toString(36);
   const orgSlug = `detail-${run}`;
   await signUp(page, `detail-owner-${run}@example.com`);
@@ -274,7 +269,10 @@ test("members can read the evidence behind a finding, and outsiders cannot", asy
   const detail = (id: string) => `/orgs/${orgSlug}/projects/web-app/findings/${id}`;
   const shot = async (name: string, fullPage = true) => {
     await page.waitForLoadState("networkidle");
-    await page.screenshot({ path: `${SHOTS}/${name}.png`, fullPage });
+    await page.screenshot({
+      path: screenshotPath("SENTRA-16-finding-detail", `${name}.png`),
+      fullPage,
+    });
   };
 
   // From the list, through the card link, to a multi-advisory confirmed range match.
@@ -311,7 +309,9 @@ test("members can read the evidence behind a finding, and outsiders cannot", asy
     "Version could not be verified: tier unchanged",
   );
   await shot("2-unverifiable");
-  await page.screenshot({ path: `${PRIORITY_SHOTS}/3-priority-breakdown.png` });
+  await page.screenshot({
+    path: screenshotPath("SENTRA-14-risk-priority", "3-priority-breakdown.png"),
+  });
 
   await page.goto(detail(ids.resolved));
   await expect(page.getByTestId("finding-status")).toHaveText("Resolved");

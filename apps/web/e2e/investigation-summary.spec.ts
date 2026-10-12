@@ -1,9 +1,7 @@
-import { mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { expect, test } from "@playwright/test";
-import { createOrg, signUp } from "./helpers";
+import { createOrg, signUp, screenshotPath } from "./helpers";
 
-const SHOTS = "../../docs/features/SENTRA-19-evidence-based-summary/screenshots";
 const { Pool } = createRequire(new URL("../../api/package.json", import.meta.url))("pg");
 
 interface Seeded {
@@ -153,7 +151,6 @@ test("a member reads the validated summary of a completed run, with links to its
   test.setTimeout(180_000);
   const run = Date.now().toString(36);
   const orgSlug = `summary-${run}`;
-  mkdirSync(SHOTS, { recursive: true });
 
   await signUp(page, `summary-${run}@example.com`);
   await createOrg(page, `Summary ${run}`, orgSlug);
@@ -188,7 +185,10 @@ test("a member reads the validated summary of a completed run, with links to its
     "Other versions of this dependency in the SBOM were not checked.",
   );
   await expect(page.getByTestId("result-gaps")).toContainText("is not known");
-  await page.screenshot({ path: `${SHOTS}/1-summary.png`, fullPage: true });
+  await page.screenshot({
+    path: screenshotPath("SENTRA-19-evidence-based-summary", "1-summary.png"),
+    fullPage: true,
+  });
 
   const link = page
     .getByTestId("result-claims")
@@ -200,5 +200,8 @@ test("a member reads the validated summary of a completed run, with links to its
   await link.click();
   await expect(page).toHaveURL(new RegExp(`/findings/${relatedId}$`));
   await expect(page.getByText(`summary-${orgSlug}@2.0`).first()).toBeVisible();
-  await page.screenshot({ path: `${SHOTS}/2-evidence-link.png`, fullPage: true });
+  await page.screenshot({
+    path: screenshotPath("SENTRA-19-evidence-based-summary", "2-evidence-link.png"),
+    fullPage: true,
+  });
 });

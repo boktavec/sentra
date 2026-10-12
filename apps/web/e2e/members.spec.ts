@@ -1,8 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { createOrg, signUp } from "./helpers";
+import { createOrg, signUp, screenshotPath } from "./helpers";
 
-const SHOTS = "../../docs/features/SENTRA-3-roles-and-membership/screenshots";
 const PG_CONTAINER = process.env["SENTRA_PG_CONTAINER"] ?? "sentra-sentra-postgres-1";
 
 function psql(sql: string) {
@@ -56,7 +55,9 @@ test("admin manages members; a member sees less and can leave; the last admin is
   await expect(admin.getByTestId("member-row")).toHaveCount(2);
   await expect(admin.getByRole("columnheader", { name: "Email" })).toBeVisible();
   await expect(row(admin, memberEmail).getByTestId("member-role")).toHaveText("member");
-  await admin.screenshot({ path: `${SHOTS}/1-admin-view.png` });
+  await admin.screenshot({
+    path: screenshotPath("SENTRA-3-roles-and-membership", "1-admin-view.png"),
+  });
 
   // Promote, then demote.
   await row(admin, memberEmail).getByRole("combobox").selectOption("admin");
@@ -71,7 +72,9 @@ test("admin manages members; a member sees less and can leave; the last admin is
   await row(admin, adminEmail).getByRole("button", { name: "Change role" }).click();
   await expect(admin.getByTestId("members-error")).toContainText("at least one admin");
   await expect(row(admin, adminEmail).getByTestId("member-role")).toHaveText("admin");
-  await admin.screenshot({ path: `${SHOTS}/2-last-admin.png` });
+  await admin.screenshot({
+    path: screenshotPath("SENTRA-3-roles-and-membership", "2-last-admin.png"),
+  });
 
   // Member view: names and roles only, no admin controls, and a Leave button for themself.
   await member.goto(`/orgs/${slug}/members`);
@@ -81,7 +84,9 @@ test("admin manages members; a member sees less and can leave; the last admin is
   await expect(member.getByRole("button", { name: "Change role" })).toHaveCount(0);
   await expect(member.getByRole("button", { name: "Remove" })).toHaveCount(0);
   await expect(member.getByRole("button", { name: "Leave" })).toHaveCount(1);
-  await member.screenshot({ path: `${SHOTS}/3-member-view.png` });
+  await member.screenshot({
+    path: screenshotPath("SENTRA-3-roles-and-membership", "3-member-view.png"),
+  });
 
   // The member leaves and is back on a home page with no organizations.
   await member.getByRole("button", { name: "Leave" }).click();
@@ -97,7 +102,9 @@ test("admin manages members; a member sees less and can leave; the last admin is
   await expect(admin.getByTestId("member-row")).toHaveCount(1);
   const gone = await member.goto(`/orgs/${slug}/members`);
   expect(gone?.status()).toBe(404);
-  await member.screenshot({ path: `${SHOTS}/4-removed-member.png` });
+  await member.screenshot({
+    path: screenshotPath("SENTRA-3-roles-and-membership", "4-removed-member.png"),
+  });
 
   await memberContext.close();
 });

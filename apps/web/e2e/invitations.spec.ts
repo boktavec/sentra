@@ -1,7 +1,6 @@
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { createOrg, invitationLink, signIn, signUp } from "./helpers";
+import { createOrg, invitationLink, signIn, signUp, screenshotPath } from "./helpers";
 
-const SHOTS = "../../docs/features/SENTRA-29-invitation-email-delivery/screenshots";
 const LOGIN_URL = /localhost:8180\/ui\/v2\/login\/loginname/;
 
 /** A new browser context, so each person has their own cookies and identity-provider session. */
@@ -52,9 +51,13 @@ test("an admin invites someone, who signs in through the link and joins; wrong a
   ).json();
   await mail.goto(`http://localhost:8025/view/${found.messages[0].ID}`);
   await expect(mail.getByText(`Invite ${run}`).first()).toBeVisible();
-  await mail.screenshot({ path: `${SHOTS}/email-received.png` });
+  await mail.screenshot({
+    path: screenshotPath("SENTRA-29-invitation-email-delivery", "email-received.png"),
+  });
   await mail.close();
-  await admin.screenshot({ path: `${SHOTS}/1-invitation-created.png` });
+  await admin.screenshot({
+    path: screenshotPath("SENTRA-29-invitation-email-delivery", "1-invitation-created.png"),
+  });
 
   // A signed-in stranger cannot use the link, and learns nothing about the organization.
   const { context: strangerContext, page: stranger } = await newPerson(browser);
@@ -63,7 +66,9 @@ test("an admin invites someone, who signs in through the link and joins; wrong a
   await stranger.getByRole("button", { name: "Accept invitation" }).click();
   await expect(stranger.getByTestId("accept-error")).toContainText("different email address");
   await expect(stranger.locator("body")).not.toContainText(`Invite ${run}`);
-  await stranger.screenshot({ path: `${SHOTS}/2-wrong-account.png` });
+  await stranger.screenshot({
+    path: screenshotPath("SENTRA-29-invitation-email-delivery", "2-wrong-account.png"),
+  });
   await strangerContext.close();
 
   // The invitee is signed out: the link sends them to sign in, then back to the accept page.
@@ -72,11 +77,15 @@ test("an admin invites someone, who signs in through the link and joins; wrong a
   await expect(invitee).toHaveURL(LOGIN_URL);
   await signIn(invitee, inviteeEmail);
   await expect(invitee).toHaveURL(link);
-  await invitee.screenshot({ path: `${SHOTS}/3-accept-page.png` });
+  await invitee.screenshot({
+    path: screenshotPath("SENTRA-29-invitation-email-delivery", "3-accept-page.png"),
+  });
   await invitee.getByRole("button", { name: "Accept invitation" }).click();
   await expect(invitee).toHaveURL(`http://localhost:3000/orgs/${slug}`);
   await expect(invitee.getByTestId("org-role")).toHaveText("member");
-  await invitee.screenshot({ path: `${SHOTS}/4-joined.png` });
+  await invitee.screenshot({
+    path: screenshotPath("SENTRA-29-invitation-email-delivery", "4-joined.png"),
+  });
 
   // The link is used up, and the admin sees the new member and no pending invitation.
   await invitee.goto(link);
@@ -98,6 +107,8 @@ test("an admin invites someone, who signs in through the link and joins; wrong a
   await late.goto(revokedLink);
   await late.getByRole("button", { name: "Accept invitation" }).click();
   await expect(late.getByTestId("accept-error")).toContainText("already used or was cancelled");
-  await late.screenshot({ path: `${SHOTS}/5-revoked.png` });
+  await late.screenshot({
+    path: screenshotPath("SENTRA-29-invitation-email-delivery", "5-revoked.png"),
+  });
   await lateContext.close();
 });

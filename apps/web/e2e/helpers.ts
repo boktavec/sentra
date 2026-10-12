@@ -100,3 +100,13 @@ export async function startWebWithoutApi(distDir: string) {
   stopServer(server);
   throw new Error("The web app without an API did not start");
 }
+
+/**
+ * Where an e2e screenshot for `feature` (a `docs/features/` folder name) is written. By default it is
+ * a gitignored folder, so a run never rewrites committed images; set SENTRA_E2E_DOC_SCREENSHOTS=1 to
+ * refresh the feature's committed screenshots. Playwright creates missing directories.
+ */
+export const screenshotPath = (feature: string, name: string) =>
+  process.env["SENTRA_E2E_DOC_SCREENSHOTS"] === "1"
+    ? `../../docs/features/${feature}/screenshots/${name}`
+    : `test-results/screenshots/${feature}/${name}`;

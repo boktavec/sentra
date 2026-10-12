@@ -1,9 +1,8 @@
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import { Redis } from "ioredis";
 
-import { PASSWORD, register, verificationCode } from "./helpers";
+import { PASSWORD, register, verificationCode, screenshotPath } from "./helpers";
 
-const SHOTS = "../../docs/features/SENTRA-1-user-sign-in/screenshots";
 const WEB = "http://localhost:3000";
 const LOGIN_URL = /localhost:8180\/ui\/v2\/login\/loginname/;
 
@@ -14,12 +13,12 @@ const sessionCookie = async (context: BrowserContext) =>
 async function registerUnverified(page: Page, context: BrowserContext, email: string) {
   await page.goto("/");
   await expect(page).toHaveURL(LOGIN_URL);
-  await page.screenshot({ path: `${SHOTS}/1-sign-in.png` });
+  await page.screenshot({ path: screenshotPath("SENTRA-1-user-sign-in", "1-sign-in.png") });
 
   await register(page, email);
   await expect(page).toHaveURL(/\/ui\/v2\/login\/verify/);
   await expect(page.getByText("Enter the Code provided in the verification email")).toBeVisible();
-  await page.screenshot({ path: `${SHOTS}/2-verify-email.png` });
+  await page.screenshot({ path: screenshotPath("SENTRA-1-user-sign-in", "2-verify-email.png") });
   // No Sentra session exists until verification completes.
   expect(await sessionCookie(context)).toBeUndefined();
 }
@@ -31,7 +30,7 @@ async function verifyAndReadUserId(page: Page, email: string): Promise<string> {
   await expect(page).toHaveURL(`${WEB}/`);
   const userId = await page.getByTestId("user-id").innerText();
   expect(userId).toMatch(/^[0-9a-f-]{36}$/);
-  await page.screenshot({ path: `${SHOTS}/3-signed-in.png` });
+  await page.screenshot({ path: screenshotPath("SENTRA-1-user-sign-in", "3-signed-in.png") });
   return userId;
 }
 
@@ -88,7 +87,7 @@ async function signOutAndBackIn(
   await page.waitForURL(/localhost:(3000|8180)/);
   await page.goto("/");
   await expect(page).toHaveURL(LOGIN_URL);
-  await page.screenshot({ path: `${SHOTS}/4-signed-out.png` });
+  await page.screenshot({ path: screenshotPath("SENTRA-1-user-sign-in", "4-signed-out.png") });
   expect(await sessionCookie(context)).toBeUndefined();
 
   // Signing in again needs the password: the Zitadel session really ended.

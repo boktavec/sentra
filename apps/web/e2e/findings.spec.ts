@@ -1,11 +1,8 @@
-import { mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
-import { createOrg, signUp } from "./helpers";
+import { createOrg, signUp, screenshotPath } from "./helpers";
 
-const SHOTS = "../../docs/features/SENTRA-15-findings-list/screenshots";
-const PRIORITY_SHOTS = "../../docs/features/SENTRA-14-risk-priority/screenshots";
 const { Pool } = createRequire(new URL("../../api/package.json", import.meta.url))("pg");
 
 async function seed(orgSlug: string, projectSlug: string) {
@@ -81,8 +78,6 @@ test("members can review and filter findings without exposing them to outsiders"
   page,
   browser,
 }) => {
-  mkdirSync(SHOTS, { recursive: true });
-  mkdirSync(PRIORITY_SHOTS, { recursive: true });
   const run = Date.now().toString(36);
   const orgSlug = `findings-${run}`;
   await signUp(page, `findings-owner-${run}@example.com`);
@@ -92,7 +87,10 @@ test("members can review and filter findings without exposing them to outsiders"
   await page.getByRole("link", { name: "View findings" }).click();
   await expect(page.getByTestId("no-findings")).toBeVisible();
   await page.waitForLoadState("networkidle");
-  await page.screenshot({ path: `${SHOTS}/1-empty.png`, fullPage: true });
+  await page.screenshot({
+    path: screenshotPath("SENTRA-15-findings-list", "1-empty.png"),
+    fullPage: true,
+  });
 
   await seed(orgSlug, "web-app");
   await page.getByRole("button", { name: "Refresh" }).click();
@@ -107,8 +105,14 @@ test("members can review and filter findings without exposing them to outsiders"
   );
   await page.waitForLoadState("networkidle");
   await expect(page.getByTestId("finding-row")).toHaveCount(2);
-  await page.screenshot({ path: `${SHOTS}/2-open.png`, fullPage: true });
-  await page.screenshot({ path: `${PRIORITY_SHOTS}/1-priority-list.png`, fullPage: true });
+  await page.screenshot({
+    path: screenshotPath("SENTRA-15-findings-list", "2-open.png"),
+    fullPage: true,
+  });
+  await page.screenshot({
+    path: screenshotPath("SENTRA-14-risk-priority", "1-priority-list.png"),
+    fullPage: true,
+  });
 
   await page.getByLabel("Priority").selectOption("p3");
   await page.getByRole("button", { name: "Apply filters" }).click();
@@ -116,7 +120,10 @@ test("members can review and filter findings without exposing them to outsiders"
   await expect(page.getByTestId("finding-row")).toContainText("unknown@1.0");
   await page.waitForLoadState("networkidle");
   await expect(page.getByTestId("finding-row")).toHaveCount(1);
-  await page.screenshot({ path: `${PRIORITY_SHOTS}/2-p3-filter.png`, fullPage: true });
+  await page.screenshot({
+    path: screenshotPath("SENTRA-14-risk-priority", "2-p3-filter.png"),
+    fullPage: true,
+  });
   await page.getByLabel("Priority").selectOption("all");
   await page.getByLabel("Sort").selectOption("newest");
   await page.getByRole("button", { name: "Apply filters" }).click();
@@ -128,7 +135,10 @@ test("members can review and filter findings without exposing them to outsiders"
   await expect(page.getByTestId("finding-row")).toHaveCount(1);
   await page.waitForLoadState("networkidle");
   await expect(page.getByTestId("finding-row")).toHaveCount(1);
-  await page.screenshot({ path: `${SHOTS}/3-critical-filter.png`, fullPage: true });
+  await page.screenshot({
+    path: screenshotPath("SENTRA-15-findings-list", "3-critical-filter.png"),
+    fullPage: true,
+  });
 
   await page.getByLabel("Status").selectOption("resolved");
   await page.getByLabel("Severity").selectOption("all");
@@ -137,11 +147,17 @@ test("members can review and filter findings without exposing them to outsiders"
   await expect(page.getByTestId("finding-row")).toContainText("resolved@1.0");
   await page.waitForLoadState("networkidle");
   await expect(page.getByTestId("finding-row")).toContainText("resolved@1.0");
-  await page.screenshot({ path: `${SHOTS}/4-resolved.png`, fullPage: true });
+  await page.screenshot({
+    path: screenshotPath("SENTRA-15-findings-list", "4-resolved.png"),
+    fullPage: true,
+  });
 
   await page.goto(`/orgs/${orgSlug}/projects/web-app/findings?cursor=invalid`);
   await expect(page.getByTestId("findings-error")).toBeVisible();
-  await page.screenshot({ path: `${SHOTS}/6-error.png`, fullPage: true });
+  await page.screenshot({
+    path: screenshotPath("SENTRA-15-findings-list", "6-error.png"),
+    fullPage: true,
+  });
 
   const context = await browser.newContext();
   const outsider = await context.newPage();
@@ -149,6 +165,9 @@ test("members can review and filter findings without exposing them to outsiders"
   const denied = await outsider.goto(`/orgs/${orgSlug}/projects/web-app/findings`);
   expect(denied?.status()).toBe(404);
   expect(await outsider.locator("body").innerText()).not.toContain("critical@1.0");
-  await outsider.screenshot({ path: `${SHOTS}/5-not-a-member.png`, fullPage: true });
+  await outsider.screenshot({
+    path: screenshotPath("SENTRA-15-findings-list", "5-not-a-member.png"),
+    fullPage: true,
+  });
   await context.close();
 });

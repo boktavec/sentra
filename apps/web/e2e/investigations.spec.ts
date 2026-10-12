@@ -1,9 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
 import { expect, test } from "@playwright/test";
-import { createOrg, signUp } from "./helpers";
+import { createOrg, signUp, screenshotPath } from "./helpers";
 
-const SHOTS = "../../docs/features/SENTRA-17-start-finding-investigation/screenshots";
 const featureWebUrl = process.env["INVESTIGATION_WEB_URL"] ?? "http://localhost:3000";
 
 /** Seed a real finding after the browser creates an authorized org and project. */
@@ -39,7 +37,6 @@ test("start and observe a finding investigation through the browser", async ({ p
   test.setTimeout(180_000);
   const run = Date.now().toString(36);
   const orgSlug = `investigate-${run}`;
-  mkdirSync(SHOTS, { recursive: true });
 
   await signUp(page, `investigator-${run}@example.com`);
   await createOrg(page, `Investigations ${run}`, orgSlug);
@@ -52,11 +49,17 @@ test("start and observe a finding investigation through the browser", async ({ p
   await page.getByRole("link", { name: "Investigations", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Investigations" })).toBeVisible();
   await expect(page.getByTestId("investigation-findings")).toContainText(`browser-${orgSlug}`);
-  await page.screenshot({ path: `${SHOTS}/1-findings.png`, fullPage: true });
+  await page.screenshot({
+    path: screenshotPath("SENTRA-17-start-finding-investigation", "1-findings.png"),
+    fullPage: true,
+  });
 
   await page.getByTestId("investigation-findings").getByRole("button").first().click();
   await expect(page.getByRole("button", { name: "Start investigation" })).toBeEnabled();
-  await page.screenshot({ path: `${SHOTS}/2-selected-finding.png`, fullPage: true });
+  await page.screenshot({
+    path: screenshotPath("SENTRA-17-start-finding-investigation", "2-selected-finding.png"),
+    fullPage: true,
+  });
   await page.getByRole("button", { name: "Start investigation" }).click();
   await expect(page.getByTestId("investigation-runs")).toContainText(/queued|running|completed/);
   if (process.env["INVESTIGATION_EXPECT_MODEL"] === "1") {
@@ -64,6 +67,9 @@ test("start and observe a finding investigation through the browser", async ({ p
       timeout: 120_000,
     });
     await expect(page.getByRole("button", { name: "View summary" })).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/3-completed.png`, fullPage: true });
+    await page.screenshot({
+      path: screenshotPath("SENTRA-17-start-finding-investigation", "3-completed.png"),
+      fullPage: true,
+    });
   }
 });
