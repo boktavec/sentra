@@ -1,11 +1,14 @@
 import { apiGet } from "./api.ts";
 import { callApi } from "./auth.ts";
+import type { MatchEvidence } from "./finding-format.ts";
 
 export type FindingStatus = "open" | "resolved" | "all";
+
 export type FindingSeverity =
   "all" | "critical" | "high" | "medium" | "low" | "none" | "unavailable";
 
 export type FindingSort = "priority" | "severity" | "newest";
+
 export type FindingPriorityFilter = "all" | "p1" | "p2" | "p3" | "p4";
 
 export interface FindingFilters {
@@ -64,7 +67,9 @@ export function listFindings(
   cursor?: string,
 ) {
   const params = new URLSearchParams({ ...filters, limit: "50" });
+
   if (cursor) params.set("cursor", cursor);
+
   return callApi((token) =>
     apiGet<FindingPage>(
       `/v1/orgs/${encodeURIComponent(orgId)}/projects/${encodeURIComponent(projectSlug)}/findings?${params}`,
@@ -91,7 +96,7 @@ export interface FindingMember {
   matchQuality: "confirmed" | "unverifiable";
   matchReason: string | null;
   matcherVersion: number;
-  evidence: unknown;
+  evidence: MatchEvidence | null;
   advisory: {
     id: string;
     source: string;

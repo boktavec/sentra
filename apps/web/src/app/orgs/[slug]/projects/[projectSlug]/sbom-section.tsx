@@ -20,10 +20,13 @@ async function sendToStorage(
   file: File,
 ): Promise<string | null> {
   const form = new FormData();
+
   for (const [name, value] of Object.entries(upload.fields)) form.append(name, value);
   form.append("file", file); // storage requires the file to be the last field
+
   try {
     const stored = await fetch(upload.url, { method: "POST", body: form });
+
     return stored.ok ? null : "Storage refused the file. It may be larger than 10 MiB. Try again.";
   } catch {
     return "The file could not be sent to storage. Check your connection and try again.";
@@ -38,11 +41,14 @@ async function runUpload(
   onReserved: () => Promise<void>,
 ): Promise<string | null> {
   const ticket = await startUpload(orgId, projectSlug, file.name, file.size);
+
   if (!ticket.ok) return ticket.error;
   await onReserved(); // show the pending import while the file is on its way
   const refused = await sendToStorage(ticket.data.upload, file);
+
   if (refused) return refused;
   const done = await completeUpload(orgId, projectSlug, ticket.data.id);
+
   return done.ok ? null : done.error;
 }
 
@@ -101,6 +107,7 @@ export function SbomSection({
 
   const refresh = useCallback(async () => {
     const result = await refreshImports(orgId, projectSlug);
+
     if (result.ok) setImports(result.data);
   }, [orgId, projectSlug]);
 
@@ -108,18 +115,22 @@ export function SbomSection({
   useEffect(() => {
     if (!active) return;
     const timer = setInterval(() => void refresh(), POLL_MS);
+
     return () => clearInterval(timer);
   }, [active, refresh]);
 
   async function upload(file: File) {
     const problem = checkFile(file.name, file.size);
     setError(problem);
+
     if (problem) return;
     setBusy(true);
+
     try {
       setError(await runUpload(orgId, projectSlug, file, refresh));
     } finally {
       setBusy(false);
+
       if (input.current) input.current.value = "";
       await refresh();
     }
@@ -139,6 +150,7 @@ export function SbomSection({
             data-testid="sbom-file"
             onChange={(e) => {
               const file = e.target.files?.[0];
+
               if (file) void upload(file);
             }}
           />

@@ -12,10 +12,14 @@ import { migrate } from "./migrate.ts";
 import { createOrgStore } from "./orgs.ts";
 import { createProjectStore } from "./projects.ts";
 import { createUserStore } from "./users.ts";
+import { type LogLine, testUserId } from "./test-support.ts";
 
 const databaseUrl = process.env["DATABASE_URL"];
+
 if (!databaseUrl) throw new Error("DATABASE_URL is required (see `task api:test:integration`)");
-const lines: Record<string, unknown>[] = [];
+
+const lines: LogLine[] = [];
+
 const logger = createLogger("api-test", {
   level: "debug",
   destination: new Writable({
@@ -27,13 +31,17 @@ const logger = createLogger("api-test", {
 });
 
 let pool: Pool;
+
 let app: ReturnType<typeof buildApp>;
+
 const run = randomUUID().slice(0, 8);
+
 const headers = (id: string) => ({ "x-test-user": id });
 
 async function user() {
   return createUserStore(pool).resolve({ issuer: "http://audits.test", subject: randomUUID() });
 }
+
 async function org(userId: string, suffix: string) {
   const res = await app.inject({
     method: "POST",
@@ -41,9 +49,12 @@ async function org(userId: string, suffix: string) {
     headers: headers(userId),
     payload: { name: suffix, slug: `audit-${suffix}-${run}` },
   });
+
   expect(res.statusCode).toBe(201);
-  return res.json() as { id: string };
+
+  return res.json<{ id: string }>();
 }
+
 const get = (userId: string, orgId: string, query = "") =>
   app.inject({
     method: "GET",
@@ -70,9 +81,11 @@ beforeAll(async () => {
     trustedProxies: false,
     ready: async () => true,
     authenticate: async (request) => {
-      const id = request.headers["x-test-user" as "authorization"];
-      if (typeof id !== "string") throw unauthenticated("missing_token");
+      const id = testUserId(request.headers);
+
+      if (!id) throw unauthenticated("missing_token");
       const { rows } = await pool.query("SELECT issuer, subject FROM users WHERE id = $1", [id]);
+
       return users.resolve(rows[0]);
     },
   });
@@ -80,6 +93,7 @@ beforeAll(async () => {
     throw new Error("internal details must not reach the sanitized event");
   });
 });
+
 afterAll(async () => {
   await app.close();
   await pool.end();
@@ -97,6 +111,7 @@ describe("audit history", () => {
       member.id,
     ]);
     const timestamp = "2026-01-01T00:00:00.000Z";
+
     for (const action of ["first", "second", "third"]) {
       await pool.query(
         `INSERT INTO audit_events (org_id, actor_user_id, action, target_type, target_id, metadata, created_at)
@@ -104,19 +119,23 @@ describe("audit history", () => {
         [own.id, admin.id, action, randomUUID(), timestamp],
       );
     }
+
     const first = await get(
       admin.id,
       own.id,
       "?limit=2&from=2025-12-31T00%3A00%3A00Z&to=2026-01-02T00%3A00%3A00Z",
     );
+
     expect(first.statusCode).toBe(200);
     expect(first.body).not.toContain("secret.json");
     expect(first.json().items).toHaveLength(2);
+
     const second = await get(
       admin.id,
       own.id,
       `?limit=2&from=2025-12-31T00%3A00%3A00Z&to=2026-01-02T00%3A00%3A00Z&cursor=${encodeURIComponent(first.json().nextCursor)}`,
     );
+
     expect(second.json().items).toHaveLength(1);
     expect(
       new Set(
@@ -133,6 +152,7 @@ describe("audit history", () => {
       (await get(admin.id, own.id, "?from=2026-01-01T00%3A00%3A00Z&to=2026-01-01T00%3A00%3A00.1Z"))
         .statusCode,
     ).toBe(200);
+
     for (const query of [
       "?from=nope",
       "?from=2026-01-01T00%3A00%3A00.9Z&to=2026-01-01T00%3A00%3A00Z",
@@ -143,6 +163,7 @@ describe("audit history", () => {
     ]) {
       expect((await get(admin.id, own.id, query)).statusCode).toBe(400);
     }
+
     expect(
       (await get(admin.id, own.id, `?cursor=${encodeURIComponent(first.json().nextCursor)}`))
         .statusCode,
@@ -153,12 +174,14 @@ describe("audit history", () => {
     const admin = await user();
     const own = await org(admin.id, "failure");
     lines.length = 0;
+
     const failed = await app.inject({
       method: "POST",
       url: `/v1/orgs/${own.id}/projects`,
       headers: { ...headers(admin.id), "x-forwarded-for": "203.0.113.7" },
       payload: { name: "bad", slug: "Bad" },
     });
+
     expect(failed.statusCode).toBe(400);
     const events = await get(admin.id, own.id, "?result=failed&action=project.create");
     expect(events.json().items).toMatchObject([
@@ -182,6 +205,7 @@ describe("audit history", () => {
     await pool.query(
       "CREATE TRIGGER fail_failed_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION fail_failed_audit()",
     );
+
     try {
       const unavailable = await app.inject({
         method: "POST",
@@ -189,11 +213,13 @@ describe("audit history", () => {
         headers: headers(admin.id),
         payload: { name: "still bad", slug: "Bad" },
       });
+
       expect(unavailable.statusCode).toBe(400);
     } finally {
       await pool.query("DROP TRIGGER fail_failed_audit ON audit_events");
       await pool.query("DROP FUNCTION fail_failed_audit()");
     }
+
     expect(lines.some((line) => line.message === "tenant_audit_failure_recording_failed")).toBe(
       true,
     );
@@ -202,11 +228,13 @@ describe("audit history", () => {
   it("records a rejected self-leave as member.left, including for the last admin", async () => {
     const admin = await user();
     const own = await org(admin.id, "last-admin");
+
     const rejected = await app.inject({
       method: "DELETE",
       url: `/v1/orgs/${own.id}/members/${admin.id}`,
       headers: headers(admin.id),
     });
+
     expect(rejected.statusCode).toBe(409);
 
     const events = await get(admin.id, own.id, "?result=failed&action=member.left");
@@ -227,6 +255,7 @@ describe("audit history", () => {
       own.id,
       member.id,
     ]);
+
     const check = async (
       status: number,
       route: string,

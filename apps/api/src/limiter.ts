@@ -11,12 +11,13 @@ export interface FailureLimiter {
  */
 export function createFailureLimiter(
   redis: Redis,
-  options: { limit: number; windowSeconds: number; onError: (err: unknown) => void },
+  options: { limit: number; windowSeconds: number; onError: (cause: unknown) => void },
 ): FailureLimiter {
   return {
     async recordFailure(key) {
       try {
         const redisKey = `authfail:${key}`;
+
         // One atomic MULTI so a crash can't leave a counter without a TTL (a permanent block).
         const results = await redis
           .multi()
@@ -24,14 +25,17 @@ export function createFailureLimiter(
           .incr(redisKey)
           .ttl(redisKey)
           .exec();
+
         const count = Number(results?.[1]?.[1]);
         const ttl = Number(results?.[2]?.[1]);
+
         return {
           limited: count > options.limit,
           retryAfterSeconds: ttl > 0 ? ttl : options.windowSeconds,
         };
       } catch (err) {
         options.onError(err);
+
         return { limited: false, retryAfterSeconds: 0 };
       }
     },

@@ -21,6 +21,7 @@ const OPTIONS: Record<Theme, { label: string; Icon: typeof Sun }> = {
 
 function readCookieTheme(): Theme {
   const entry = document.cookie.split("; ").find((c) => c.startsWith(`${THEME_COOKIE}=`));
+
   return parseTheme(entry?.slice(THEME_COOKIE.length + 1));
 }
 
@@ -30,6 +31,7 @@ function applyTheme(theme: Theme) {
   const root = document.documentElement;
   root.classList.remove("light", "dark");
   const cls = themeClass(theme);
+
   if (cls) root.classList.add(cls);
 }
 
@@ -38,6 +40,7 @@ export function ThemeToggle() {
   const [theme, setTheme] = useState<Theme>(() =>
     typeof document === "undefined" ? "system" : readCookieTheme(),
   );
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -57,6 +60,7 @@ export function ThemeToggle() {
         >
           {THEMES.map((option) => {
             const { label, Icon } = OPTIONS[option];
+
             return (
               <DropdownMenuRadioItem key={option} value={option}>
                 <Icon aria-hidden className="size-4" />

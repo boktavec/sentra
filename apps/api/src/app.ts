@@ -1,4 +1,10 @@
-import Fastify, { type FastifyInstance } from "fastify";
+import { Ajv } from "ajv";
+import Fastify, {
+  type FastifyError,
+  type FastifyInstance,
+  type FastifyReply,
+  type FastifyRequest,
+} from "fastify";
 import {
   AppError,
   requestLogger,
@@ -94,10 +100,12 @@ export function buildApp({
     registerMemberRoutes(protectedRoutes, { logger, orgs, members });
     registerProjectRoutes(protectedRoutes, { logger, orgs, projects });
     registerFindingsRoutes(protectedRoutes, { logger, orgs, findings });
+
     if (investigations)
       registerInvestigationRoutes(protectedRoutes, { logger, orgs, investigations });
     registerSbomRoutes(protectedRoutes, { logger, orgs, sbom, maxBytes: sbomMaxBytes ?? 0 });
     registerInvitationRoutes(protectedRoutes, { logger, orgs, invitations });
+
     if (audits) registerAuditRoutes(protectedRoutes, { logger, orgs, audits });
   });
 
@@ -109,17 +117,19 @@ export function installRequestContext(app: FastifyInstance, logger: Logger) {
   app.decorateRequest("ctx");
   app.addHook("onRequest", async (request, reply) => {
     const incoming = request.headers["x-correlation-id"];
-    const correlationId = resolveCorrelationId(typeof incoming === "string" ? incoming : undefined);
+    const correlationId = resolveCorrelationId(Array.isArray(incoming) ? undefined : incoming);
     request.ctx = { correlationId, log: requestLogger(logger, correlationId) };
     reply.header("x-correlation-id", correlationId);
   });
 
-  app.setErrorHandler((err, request, reply) => {
+  app.setErrorHandler<FastifyError>((err, request, reply) => {
     const { correlationId, log } = request.ctx;
     const safeError = err instanceof AppError ? err : fastifyClientError(err);
     request.failureCode = safeError instanceof AppError ? safeError.code : "internal_error";
     const response = toErrorResponse(safeError, correlationId);
+
     if (response.status >= 500) log.error({ err }, "request_failed");
+
     return reply.status(response.status).headers(response.headers).send(response.body);
   });
   app.setNotFoundHandler(() => {
@@ -127,66 +137,83 @@ export function installRequestContext(app: FastifyInstance, logger: Logger) {
   });
 }
 
-const FAILURE_ACTIONS: Record<
-  string,
-  {
-    action: string;
-    targetType: "user" | "invitation" | "project" | "sbom_import" | "investigation";
-  }
-> = {
-  "POST /v1/orgs/:orgId/projects": { action: "project.create", targetType: "project" },
-  "POST /v1/orgs/:orgId/projects/:slug/sboms": {
-    action: "sbom.upload_initiated",
-    targetType: "sbom_import",
-  },
-  "POST /v1/orgs/:orgId/projects/:slug/sboms/:importId/complete": {
-    action: "sbom.upload_completed",
-    targetType: "sbom_import",
-  },
-  "PATCH /v1/orgs/:orgId/members/:userId": { action: "member.role_changed", targetType: "user" },
-  "DELETE /v1/orgs/:orgId/members/:userId": { action: "member.removed", targetType: "user" },
-  "POST /v1/orgs/:orgId/invitations": { action: "invitation.create", targetType: "invitation" },
-  "DELETE /v1/orgs/:orgId/invitations/:invitationId": {
-    action: "invitation.revoked",
-    targetType: "invitation",
-  },
-  "POST /v1/orgs/:orgId/projects/:slug/findings/:findingId/investigations": {
-    action: "investigation.create",
-    targetType: "investigation",
-  },
-};
+interface FailureAction {
+  action: string;
+  targetType: "user" | "invitation" | "project" | "sbom_import" | "investigation";
+}
 
-function failureAction(request: import("fastify").FastifyRequest, route: string) {
-  const action = FAILURE_ACTIONS[`${request.method} ${route}`];
+const FAILURE_ACTIONS = new Map<string, FailureAction>([
+  ["POST /v1/orgs/:orgId/projects", { action: "project.create", targetType: "project" }],
+  [
+    "POST /v1/orgs/:orgId/projects/:slug/sboms",
+    { action: "sbom.upload_initiated", targetType: "sbom_import" },
+  ],
+  [
+    "POST /v1/orgs/:orgId/projects/:slug/sboms/:importId/complete",
+    { action: "sbom.upload_completed", targetType: "sbom_import" },
+  ],
+  ["PATCH /v1/orgs/:orgId/members/:userId", { action: "member.role_changed", targetType: "user" }],
+  ["DELETE /v1/orgs/:orgId/members/:userId", { action: "member.removed", targetType: "user" }],
+  ["POST /v1/orgs/:orgId/invitations", { action: "invitation.create", targetType: "invitation" }],
+  [
+    "DELETE /v1/orgs/:orgId/invitations/:invitationId",
+    { action: "invitation.revoked", targetType: "invitation" },
+  ],
+  [
+    "POST /v1/orgs/:orgId/projects/:slug/findings/:findingId/investigations",
+    { action: "investigation.create", targetType: "investigation" },
+  ],
+]);
+
+interface FailureLog {
+  status: number;
+  route: string;
+  requestIp: string;
+  failureCode: string;
+  userId?: string;
+  orgId?: string;
+}
+
+/** Route params are untyped at this hook; only the member routes carry a `userId`. */
+const hasUserId = new Ajv({ strict: true }).compile<{ userId: string }>({
+  type: "object",
+  required: ["userId"],
+  properties: { userId: { type: "string" } },
+});
+
+function failureAction(request: FastifyRequest, route: string) {
+  const action = FAILURE_ACTIONS.get(`${request.method} ${route}`);
+
   if (
     action?.action === "member.removed" &&
-    request.user?.id === (request.params as { userId?: string }).userId
+    hasUserId(request.params) &&
+    request.user?.id === request.params.userId
   ) {
     return { ...action, action: "member.left" };
   }
+
   return action;
 }
 
 function failedResponse(audits: AuditStore | undefined) {
-  return async (
-    request: import("fastify").FastifyRequest,
-    reply: import("fastify").FastifyReply,
-  ) => {
+  return async (request: FastifyRequest, reply: FastifyReply) => {
     if (reply.statusCode < 400) return;
     const route = request.routeOptions.url ?? "unmatched";
     const failureCode = request.failureCode ?? "internal_error";
-    request.ctx.log.warn(
-      {
-        status: reply.statusCode,
-        route,
-        requestIp: request.ip,
-        failureCode,
-        ...(request.user ? { userId: request.user.id } : {}),
-        ...(request.tenant ? { orgId: request.tenant.orgId } : {}),
-      },
-      "api_request_failed",
-    );
+
+    const fields: FailureLog = {
+      status: reply.statusCode,
+      route,
+      requestIp: request.ip,
+      failureCode,
+    };
+
+    if (request.user) fields.userId = request.user.id;
+
+    if (request.tenant) fields.orgId = request.tenant.orgId;
+    request.ctx.log.warn(fields, "api_request_failed");
     const action = failureAction(request, route);
+
     if (action && request.tenant) {
       await audits?.recordFailure({
         tenant: request.tenant,
@@ -200,8 +227,9 @@ function failedResponse(audits: AuditStore | undefined) {
 }
 
 /** Fastify's own 4xx errors (bad JSON, etc.) keep their status but get a generic message. */
-function fastifyClientError(err: unknown): unknown {
-  const status = (err as { statusCode?: number }).statusCode;
+function fastifyClientError(err: FastifyError): Error {
+  const status = err.statusCode;
+
   return status && status >= 400 && status < 500
     ? new AppError("bad_request", status, "Bad request")
     : err;

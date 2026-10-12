@@ -10,6 +10,7 @@ import { switcherItems, type Named } from "@/lib/shell";
 async function ProjectSwitcher({ org, project }: { org: Org; project: Named }) {
   const projects = await listProjects(org.id);
   const base = `/orgs/${encodeURIComponent(org.slug)}`;
+
   return (
     <EntitySwitcher
       noun="project"
@@ -29,8 +30,10 @@ async function ProjectSwitcher({ org, project }: { org: Org; project: Named }) {
 /** The org and project the API answered for; either is null when its lookup failed. */
 async function lookupScope(orgSlug: string, projectSlug: string) {
   const orgLookup = await fetchOrg(orgSlug);
+
   if (!orgLookup.ok) return { org: null, project: null };
   const projectLookup = await fetchProject(orgLookup.data.id, projectSlug);
+
   return { org: orgLookup.data, project: projectLookup.ok ? projectLookup.data : null };
 }
 

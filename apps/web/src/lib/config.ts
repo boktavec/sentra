@@ -1,12 +1,15 @@
 const required = (name: string): string => {
   const value = process.env[name];
+
   if (!value) throw new Error(`Missing required env var ${name}`);
+
   return value;
 };
 
 /** Read lazily so `next build` doesn't need runtime secrets. */
 export const config = () => {
   const webUrl = process.env["WEB_URL"] ?? "http://localhost:3000";
+
   return {
     webUrl,
     apiUrl: process.env["API_URL"] ?? "http://localhost:4000",

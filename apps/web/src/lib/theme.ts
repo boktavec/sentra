@@ -1,7 +1,9 @@
 export const THEME_COOKIE = "sentra-theme";
+
 export const THEME_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 
 export const THEMES = ["light", "dark", "system"] as const;
+
 export type Theme = (typeof THEMES)[number];
 
 /** The cookie is user-controlled, so only allow-listed values are ever used; anything else is `system`. */

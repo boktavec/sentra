@@ -4,6 +4,7 @@ import { Redis } from "ioredis";
 import { PASSWORD, register, verificationCode, screenshotPath } from "./helpers";
 
 const WEB = "http://localhost:3000";
+
 const LOGIN_URL = /localhost:8180\/ui\/v2\/login\/loginname/;
 
 const sessionCookie = async (context: BrowserContext) =>
@@ -31,6 +32,7 @@ async function verifyAndReadUserId(page: Page, email: string): Promise<string> {
   const userId = await page.getByTestId("user-id").innerText();
   expect(userId).toMatch(/^[0-9a-f-]{36}$/);
   await page.screenshot({ path: screenshotPath("SENTRA-1-user-sign-in", "3-signed-in.png") });
+
   return userId;
 }
 
@@ -40,6 +42,7 @@ async function expectOpaqueSessionCookie(page: Page, context: BrowserContext) {
   expect(session.httpOnly).toBe(true);
   expect(session.value).not.toContain(".");
   expect(await page.evaluate(() => document.cookie)).not.toContain("sentra_session");
+
   return session;
 }
 
@@ -52,6 +55,7 @@ async function expectRefreshOnExpiry(page: Page, redis: Redis, key: string, user
   const refreshed = JSON.parse((await redis.get(key))!);
   expect(refreshed.accessToken).not.toBe(before.accessToken);
   expect(refreshed.accessExpiresAt).toBeGreaterThan(Date.now() / 1000);
+
   return refreshed;
 }
 
@@ -64,7 +68,7 @@ async function expectRejectedRefreshRenewsSession(
   context: BrowserContext,
   redis: Redis,
   key: string,
-  refreshed: object,
+  refreshed: Record<string, string | number>,
   userId: string,
   oldCookie: string,
 ) {

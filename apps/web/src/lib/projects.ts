@@ -30,15 +30,20 @@ const lookupProject = cache((orgId: string, slug: string) =>
 /** A missing project and one in an org the user is not in both return 404 and render not-found. */
 export async function fetchProject(orgId: string, slug: string) {
   const project = await lookupProject(orgId, slug);
+
   if (!project.ok && project.status === 404) notFound();
+
   return project;
 }
 
 /** The org and project a page belongs to, or the correlation ID of the failure to show instead. */
 export async function fetchProjectScope(orgSlug: string, projectSlug: string) {
   const org = await fetchOrg(orgSlug);
+
   if (!org.ok) return { ok: false as const, correlationId: org.correlationId };
   const project = await fetchProject(org.data.id, projectSlug);
+
   if (!project.ok) return { ok: false as const, correlationId: project.correlationId };
+
   return { ok: true as const, org: org.data, project: project.data };
 }

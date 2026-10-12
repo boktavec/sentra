@@ -8,6 +8,7 @@ import {
   toPriority,
 } from "./finding-sql.ts";
 import type { FindingRow } from "./finding-sql.ts";
+import { fieldsOf, isString, type Json } from "./json.ts";
 import { isUuid } from "./org-input.ts";
 import type { TenantContext } from "./orgs.ts";
 import { findProject } from "./projects.ts";
@@ -15,8 +16,11 @@ import { findProject } from "./projects.ts";
 // Advisory content is third-party controlled, so every part of the response is bounded and says when it
 // was cut (see the SENTRA-16 spec, D5). The values are assumptions to validate against real data.
 const MAX_MEMBERS = 50;
+
 const MAX_REFS = 50;
+
 const MAX_DETAILS_BYTES = 64 * 1024;
+
 const MAX_VERSIONS = 200;
 
 const missing = () => new AppError("not_found", 404, "Not found", { reason: "finding_not_found" });
@@ -107,7 +111,7 @@ interface MemberRow {
   withdrawn_at: Date | null;
   cvss_score: string | null;
   cvss_version: string | null;
-  refs: unknown[];
+  refs: Json[];
   refs_truncated: boolean;
 }
 
@@ -138,18 +142,22 @@ interface KevRow {
 function capBytes(text: string | null): string | null {
   if (text === null) return null;
   const bytes = Buffer.from(text, "utf8");
+
   if (bytes.length <= MAX_DETAILS_BYTES) return text;
   let end = MAX_DETAILS_BYTES;
+
   while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end--;
+
   return bytes.subarray(0, end).toString("utf8");
 }
 
 /** Refs are copied from the source unvalidated, so each part may be missing or not a string. */
-function toRef(ref: unknown) {
-  const { type, url } = (ref ?? {}) as { type?: unknown; url?: unknown };
+function toRef(ref: Json) {
+  const { type, url } = fieldsOf(ref);
+
   return {
-    type: typeof type === "string" ? type : null,
-    url: typeof url === "string" ? url : null,
+    type: isString(type) ? type : null,
+    url: isString(url) ? url : null,
   };
 }
 
@@ -157,6 +165,7 @@ const iso = (date: Date | null) => date?.toISOString() ?? null;
 
 function toMember(row: MemberRow, affected: AffectedRow[]) {
   const cvssScore = row.cvss_score === null ? null : Number(row.cvss_score);
+
   return {
     id: row.id,
     status: row.status,
@@ -207,6 +216,7 @@ export async function getFindingDetail(
 ) {
   if (!isUuid(findingId)) throw missing();
   const projectId = await findProject(pool, tenant, slug);
+
   const scope = await pool.query<{ purl: string; gid: string }>(
     `SELECT f.purl, COALESCE(m.group_id, f.vulnerability_id) AS gid
      FROM findings f
@@ -214,10 +224,13 @@ export async function getFindingDetail(
      WHERE f.org_id = $1 AND f.project_id = $2 AND f.id = $3`,
     [tenant.orgId, projectId, findingId],
   );
+
   const group = scope.rows[0];
+
   if (!group) throw missing();
 
   const groupParams = [tenant.orgId, projectId, group.purl, group.gid];
+
   const [header, members] = await Promise.all([
     pool.query<FindingRow>(
       findingSql({ baseWhere: GROUP_FINDINGS, where: [], order: "s.id", limit: "1" }),
@@ -225,16 +238,20 @@ export async function getFindingDetail(
     ),
     pool.query<MemberRow>(MEMBERS_SQL, [...groupParams, findingId]),
   ]);
+
   const lead = header.rows[0];
+
   if (!lead || members.rows.length === 0) throw missing();
 
   const memberIds = members.rows.map((m) => m.id);
+
   const [affected, kev] = await Promise.all([
     pool.query<AffectedRow>(AFFECTED_SQL, [tenant.orgId, projectId, memberIds]),
     lead.kev_status === "listed"
       ? pool.query<KevRow>(KEV_SQL, [group.gid])
       : Promise.resolve({ rows: null }),
   ]);
+
   const cvssScore = lead.cvss_score === null ? null : Number(lead.cvss_score);
 
   return {

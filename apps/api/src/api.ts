@@ -43,7 +43,9 @@ function startEmailSender(smtpUrl: string, config: Config, pool: Pool, logger: L
     leaseSeconds: 60,
     backoffBaseSeconds: 30,
   });
+
   sender.start(config.emailPollSeconds * 1000);
+
   return sender;
 }
 
@@ -53,11 +55,13 @@ function startSbomRelay(brokers: string[], config: Config, pool: Pool, logger: L
     bootstrapBrokers: brokers,
     serializers: stringSerializers,
   });
+
   const publisher: EventPublisher = {
     async publish(topic, key, value) {
       await producer.send({ messages: [{ topic, key, value }] });
     },
   };
+
   const relay = createSbomRelay(pool, {
     publisher,
     logger,
@@ -65,7 +69,9 @@ function startSbomRelay(brokers: string[], config: Config, pool: Pool, logger: L
     leaseSeconds: 60,
     backoffBaseSeconds: 5,
   });
+
   relay.start(config.sbomRelayPollSeconds * 1000);
+
   return { relay, close: () => producer.close(true) };
 }
 
@@ -84,6 +90,7 @@ export async function createApi(config: Config, logger: Logger) {
       logger.warn({ err: String(err) }, "jwks_refresh_failed");
     },
   });
+
   await jwks.warm();
 
   const limiter = createFailureLimiter(redis, {
@@ -102,7 +109,9 @@ export async function createApi(config: Config, logger: Logger) {
   });
 
   const storage = config.sbomStorage ? createSbomStorage(config.sbomStorage) : undefined;
+
   if (storage && config.sbomDevBootstrap) await storage.ensureDevBucket(config.webUrl);
+
   const sbom = storage
     ? createSbomStore(pool, {
         storage,
@@ -113,6 +122,7 @@ export async function createApi(config: Config, logger: Logger) {
         },
       })
     : undefined;
+
   if (!sbom) logger.warn({}, "sbom_disabled_no_s3_endpoint");
 
   const app = buildApp({
@@ -142,8 +152,10 @@ export async function createApi(config: Config, logger: Logger) {
     trustedProxies: config.trustedProxies,
     ready: async () => {
       if (!jwks.ready) return false;
+
       try {
         await pool.query("SELECT 1");
+
         return true;
       } catch {
         return false;
@@ -165,6 +177,7 @@ export async function createApi(config: Config, logger: Logger) {
   const sender = config.smtpUrl
     ? startEmailSender(config.smtpUrl, config, pool, logger)
     : undefined;
+
   if (!sender) logger.warn({}, "email_disabled_no_smtp_url");
 
   // ponytail: in-process relay and sweep, safe across replicas (SKIP LOCKED); move to a worker if load grows.
@@ -172,10 +185,13 @@ export async function createApi(config: Config, logger: Logger) {
     await ensureDevTopic(config.kafkaBootstrap, "sbom.uploaded");
     await ensureDevTopic(config.kafkaBootstrap, "investigation.requested");
   }
+
   const relay = config.kafkaBootstrap
     ? startSbomRelay(config.kafkaBootstrap, config, pool, logger)
     : undefined;
+
   if (!relay) logger.warn({}, "sbom_relay_disabled_no_kafka_bootstrap");
+
   const investigationRelay = config.kafkaBootstrap
     ? (() => {
         const producer = new Producer({
@@ -183,29 +199,35 @@ export async function createApi(config: Config, logger: Logger) {
           bootstrapBrokers: config.kafkaBootstrap!,
           serializers: stringSerializers,
         });
+
         const publisher: EventPublisher = {
           async publish(topic, key, value) {
             await producer.send({ messages: [{ topic, key, value }] });
           },
         };
+
         const poller = createInvestigationRelay(pool, {
           publisher,
           logger,
           leaseSeconds: 60,
           backoffBaseSeconds: 5,
         });
+
         poller.start(config.investigationRelayPollSeconds * 1000);
+
         return { poller, close: () => producer.close(true) };
       })()
     : undefined;
+
   const sweep = sbom
     ? setInterval(() => {
-        sbom.expirePending().catch((err: unknown) => {
+        sbom.expirePending().catch((err) => {
           metrics.inc("sbom_sweep_errors_total");
           logger.error({ err: String(err) }, "sbom_sweep_error");
         });
       }, config.sbomSweepSeconds * 1000)
     : undefined;
+
   sweep?.unref();
 
   return {

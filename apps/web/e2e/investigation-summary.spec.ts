@@ -15,15 +15,19 @@ interface Seeded {
  */
 async function seed(orgSlug: string): Promise<Seeded> {
   const databaseUrl = process.env["DATABASE_URL"];
+
   if (!databaseUrl) throw new Error("DATABASE_URL is required for the summary browser test");
   const pool = new Pool({ connectionString: databaseUrl });
+
   try {
     const { rows: scope } = await pool.query(
       `SELECT o.id AS org_id, p.id AS project_id, o.created_by AS user_id
        FROM organizations o JOIN projects p ON p.org_id = o.id WHERE o.slug = $1 AND p.slug = 'web-app'`,
       [orgSlug],
     );
+
     const { org_id: orgId, project_id: projectId, user_id: userId } = scope[0];
+
     const importId = (
       await pool.query(
         `INSERT INTO sbom_imports (org_id, project_id, created_by, filename, object_key, expires_at)
@@ -31,6 +35,7 @@ async function seed(orgSlug: string): Promise<Seeded> {
         [orgId, projectId, userId, `summary/${orgSlug}`],
       )
     ).rows[0].id;
+
     const advisoryId = (
       await pool.query(
         `INSERT INTO vulnerabilities (source, source_id, modified_at, source_artifact_sha256, source_entry,
@@ -39,6 +44,7 @@ async function seed(orgSlug: string): Promise<Seeded> {
         [`SUMMARY-${orgSlug}`, "c".repeat(64)],
       )
     ).rows[0].id;
+
     const finding = (purl: string, version: string) =>
       pool
         .query(
@@ -49,6 +55,7 @@ async function seed(orgSlug: string): Promise<Seeded> {
           [orgId, projectId, advisoryId, purl, version, importId],
         )
         .then((r: { rows: { id: string }[] }) => r.rows[0]!.id);
+
     const findingId = await finding(`pkg:pypi/summary-${orgSlug}@1.0`, "1.0");
     const relatedId = await finding(`pkg:pypi/summary-${orgSlug}@2.0`, "2.0");
 
@@ -61,6 +68,7 @@ async function seed(orgSlug: string): Promise<Seeded> {
           [orgId, projectId, findingId, userId, promptVersion, draft],
         )
         .then((r: { rows: { id: string }[] }) => r.rows[0]!.id);
+
     await run(2, "legacy plain-text draft");
     const withResult = await run(3, null);
 
@@ -134,11 +142,13 @@ async function seed(orgSlug: string): Promise<Seeded> {
       promptVersion: 3,
       generatedAt: new Date().toISOString(),
     };
+
     await pool.query(
       `INSERT INTO investigation_results (investigation_id, org_id, project_id, attempt, schema_version, result)
        VALUES ($1, $2, $3, 1, 1, $4)`,
       [withResult, orgId, projectId, result],
     );
+
     return { findingId, relatedId };
   } finally {
     await pool.end();
@@ -193,6 +203,7 @@ test("a member reads the validated summary of a completed run, with links to its
   const link = page
     .getByTestId("result-claims")
     .getByRole("link", { name: `pkg:pypi/summary-${orgSlug}@2.0` });
+
   await expect(link).toHaveAttribute(
     "href",
     `/orgs/${orgSlug}/projects/web-app/findings/${relatedId}`,

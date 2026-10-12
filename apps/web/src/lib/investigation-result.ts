@@ -13,6 +13,7 @@ export const GAP_TEXT = {
   related_findings_not_checked: "Related findings in this project were not checked.",
   occurrences_not_checked: "Other versions of this dependency in the SBOM were not checked.",
 } as const;
+
 export type GapCode = keyof typeof GAP_TEXT;
 
 export interface ResultTarget {
@@ -79,18 +80,25 @@ export interface EvidenceLink {
 
 /** What a claim's `call:<n>` references point at, as links and labels. A reference the API did not resolve is dropped. */
 export function evidenceLinks(
-  result: InvestigationResult["result"],
+  result: Pick<InvestigationResult["result"], "evidence">,
   refs: string[],
 ): EvidenceLink[] {
   const byRef = new Map(result.evidence.map((e) => [e.ref, e]));
+
   return refs.flatMap((ref) => {
     const entry = byRef.get(ref);
+
     if (!entry) return [];
+
     if (entry.kind === "advisory") return [{ label: `Advisory ${entry.advisoryId}` }];
+
     // A purl already carries its version.
-    return (entry.targets ?? []).map(({ findingId, purl }) => ({
-      label: purl,
-      ...(findingId ? { findingId } : {}),
-    }));
+    return (entry.targets ?? []).map(({ findingId, purl }) => {
+      const link: EvidenceLink = { label: purl };
+
+      if (findingId) link.findingId = findingId;
+
+      return link;
+    });
   });
 }

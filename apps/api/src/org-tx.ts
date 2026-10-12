@@ -5,6 +5,7 @@ import type { Role, TenantContext } from "./orgs.ts";
 
 const forbidden = () => {
   metrics.inc("role_denied_total");
+
   return new AppError("forbidden", 403, "Forbidden", { reason: "role_denied" });
 };
 
@@ -25,11 +26,15 @@ export async function assertStillAdmin(client: PoolClient, tenant: TenantContext
     "SELECT role FROM memberships WHERE org_id = $1 AND user_id = $2",
     [tenant.orgId, tenant.userId],
   );
+
   if (!rows[0]) {
     throw new AppError("not_found", 404, "Not found", { reason: "tenant_access_denied" });
   }
+
   if (rows[0].role !== "admin") throw forbidden();
 }
+
+export type AuditMetadata = Record<string, string>;
 
 interface AuditEvent {
   orgId: string;
@@ -38,7 +43,7 @@ interface AuditEvent {
   action: string;
   targetType: "organization" | "user" | "invitation" | "project" | "sbom_import" | "investigation";
   targetId: string | null;
-  metadata?: Record<string, string>;
+  metadata?: AuditMetadata;
 }
 
 /** Runs inside the caller's transaction, so the event commits or rolls back with the change. */

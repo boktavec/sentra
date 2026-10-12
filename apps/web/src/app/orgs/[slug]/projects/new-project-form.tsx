@@ -24,6 +24,7 @@ export function NewProjectForm({ orgId, orgSlug }: { orgId: string; orgSlug: str
             maxLength={80}
             onChange={(e) => {
               setName(e.target.value);
+
               if (!slugEdited) setSlug(slugify(e.target.value));
             }}
           />

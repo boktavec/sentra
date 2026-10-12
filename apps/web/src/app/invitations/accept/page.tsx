@@ -13,6 +13,7 @@ export default async function AcceptPage({
   searchParams: Promise<{ token?: string }>;
 }) {
   const { token } = await searchParams;
+
   return (
     <CenteredLayout>
       <Card>

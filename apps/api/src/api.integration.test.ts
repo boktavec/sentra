@@ -4,10 +4,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createLogger } from "@sentra/ts-platform";
 import { createApi } from "./api.ts";
 import { loadConfig, type Config } from "./config.ts";
+import type { LogLine } from "./test-support.ts";
 import { createUserStore } from "./users.ts";
 
 const config: Config = { ...loadConfig(), authFailLimit: 3, authFailWindowSeconds: 60 };
-const logLines: Record<string, unknown>[] = [];
+
+const logLines: LogLine[] = [];
+
 const logger = createLogger("api-test", {
   level: "info",
   destination: new Writable({
@@ -27,11 +30,16 @@ async function realToken(): Promise<string> {
     },
     body: new URLSearchParams({ grant_type: "client_credentials", scope: "openid" }),
   });
+
   expect(res.status).toBe(200);
-  return ((await res.json()) as { access_token: string }).access_token;
+
+  const body: { access_token: string } = await res.json();
+
+  return body.access_token;
 }
 
 let api: Awaited<ReturnType<typeof createApi>>;
+
 let token: string;
 
 const get = (headers: Record<string, string> = {}) =>
@@ -41,9 +49,12 @@ beforeAll(async () => {
   api = await createApi(config, logger);
   token = await realToken();
 });
+
 afterAll(() => api.close());
+
 beforeEach(async () => {
   const keys = await api.redis.keys("authfail:*");
+
   if (keys.length) await api.redis.del(...keys);
   logLines.length = 0;
 });
@@ -71,6 +82,7 @@ describe("authentication against real Zitadel, Redis and Postgres", () => {
       { authorization: "Basic abc" },
       { authorization: `Bearer ${token}x` },
     ];
+
     for (const headers of attempts) {
       const res = await get(headers);
       expect(res.statusCode).toBe(401);
@@ -82,7 +94,8 @@ describe("authentication against real Zitadel, Redis and Postgres", () => {
         correlationId: res.headers["x-correlation-id"],
       });
     }
-    const reasons = logLines.filter((l) => l["message"] === "auth_failure").map((l) => l["reason"]);
+
+    const reasons = logLines.flatMap((l) => (l.message === "auth_failure" ? [l.reason] : []));
     expect(reasons).toEqual(["missing_token", "missing_token", "invalid_signature"]);
   });
 
@@ -97,24 +110,29 @@ describe("authentication against real Zitadel, Redis and Postgres", () => {
     const stores = Array.from({ length: 20 }, () => createUserStore(api.pool)); // empty caches: all hit the DB
     const users = await Promise.all(stores.map((s) => s.resolve(claims)));
     expect(new Set(users.map((u) => u.id)).size).toBe(1);
+
     const { rows } = await api.pool.query(
       "SELECT count(*)::int AS n FROM users WHERE subject = $1",
       [claims.subject],
     );
+
     expect(rows[0].n).toBe(1);
   });
 
   it("rate limits repeated auth failures per IP, ignoring a spoofed X-Forwarded-For", async () => {
     const statuses: number[] = [];
-    let retryAfter: string | undefined;
+    let retryAfter: number | string | string[] | undefined;
+
     for (let i = 0; i < 5; i++) {
       const res = await get({
         authorization: "Bearer bad.token.value",
         "x-forwarded-for": `10.0.0.${i}`,
       });
+
       statuses.push(res.statusCode);
-      retryAfter = res.headers["retry-after"] as string | undefined;
+      retryAfter = res.headers["retry-after"];
     }
+
     expect(statuses).toEqual([401, 401, 401, 429, 429]);
     expect(Number(retryAfter)).toBeGreaterThan(0);
     expect(Number(retryAfter)).toBeLessThanOrEqual(60);
@@ -130,11 +148,14 @@ describe("authentication against real Zitadel, Redis and Postgres", () => {
       url: "/healthz",
       headers: { "x-correlation-id": "abc-123" },
     });
+
     expect(kept.headers["x-correlation-id"]).toBe("abc-123");
+
     const replaced = await api.app.inject({
       url: "/healthz",
       headers: { "x-correlation-id": 'bad id"' },
     });
+
     expect(replaced.headers["x-correlation-id"]).toMatch(/^[0-9a-f-]{36}$/);
   });
 
@@ -148,20 +169,24 @@ describe("authentication against real Zitadel, Redis and Postgres", () => {
 describe("when Redis is unavailable", () => {
   it("fails open: auth still returns 401 / 200, never 429 or 500", async () => {
     const degraded = await createApi({ ...config, redisUrl: "redis://127.0.0.1:1" }, logger);
+
     try {
       for (let i = 0; i < 6; i++) {
         const res = await degraded.app.inject({
           url: "/v1/me",
           headers: { authorization: "Bearer bad.token.value" },
         });
+
         expect(res.statusCode).toBe(401);
       }
+
       const ok = await degraded.app.inject({
         url: "/v1/me",
         headers: { authorization: `Bearer ${token}` },
       });
+
       expect(ok.statusCode).toBe(200);
-      expect(logLines.some((l) => l["message"] === "rate_limiter_unavailable")).toBe(true);
+      expect(logLines.some((l) => l.message === "rate_limiter_unavailable")).toBe(true);
     } finally {
       await degraded.close();
     }

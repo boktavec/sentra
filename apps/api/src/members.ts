@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 import { AppError } from "@sentra/ts-platform";
-import { decodeCursor, encodeCursor } from "./org-input.ts";
+import { decodeCursor, toPage } from "./org-input.ts";
 import { assertStillAdmin, lockOrg, recordAudit } from "./org-tx.ts";
 import { inTransaction, type Role, type TenantContext } from "./orgs.ts";
 
@@ -21,16 +21,21 @@ interface MemberRow {
   created_at: Date;
 }
 
-const MEMBER_SELECT = `SELECT m.user_id, u.name, u.email, m.role, m.created_at
+const MEMBER_SELECT = `SELECT m.user_id, m.user_id AS id, u.name, u.email, m.role, m.created_at
   FROM memberships m JOIN users u ON u.id = m.user_id`;
 
-const toMember = (row: MemberRow, caller: TenantContext): Member => ({
-  userId: row.user_id,
-  name: row.name,
-  role: row.role,
-  joinedAt: row.created_at.toISOString(),
-  ...(caller.role === "admin" ? { email: row.email } : {}),
-});
+function toMember(row: MemberRow, caller: TenantContext): Member {
+  const member: Member = {
+    userId: row.user_id,
+    name: row.name,
+    role: row.role,
+    joinedAt: row.created_at.toISOString(),
+  };
+
+  if (caller.role === "admin") member.email = row.email;
+
+  return member;
+}
 
 const notFound = () => new AppError("not_found", 404, "Not found", { reason: "member_not_found" });
 
@@ -40,6 +45,7 @@ async function assertAdminRemains(client: PoolClient, orgId: string) {
     "SELECT count(*)::int AS n FROM memberships WHERE org_id = $1 AND role = 'admin'",
     [orgId],
   );
+
   if (rows[0]!.n === 0) {
     throw new AppError("last_admin", 409, "An organization needs at least one admin", {
       reason: "last_admin",
@@ -50,9 +56,10 @@ async function assertAdminRemains(client: PoolClient, orgId: string) {
 function listMembers(pool: Pool) {
   return async (tenant: TenantContext, limit: number, cursor?: string) => {
     const after = cursor ? decodeCursor(cursor) : undefined;
+
     // The cursor's second field is a user ID here; `decodeCursor` only checks it is a UUID.
-    const { rows } = await pool.query<MemberRow & { cursor_ts: string }>(
-      `SELECT m.user_id, u.name, u.email, m.role, m.created_at, m.created_at::text AS cursor_ts
+    const { rows } = await pool.query<MemberRow & { id: string; cursor_ts: string }>(
+      `SELECT m.user_id, m.user_id AS id, u.name, u.email, m.role, m.created_at, m.created_at::text AS cursor_ts
        FROM memberships m JOIN users u ON u.id = m.user_id
        WHERE m.org_id = $1
          AND ($2::timestamptz IS NULL OR (m.created_at, m.user_id) > ($2::timestamptz, $3::uuid))
@@ -60,12 +67,8 @@ function listMembers(pool: Pool) {
        LIMIT $4`,
       [tenant.orgId, after?.createdAt ?? null, after?.orgId ?? null, limit + 1],
     );
-    const page = rows.slice(0, limit);
-    const last = page.at(-1);
-    return {
-      items: page.map((row) => toMember(row, tenant)),
-      nextCursor: rows.length > limit && last ? encodeCursor(last.cursor_ts, last.user_id) : null,
-    };
+
+    return toPage(rows, limit, (row) => toMember(row, tenant));
   };
 }
 
@@ -74,6 +77,7 @@ async function loadMember(client: PoolClient, tenant: TenantContext, userId: str
     `${MEMBER_SELECT} WHERE m.org_id = $1 AND m.user_id = $2`,
     [tenant.orgId, userId],
   );
+
   return rows[0];
 }
 
@@ -85,7 +89,9 @@ function setRole(pool: Pool) {
       await assertStillAdmin(client, tenant);
 
       const current = await loadMember(client, tenant, userId);
+
       if (!current) throw notFound();
+
       if (current.role === role) return { member: toMember(current, tenant), changed: false };
 
       await client.query("UPDATE memberships SET role = $3 WHERE org_id = $1 AND user_id = $2", [
@@ -103,6 +109,7 @@ function setRole(pool: Pool) {
         targetId: userId,
         metadata: { from: current.role, to: role },
       });
+
       return { member: toMember({ ...current, role }, tenant), changed: true };
     });
 }
@@ -116,12 +123,14 @@ function removeMember(pool: Pool) {
     inTransaction(pool, async (client) => {
       const leaving = userId === tenant.userId;
       await lockOrg(client, tenant.orgId);
+
       if (!leaving) await assertStillAdmin(client, tenant);
 
       const { rows } = await client.query<{ role: Role }>(
         "DELETE FROM memberships WHERE org_id = $1 AND user_id = $2 RETURNING role",
         [tenant.orgId, userId],
       );
+
       if (!rows[0]) return { removed: false, leaving };
 
       await assertAdminRemains(client, tenant.orgId);
@@ -134,6 +143,7 @@ function removeMember(pool: Pool) {
         targetId: userId,
         metadata: { role: rows[0].role },
       });
+
       return { removed: true, leaving };
     });
 }

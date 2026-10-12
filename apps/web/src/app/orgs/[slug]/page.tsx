@@ -9,6 +9,7 @@ type ProjectPage = Awaited<ReturnType<typeof listProjects>>;
 
 function MoreProjects({ org, cursor }: { org: Org; cursor: string | null }) {
   if (!cursor) return null;
+
   return (
     <p>
       <Link href={`/orgs/${org.slug}?cursor=${encodeURIComponent(cursor)}`}>More projects</Link>
@@ -23,8 +24,10 @@ function ProjectResults({ org, cursor, page }: { org: Org; cursor?: string; page
         Projects are temporarily unavailable. Reference: {page.correlationId}
       </p>
     );
+
   if (page.data.items.length === 0 && !cursor)
     return <p data-testid="no-projects">This organization has no projects yet.</p>;
+
   return (
     <>
       <ul data-testid="project-list">
@@ -54,6 +57,7 @@ export default async function OrgPage({
   const { slug } = await params;
   const { cursor } = await searchParams;
   const org = await fetchOrg(slug);
+
   if (!org.ok)
     return (
       <main>
@@ -62,6 +66,7 @@ export default async function OrgPage({
         </p>
       </main>
     );
+
   return (
     <main>
       <p>

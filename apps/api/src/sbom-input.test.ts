@@ -1,12 +1,17 @@
+import { AppError } from "@sentra/ts-platform";
 import { describe, expect, it } from "vitest";
 import { validateNewSbom } from "./sbom-input.ts";
 
 const MAX = 1000;
-const reason = (body: unknown) => {
+
+type Body = { filename?: string | number; size_bytes?: number | string } | null;
+
+const reason = (body: Body) => {
   try {
     validateNewSbom(body, MAX);
   } catch (err) {
-    return (err as { reason?: string }).reason;
+    if (err instanceof AppError) return err.reason;
+    throw err;
   }
 };
 

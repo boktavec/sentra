@@ -1,5 +1,6 @@
 // SQL shared by the findings list and the finding detail, so the two cannot disagree about which
 // finding leads a group, what its CVSS score is, whether it is in the KEV catalog, or its priority tier.
+import type { Json } from "./json.ts";
 
 /** Bump on any change to the priority rules, thresholds or inputs (ADR 0008, packages/contracts/models.md). */
 const PRIORITY_MODEL_VERSION = 1;
@@ -8,10 +9,15 @@ export type SeverityCategory = "critical" | "high" | "medium" | "low" | "none" |
 
 export function category(value: number | null): SeverityCategory {
   if (value === null) return "unavailable";
+
   if (value === 0) return "none";
+
   if (value < 4) return "low";
+
   if (value < 7) return "medium";
+
   if (value < 9) return "high";
+
   return "critical";
 }
 
@@ -29,7 +35,7 @@ export interface FindingRow {
   first_seen_at: Date;
   last_seen_at: Date;
   import_id: string;
-  evidence: unknown;
+  evidence: Json;
   vulnerability_id: string;
   group_id: string | null;
   sources: { id: string; source: string; sourceId: string; aliases: string[] }[];
@@ -55,6 +61,7 @@ export type PriorityBaseReason =
 /** The API shape of a row's priority. The tier was decided in SQL; this only names it. */
 export function toPriority(row: FindingRow) {
   const score = row.cvss_score === null ? null : Number(row.cvss_score);
+
   return {
     tier: `P${row.priority_tier}` as const,
     modelVersion: PRIORITY_MODEL_VERSION,

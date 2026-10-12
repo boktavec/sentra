@@ -10,7 +10,9 @@ import { LegacyPage } from "./legacy-page";
  */
 export function OrgFrame({ header, children }: { header: ReactNode; children: ReactNode }) {
   const { projectSlug } = useParams<{ projectSlug?: string }>();
+
   if (projectSlug) return children;
+
   return (
     <>
       {header}

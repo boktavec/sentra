@@ -7,6 +7,7 @@ import { acceptInvitation, type AcceptState } from "./actions";
 
 export function AcceptForm({ token }: { token: string }) {
   const [state, action, pending] = useActionState<AcceptState, FormData>(acceptInvitation, {});
+
   return (
     <form action={action} className="flex flex-col gap-4">
       <input type="hidden" name="token" value={token} />

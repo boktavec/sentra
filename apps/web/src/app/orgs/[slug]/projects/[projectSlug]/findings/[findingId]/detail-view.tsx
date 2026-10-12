@@ -27,13 +27,16 @@ const card = {
   padding: "1rem",
   marginBottom: "1rem",
 };
+
 const grid = {
   display: "grid",
   gridTemplateColumns: "max-content minmax(0, 1fr)",
   gap: "0.5rem 1rem",
   marginBottom: 0,
 };
+
 const value = { margin: 0, overflowWrap: "anywhere" as const };
+
 const textBlock = { whiteSpace: "pre-wrap" as const, overflowWrap: "anywhere" as const };
 
 function Facts({ facts }: { facts: { label: string; value: string }[] }) {
@@ -85,6 +88,7 @@ function KevEntryDetails({ entry }: { entry: KevEntry }) {
 function RiskFactors({ finding }: { finding: FindingDetail }) {
   const { vulnerability: v } = finding;
   const lead = finding.members[0]!;
+
   return (
     <section aria-labelledby="risk-heading" style={card}>
       <h2 id="risk-heading">Risk factors</h2>
@@ -117,6 +121,7 @@ function RiskFactors({ finding }: { finding: FindingDetail }) {
 
 function Evidence({ member }: { member: FindingMember }) {
   const explanation = explainEvidence(member.evidence, member.matchQuality, member.matchReason);
+
   return (
     <div>
       <h4>Why this is affected</h4>
@@ -138,6 +143,7 @@ function Evidence({ member }: { member: FindingMember }) {
 
 function DetailsText({ text }: { text: string }) {
   const long = text.length > DETAILS_PREVIEW_CHARS;
+
   return (
     <>
       <p style={textBlock}>{text.slice(0, DETAILS_PREVIEW_CHARS)}</p>
@@ -153,6 +159,7 @@ function DetailsText({ text }: { text: string }) {
 
 function AdvisoryDetails({ advisory }: { advisory: FindingMember["advisory"] }) {
   if (!advisory.details) return null;
+
   return (
     <div>
       <DetailsText text={advisory.details} />
@@ -167,6 +174,7 @@ function AdvisoryDetails({ advisory }: { advisory: FindingMember["advisory"] }) 
 
 function Affected({ affected }: { affected: FindingMember["advisory"]["affected"] }) {
   if (affected.length === 0) return null;
+
   return (
     <div>
       <h4>Affected by this advisory</h4>
@@ -196,6 +204,7 @@ function Affected({ affected }: { affected: FindingMember["advisory"]["affected"
 
 function References({ advisory }: { advisory: FindingMember["advisory"] }) {
   if (advisory.refs.length === 0) return null;
+
   return (
     <div>
       <h4>References</h4>
@@ -203,6 +212,7 @@ function References({ advisory }: { advisory: FindingMember["advisory"] }) {
         {advisory.refs.map((ref, i) => {
           const href = safeHref(ref.url);
           const label = ref.type ? `${ref.type}: ` : "";
+
           return (
             <li key={i} style={{ overflowWrap: "anywhere" }}>
               {label}
@@ -236,6 +246,7 @@ function isScoreSource(
 function cvssText(advisory: FindingMember["advisory"], finding: FindingDetail) {
   if (advisory.cvssScore === null) return null;
   const score = `${advisory.cvssScore.toFixed(1)} (CVSS ${advisory.cvssVersion})`;
+
   return isScoreSource(advisory, finding.vulnerability.cvssSource)
     ? `${score}, used for the score above`
     : score;
@@ -243,6 +254,7 @@ function cvssText(advisory: FindingMember["advisory"], finding: FindingDetail) {
 
 function memberFacts(member: FindingMember, finding: FindingDetail) {
   const { advisory } = member;
+
   return [
     ...optional("Aliases", advisory.aliases.join(", ")),
     ...optional("Published", advisory.publishedAt && formatDate(advisory.publishedAt)),
@@ -257,6 +269,7 @@ function memberFacts(member: FindingMember, finding: FindingDetail) {
 
 function StatusNotes({ member }: { member: FindingMember }) {
   const { withdrawnAt } = member.advisory;
+
   return (
     <>
       {member.status === "resolved" && (
@@ -274,6 +287,7 @@ function StatusNotes({ member }: { member: FindingMember }) {
 
 function Member({ member, finding }: { member: FindingMember; finding: FindingDetail }) {
   const { advisory } = member;
+
   return (
     <li data-testid="finding-member" style={card}>
       <h3 style={{ overflowWrap: "anywhere" }}>
@@ -301,6 +315,7 @@ export function FindingDetailView({
 }) {
   const { vulnerability: v } = finding;
   const title = v.aliases.find((a) => a.startsWith("CVE-")) ?? v.sourceId;
+
   return (
     <main>
       <p>

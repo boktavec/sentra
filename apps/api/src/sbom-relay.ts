@@ -10,6 +10,7 @@ import { createPoller } from "./poller.ts";
  */
 export async function ensureDevTopic(brokers: string[], topic: string): Promise<void> {
   const admin = new Admin({ clientId: "sentra-api-bootstrap", bootstrapBrokers: brokers });
+
   try {
     if (!(await admin.listTopics()).includes(topic)) {
       await admin.createTopics({ topics: [topic], partitions: 1, replicas: 1 });
@@ -41,6 +42,7 @@ interface Claimed {
 }
 
 const MAX_BACKOFF_SECONDS = 300;
+
 const MAX_PER_TICK = 100;
 
 /** Same lease claim as the invitation email sender: one UPDATE, SKIP LOCKED, no lock held while publishing. */
@@ -55,6 +57,7 @@ async function claim(pool: Pool, leaseSeconds: number) {
      RETURNING o.event_id, o.import_id, o.payload, o.attempts`,
     [leaseSeconds],
   );
+
   return rows[0];
 }
 
@@ -68,6 +71,7 @@ async function refreshGauges(pool: Pool) {
             (SELECT extract(epoch FROM now() - min(created_at))::float FROM sbom_outbox WHERE sent_at IS NULL) AS oldest,
             (SELECT extract(epoch FROM now() - min(updated_at))::float FROM sbom_imports WHERE status = 'uploaded') AS uploaded`,
   );
+
   metrics.setGauge("sbom_outbox_pending", rows[0]!.depth);
   metrics.setGauge("sbom_outbox_oldest_age_seconds", rows[0]!.oldest ?? 0);
   // Grows when the broker or the pipeline is down; the signal that uploads are not being processed.
@@ -83,6 +87,7 @@ export function createSbomRelay(pool: Pool, options: SbomRelayOptions) {
 
   async function publish(event: Claimed) {
     const ids = { eventId: event.event_id, importId: event.import_id };
+
     try {
       await publisher.publish(topic, event.import_id, JSON.stringify(event.payload));
     } catch (err) {
@@ -90,6 +95,7 @@ export function createSbomRelay(pool: Pool, options: SbomRelayOptions) {
         options.backoffBaseSeconds * 2 ** Math.min(event.attempts - 1, 10),
         MAX_BACKOFF_SECONDS,
       );
+
       await pool.query(
         "UPDATE sbom_outbox SET next_attempt_at = now() + make_interval(secs => $2) WHERE event_id = $1",
         [event.event_id, delay],
@@ -99,30 +105,37 @@ export function createSbomRelay(pool: Pool, options: SbomRelayOptions) {
         { ...ids, attempts: event.attempts, err: String(err) },
         "sbom_event_publish_failed",
       );
+
       return false;
     }
+
     await pool.query("UPDATE sbom_outbox SET sent_at = now() WHERE event_id = $1", [
       event.event_id,
     ]);
     metrics.inc("sbom_event_published_total");
     logger.info(ids, "sbom_event_published");
+
     return true;
   }
 
   /** Publishes every due event (up to a cap) and returns how many went out. Stops at the first failure. */
   async function tick(): Promise<number> {
     let sent = 0;
+
     try {
       while (sent < MAX_PER_TICK) {
         const event = await claim(pool, options.leaseSeconds);
+
         if (!event || !(await publish(event))) break;
         sent++;
       }
+
       await refreshGauges(pool);
     } catch (err) {
       metrics.inc("sbom_relay_errors_total");
       logger.error({ err: String(err) }, "sbom_relay_error");
     }
+
     return sent;
   }
 

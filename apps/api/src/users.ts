@@ -18,6 +18,7 @@ export function createUserStore(pool: Pool) {
     async resolve(claims: Claims): Promise<AuthUser> {
       const cacheKey = `${claims.issuer}|${claims.subject}`;
       let id = cache.get(cacheKey);
+
       if (!id) {
         const { rows } = await pool.query<{ id: string }>(
           `INSERT INTO users (issuer, subject, email, name)
@@ -29,10 +30,13 @@ export function createUserStore(pool: Pool) {
            RETURNING id`,
           [claims.issuer, claims.subject, claims.email ?? null, claims.name ?? null],
         );
+
         id = rows[0]!.id;
+
         if (cache.size >= CACHE_LIMIT) cache.clear();
         cache.set(cacheKey, id);
       }
+
       return { id, issuer: claims.issuer, subject: claims.subject };
     },
   };

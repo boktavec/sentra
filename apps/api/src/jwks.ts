@@ -9,7 +9,7 @@ interface Options {
   /** Keys older than this are refreshed in the background; stale keys keep working if refresh fails. */
   maxAgeMs?: number;
   fetch?: Fetcher;
-  onRefreshError?: (err: unknown) => void;
+  onRefreshError?: (cause: unknown) => void;
   now?: () => number;
 }
 
@@ -46,6 +46,7 @@ export class JwksCache {
   /** Eager fetch at startup; ignores the cooldown. */
   warm(): Promise<void> {
     this.lastAttempt = Number.NEGATIVE_INFINITY;
+
     return this.refresh();
   }
 
@@ -53,19 +54,24 @@ export class JwksCache {
   getKey = async (header: JWSHeaderParameters, token: FlattenedJWSInput) => {
     if (this.local) {
       if (this.now() - this.fetchedAt > this.maxAgeMs) void this.refresh();
+
       try {
         return await this.local(header, token);
       } catch (err) {
         if (!(err instanceof errors.JWKSNoMatchingKey)) throw err;
       }
     }
+
     await this.refresh();
+
     if (!this.local) throw new JwksUnavailableError("signing keys not available");
+
     return this.local(header, token);
   };
 
   private refresh(): Promise<void> {
     if (this.inflight) return this.inflight;
+
     if (this.now() - this.lastAttempt < this.cooldownMs) return Promise.resolve();
     this.lastAttempt = this.now();
     this.inflight = this.fetchKeys()
@@ -73,11 +79,13 @@ export class JwksCache {
       .finally(() => {
         this.inflight = undefined;
       });
+
     return this.inflight;
   }
 
   private async fetchKeys(): Promise<void> {
     const res = await this.fetcher(this.options.url, { signal: AbortSignal.timeout(3000) });
+
     if (!res.ok) throw new Error(`JWKS fetch failed with ${res.status}`);
     this.local = createLocalJWKSet(await res.json());
     this.fetchedAt = this.now();

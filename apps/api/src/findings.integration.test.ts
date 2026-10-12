@@ -14,8 +14,10 @@ import { migrate } from "./migrate.ts";
 import { createOrgStore } from "./orgs.ts";
 import { createProjectStore } from "./projects.ts";
 import { createUserStore } from "./users.ts";
+import { testUserId } from "./test-support.ts";
 
 const databaseUrl = process.env["DATABASE_URL"];
+
 if (!databaseUrl) throw new Error("DATABASE_URL is required (see `task api:test:integration`)");
 
 const logger = createLogger("api-test", {
@@ -24,7 +26,9 @@ const logger = createLogger("api-test", {
 });
 
 let pool: Pool;
+
 let app: ReturnType<typeof buildApp>;
+
 const run = randomUUID().slice(0, 8);
 
 async function newUser() {
@@ -32,6 +36,7 @@ async function newUser() {
     issuer: "http://findings.test",
     subject: randomUUID(),
   });
+
   return { id: user.id, headers: { "x-test-user": user.id } };
 }
 
@@ -39,45 +44,52 @@ async function newUser() {
 async function newProject(slug = "web-app") {
   const admin = await newUser();
   const member = await newUser();
+
   const created = await app.inject({
     method: "POST",
     url: "/v1/orgs",
     headers: admin.headers,
     payload: { name: "Team", slug: `team-${run}-${randomUUID().slice(0, 8)}` },
   });
+
   const org: { id: string } = created.json();
   await pool.query("INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')", [
     org.id,
     member.id,
   ]);
+
   const project = await app.inject({
     method: "POST",
     url: `/v1/orgs/${org.id}/projects`,
     headers: admin.headers,
     payload: { name: slug, slug },
   });
+
   expect(project.statusCode, project.body).toBe(201);
-  return { org, admin, member, slug, projectId: project.json().id as string };
+
+  return { org, admin, member, slug, projectId: project.json<{ id: string }>().id };
 }
 
 async function importFor(orgId: string, projectId: string, userId: string) {
-  const { rows } = await pool.query(
+  const { rows } = await pool.query<{ id: string }>(
     `INSERT INTO sbom_imports (org_id, project_id, created_by, filename, status, object_key, expires_at)
      VALUES ($1, $2, $3, 'bom.json', 'parsed', $4, now()) RETURNING id`,
     [orgId, projectId, userId, `k-${randomUUID()}`],
   );
-  return rows[0].id as string;
+
+  return rows[0]!.id;
 }
 
 async function advisory(sourceId: string, source = "osv", summary = "A bug") {
-  const { rows } = await pool.query(
+  const { rows } = await pool.query<{ id: string }>(
     `INSERT INTO vulnerabilities (source, source_id, aliases, summary, severity, modified_at,
        source_artifact_sha256, source_entry, schema_version, adapter_version)
      VALUES ($3, $1, ARRAY['CVE-2026-0001'], $4, '[{"type":"CVSS_V3","vector":"CVSS:3.1/AV:N"}]',
        now(), $2, 'e', 1, 1) RETURNING id`,
     [`${sourceId}-${run}-${randomUUID().slice(0, 6)}`, "a".repeat(64), source, summary],
   );
-  return rows[0].id as string;
+
+  return rows[0]!.id;
 }
 
 /** What the grouper writes (services/pipeline): one group, its canonical advisory and its members. */
@@ -87,12 +99,14 @@ async function group(canonical: string, ...others: string[]) {
     "INSERT INTO vulnerability_groups (id, canonical_vulnerability_id) VALUES ($1, $2)",
     [id, canonical],
   );
+
   for (const v of [canonical, ...others]) {
     await pool.query(
       "INSERT INTO vulnerability_group_members (vulnerability_id, group_id) VALUES ($1, $2)",
       [v, id],
     );
   }
+
   return id;
 }
 
@@ -111,7 +125,8 @@ interface Seed {
 async function finding(s: Seed) {
   const resolved = s.status === "resolved";
   const quality = s.quality ?? "confirmed";
-  const { rows } = await pool.query(
+
+  const { rows } = await pool.query<{ id: string }>(
     `INSERT INTO findings (org_id, project_id, vulnerability_id, purl, version, ecosystem, scope, import_id,
        match_quality, match_reason, status, resolved_reason, resolved_at, first_seen_at, matcher_version, evidence)
      VALUES ($1, $2, $3, $4, '1.0.0', 'PyPI', $13, $5, $6, $7, $8, $9, $10, $11, 1, $12) RETURNING id`,
@@ -131,11 +146,13 @@ async function finding(s: Seed) {
       s.scope ?? "required",
     ],
   );
-  return rows[0].id as string;
+
+  return rows[0]!.id;
 }
 
 const get = (url: string, headers: Record<string, string> = {}) =>
   app.inject({ method: "GET", url, headers });
+
 const listUrl = (orgId: string, slug: string, query = "") =>
   `/v1/orgs/${orgId}/projects/${slug}/findings${query}`;
 
@@ -157,13 +174,16 @@ beforeAll(async () => {
     trustedProxies: false,
     ready: async () => true,
     authenticate: async (request) => {
-      const id = request.headers["x-test-user" as "authorization"];
+      const id = testUserId(request.headers);
+
       if (!id) throw unauthenticated("missing_token");
       const { rows } = await pool.query("SELECT issuer, subject FROM users WHERE id = $1", [id]);
+
       return userStore.resolve(rows[0]);
     },
   });
 });
+
 afterAll(async () => {
   await app.close();
   await pool.end();
@@ -235,6 +255,7 @@ describe("listing findings", () => {
     const { org, admin, slug, projectId } = await newProject();
     const importId = await importFor(org.id, projectId, admin.id);
     const same = "2026-01-02T03:04:05.123456Z";
+
     const ids = [
       await finding({ orgId: org.id, projectId, importId, purl: "pkg:pypi/a@1", firstSeen: same }),
       await finding({ orgId: org.id, projectId, importId, purl: "pkg:pypi/b@1", firstSeen: same }),
@@ -258,12 +279,14 @@ describe("listing findings", () => {
     const seen: string[] = [];
     let cursor: string | null = null;
     let pages = 0;
+
     do {
       const url: string = listUrl(
         org.id,
         slug,
         `?limit=2${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
       );
+
       const body = (await get(url, admin.headers)).json();
       seen.push(...body.items.map((i: { id: string }) => i.id));
       cursor = body.nextCursor;
@@ -286,13 +309,15 @@ describe("listing findings", () => {
 
   it("never mixes in another project's findings, even in the same org", async () => {
     const { org, admin, slug, projectId } = await newProject();
+
     const other = await app.inject({
       method: "POST",
       url: `/v1/orgs/${org.id}/projects`,
       headers: admin.headers,
       payload: { name: "Other", slug: "other-app" },
     });
-    const otherId = other.json().id as string;
+
+    const otherId = other.json<{ id: string }>().id;
     await finding({
       orgId: org.id,
       projectId: otherId,
@@ -318,6 +343,7 @@ describe("listing findings", () => {
     expect((await get(listUrl(org.id, slug, "?cursor=garbage"), admin.headers)).statusCode).toBe(
       400,
     );
+
     for (const query of [
       "?status=closed",
       "?severity=urgent",
@@ -327,6 +353,7 @@ describe("listing findings", () => {
     ]) {
       expect((await get(listUrl(org.id, slug, query), admin.headers)).statusCode).toBe(400);
     }
+
     const missing = await get(listUrl(org.id, "no-such-project"), admin.headers);
     expect(missing.statusCode).toBe(404);
     expect(missing.json().reason).toBeUndefined(); // the reason is logged, never sent
@@ -391,12 +418,14 @@ describe("listing findings", () => {
         cvssSource: { source: "osv", sourceId: expect.stringContaining("SEVERE") },
       },
     });
+
     const next = (
       await get(
         listUrl(org.id, slug, `?limit=1&cursor=${encodeURIComponent(first.nextCursor)}`),
         admin.headers,
       )
     ).json();
+
     expect(next.items.map((item: { purl: string }) => item.purl)).toEqual(["pkg:pypi/low@1"]);
     expect(next.nextCursor).toBeNull();
     const critical = (await get(listUrl(org.id, slug, "?severity=critical"), admin.headers)).json();
@@ -463,6 +492,7 @@ describe("consolidating advisories of one issue (SENTRA-12)", () => {
     const kev = await advisory("CVE-2026-0001", "cisa-kev", "Stub summary"); // no finding: no affected rows
     const groupId = await group(ghsa, pysec, kev);
     const purl = "pkg:pypi/trac@1.0.0";
+
     const resolved = await finding({
       orgId: org.id,
       projectId,
@@ -472,6 +502,7 @@ describe("consolidating advisories of one issue (SENTRA-12)", () => {
       status: "resolved",
       firstSeen: "2026-01-01T00:00:00Z",
     });
+
     const open = await finding({
       orgId: org.id,
       projectId,
@@ -505,9 +536,11 @@ describe("consolidating advisories of one issue (SENTRA-12)", () => {
     const b = await advisory("GHSA");
     const g = await group(a);
     await group(b);
+
     for (const purl of ["pkg:pypi/x@1", "pkg:pypi/y@1"]) {
       await finding({ orgId: org.id, projectId, importId, purl, vulnerabilityId: a });
     }
+
     await finding({ orgId: org.id, projectId, importId, purl: "pkg:pypi/x@1", vulnerabilityId: b });
 
     const { items } = (await get(listUrl(org.id, slug), admin.headers)).json();
@@ -543,6 +576,7 @@ describe("consolidating advisories of one issue (SENTRA-12)", () => {
       purl: "pkg:pypi/shared@1",
       vulnerabilityId: a,
     });
+
     const theirId = await finding({
       orgId: theirs.org.id,
       projectId: theirs.projectId,
@@ -561,8 +595,11 @@ describe("consolidating advisories of one issue (SENTRA-12)", () => {
 
 describe("risk priority (SENTRA-14)", () => {
   type Kev = "listed" | "not_listed" | "unavailable";
+
   type Scope = "required" | "optional" | "excluded";
+
   type Quality = "confirmed" | "unverifiable";
+
   interface Combo {
     kev: Kev;
     score: number | null;
@@ -570,7 +607,12 @@ describe("risk priority (SENTRA-14)", () => {
     scope: Scope;
     quality: Quality;
   }
+
   type Tier = "P1" | "P2" | "P3" | "P4";
+
+  /** A non-required scope lowers the tier by one, bottoming out at P4. */
+  const LOWERED_BY_SCOPE: Record<Tier, Tier> = { P1: "P2", P2: "P3", P3: "P4", P4: "P4" };
+
   type PriorityBody = {
     tier: Tier;
     modelVersion: number;
@@ -583,22 +625,25 @@ describe("risk priority (SENTRA-14)", () => {
       matchQuality: Quality;
     };
   };
+
   type Item = { id: string; purl: string; priority: PriorityBody };
 
   /** The rule table of packages/contracts/models.md, written independently of the SQL. */
   function expected(c: Pick<Combo, "kev" | "score" | "scope">) {
-    const [base, baseReason]: [number, string] =
+    const [base, baseReason]: [Tier, string] =
       c.kev === "listed"
-        ? [1, "kev_listed"]
+        ? ["P1", "kev_listed"]
         : c.score === null
-          ? [3, "cvss_unavailable"]
+          ? ["P3", "cvss_unavailable"]
           : c.score >= 7
-            ? [2, "cvss_high"]
+            ? ["P2", "cvss_high"]
             : c.score >= 4
-              ? [3, "cvss_medium"]
-              : [4, "cvss_low"];
-    const tier = c.scope === "required" ? base : Math.min(base + 1, 4);
-    return { tier: `P${tier}` as Tier, baseReason, scopeAdjusted: tier !== base };
+              ? ["P3", "cvss_medium"]
+              : ["P4", "cvss_low"];
+
+    const tier = c.scope === "required" ? base : LOWERED_BY_SCOPE[base];
+
+    return { tier, baseReason, scopeAdjusted: tier !== base };
   }
 
   const cveId = () => `CVE-2026-${parseInt(randomUUID().replaceAll("-", "").slice(0, 8), 16)}`;
@@ -630,7 +675,9 @@ describe("risk priority (SENTRA-14)", () => {
          cvss_version = CASE WHEN $3::numeric IS NULL THEN NULL ELSE '3.1' END WHERE id = $1`,
       [id, kev === "unavailable" ? ["GHSA-no-cve-here"] : [cve], score],
     );
+
     if (kev === "listed") await listKev(cve);
+
     return { id, cve };
   }
 
@@ -642,6 +689,7 @@ describe("risk priority (SENTRA-14)", () => {
     ["none", 0],
     ["unavailable", null],
   ];
+
   const combos: Combo[] = (["listed", "not_listed", "unavailable"] as const).flatMap((kev) =>
     categories.flatMap(([category, score]) =>
       (["required", "optional", "excluded"] as const).flatMap((scope) =>
@@ -655,6 +703,7 @@ describe("risk priority (SENTRA-14)", () => {
       ),
     ),
   );
+
   const boundaries: [number, Tier][] = [
     [7, "P2"],
     [6.9, "P3"],
@@ -664,6 +713,7 @@ describe("risk priority (SENTRA-14)", () => {
   ];
 
   const sameInstant = "2026-03-04T05:06:07.123456Z";
+
   const priorityUrl = (project: { org: { id: string }; slug: string }, query = "") =>
     listUrl(project.org.id, project.slug, `?status=all&${query}`);
 
@@ -673,16 +723,19 @@ describe("risk priority (SENTRA-14)", () => {
   ) {
     const items: Item[] = [];
     let cursor: string | null = null;
+
     do {
       const res = await get(
         priorityUrl(project, `${query}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`),
         project.admin.headers,
       );
+
       expect(res.statusCode, res.body).toBe(200);
       const body: { items: Item[]; nextCursor: string | null } = res.json();
       items.push(...body.items);
       cursor = body.nextCursor;
     } while (cursor);
+
     return items;
   }
 
@@ -695,6 +748,7 @@ describe("risk priority (SENTRA-14)", () => {
       project = await newProject();
       const importId = await importFor(project.org.id, project.projectId, project.admin.id);
       const base = { orgId: project.org.id, projectId: project.projectId, importId };
+
       for (const [i, c] of combos.entries()) {
         const purl = `pkg:pypi/matrix-${i}@1`;
         const { id } = await advisoryFor(c.kev, c.score);
@@ -708,6 +762,7 @@ describe("risk priority (SENTRA-14)", () => {
         });
         byPurl.set(purl, c);
       }
+
       for (const [score, boundary] of boundaries) {
         const purl = `pkg:pypi/boundary-${score}@1`;
         const { id } = await advisoryFor("not_listed", score);
@@ -719,12 +774,15 @@ describe("risk priority (SENTRA-14)", () => {
     it("assigns the documented tier, reason, scope flag and factors to all 108 combinations", async () => {
       const items = await pageAll(project, "limit=100");
       expect(items).toHaveLength(combos.length + boundaries.length);
+
       for (const item of items) {
         const c = byPurl.get(item.purl)!;
+
         if ("boundary" in c) {
           expect(item.priority.tier, `score ${c.score}`).toBe(c.boundary);
           continue;
         }
+
         const label = JSON.stringify(c);
         expect(item.priority, label).toEqual({
           ...expected(c),
@@ -741,15 +799,19 @@ describe("risk priority (SENTRA-14)", () => {
 
     it("orders by tier, then CVSS with unscored last, and returns every item exactly once across pages", async () => {
       const everything = await pageAll(project, "sort=priority&limit=100");
+
       for (const limit of [7, 100]) {
         const paged = await pageAll(project, `sort=priority&limit=${limit}`);
         expect(paged.map((i) => i.id)).toEqual(everything.map((i) => i.id));
       }
+
       expect(new Set(everything.map((i) => i.id)).size).toBe(everything.length);
+
       const rank = (i: Item) => [
         Number(i.priority.tier.slice(1)),
         -(i.priority.factors.cvss.score ?? -1),
       ];
+
       for (let n = 1; n < everything.length; n++) {
         const [t0, s0] = rank(everything[n - 1]!);
         const [t1, s1] = rank(everything[n]!);
@@ -759,14 +821,17 @@ describe("risk priority (SENTRA-14)", () => {
 
     it("filters by tier, paging exactly once, and combines with the severity filter", async () => {
       const everything = await pageAll(project, "limit=100");
+
       for (const tier of ["p1", "p2", "p3", "p4"] as const) {
         const filtered = await pageAll(project, `priority=${tier}&limit=5`);
         const want = everything.filter((i) => i.priority.tier === tier.toUpperCase());
         expect(want.length).toBeGreaterThan(0);
         expect(filtered.map((i) => i.id).sort()).toEqual(want.map((i) => i.id).sort());
       }
+
       const both = await pageAll(project, "priority=p2&severity=high&limit=100");
       expect(both.length).toBeGreaterThan(0);
+
       for (const item of both) {
         expect(item.priority.tier).toBe("P2");
         expect(item.priority.factors.cvss.category).toBe("high");
@@ -785,11 +850,13 @@ describe("risk priority (SENTRA-14)", () => {
 
     it("gives the detail the same priority as the list item", async () => {
       const items = await pageAll(project, "limit=100");
+
       for (const item of [items[0]!, items.at(-1)!, items[50]!]) {
         const res = await get(
           `${listUrl(project.org.id, project.slug)}/${item.id}`,
           project.admin.headers,
         );
+
         expect(res.statusCode, res.body).toBe(200);
         expect(res.json().priority).toEqual(item.priority);
       }
@@ -798,15 +865,19 @@ describe("risk priority (SENTRA-14)", () => {
     it("rejects old-format cursors and cursors from another priority filter", async () => {
       const first = (await get(priorityUrl(project, "limit=2"), project.admin.headers)).json();
       expect(first.nextCursor).toBeTruthy();
+
       const oldFormat = Buffer.from(
         JSON.stringify(["priority", "all", "all", null, "2026-01-01 00:00:00+00", randomUUID()]),
       ).toString("base64url");
+
       for (const cursor of [oldFormat, first.nextCursor]) {
         const query = cursor === oldFormat ? "limit=2" : "limit=2&priority=p1";
+
         const res = await get(
           priorityUrl(project, `${query}&cursor=${encodeURIComponent(cursor)}`),
           project.admin.headers,
         );
+
         expect(res.statusCode).toBe(400); // the reason is logged, never sent
       }
     });
@@ -826,6 +897,7 @@ describe("risk priority (SENTRA-14)", () => {
       vulnerabilityId: resolved.id,
       status: "resolved",
     });
+
     const tiers = async (query: string) =>
       Object.fromEntries((await pageAll(project, query)).map((i) => [i.purl, i.priority.tier]));
 
@@ -855,6 +927,7 @@ describe("finding detail (SENTRA-16)", () => {
       [s.importId, s.orgId, s.projectId, purl],
     );
   }
+
   async function affected(
     vulnerabilityId: string,
     packageName: string,
@@ -867,6 +940,7 @@ describe("finding detail (SENTRA-16)", () => {
        VALUES ($1, $2, 'PyPI', $3, $4)`,
       [id, vulnerabilityId, packageName, versions],
     );
+
     for (const [i, [type, version]] of events.entries()) {
       await pool.query(
         `INSERT INTO vulnerability_ranges (affected_id, range_index, event_index, range_type, event_type, event_version)
@@ -890,12 +964,14 @@ describe("finding detail (SENTRA-16)", () => {
     const purl = "pkg:pypi/trac@1.0.0";
     await dependency(base, purl);
     const ghsaFinding = await finding({ ...base, purl, vulnerabilityId: ghsa });
+
     const pysecFinding = await finding({
       ...base,
       purl,
       vulnerabilityId: pysec,
       firstSeen: "2030-01-01T00:00:00Z",
     });
+
     return { ...project, ...base, purl, ghsa, pysec, ghsaFinding, pysecFinding };
   }
 
@@ -991,6 +1067,7 @@ describe("finding detail (SENTRA-16)", () => {
   it("shows an ungrouped advisory as a single member with a null group", async () => {
     const project = await newProject();
     const importId = await importFor(project.org.id, project.projectId, project.admin.id);
+
     const id = await finding({
       orgId: project.org.id,
       projectId: project.projectId,
@@ -1015,6 +1092,7 @@ describe("finding detail (SENTRA-16)", () => {
       "UPDATE vulnerabilities SET withdrawn_at = '2026-02-03T00:00:00Z' WHERE id = $1",
       [vulnerabilityId],
     );
+
     const id = await finding({
       ...base,
       purl: "pkg:pypi/old@1",
@@ -1045,9 +1123,11 @@ describe("finding detail (SENTRA-16)", () => {
     const purl = "pkg:pypi/trac@1.0.0";
     await dependency(base, purl);
     const advisories = [];
+
     for (let i = 0; i < 52; i++) advisories.push(await advisory(`BIG-${i}`));
     await group(advisories[0]!, ...advisories.slice(1));
     const ids: string[] = [];
+
     for (const [i, vulnerabilityId] of advisories.entries()) {
       ids.push(
         await finding({
@@ -1058,6 +1138,7 @@ describe("finding detail (SENTRA-16)", () => {
         }),
       );
     }
+
     const last = ids.at(-1)!;
     await pool.query(
       `UPDATE vulnerabilities SET details = repeat('x', 70000),
@@ -1088,9 +1169,11 @@ describe("finding detail (SENTRA-16)", () => {
     expect(big.refs[0]).toEqual({ type: "WEB", url: "https://example.test/1" });
     expect(big.affected[0].versionsTruncated).toBe(true);
     expect(big.affected[0].versions).toHaveLength(200);
+
     const small = (
       await get(detailUrl(project.org.id, project.slug, ids[0]!), project.admin.headers)
     ).json();
+
     expect(small.members).toHaveLength(50);
     expect(small.membersTruncated).toBe(true);
   });
@@ -1098,8 +1181,10 @@ describe("finding detail (SENTRA-16)", () => {
   it("caps details at 64 KiB of UTF-8, never splitting a character, and flags only a real cut", async () => {
     const s = await seedGroup();
     const url = detailUrl(s.org.id, s.slug, s.ghsaFinding);
+
     const details = async (sql: string) => {
       await pool.query(`UPDATE vulnerabilities SET details = ${sql} WHERE id = $1`, [s.ghsa]);
+
       return (await get(url, s.admin.headers)).json().members[0].advisory;
     };
 
@@ -1121,6 +1206,7 @@ describe("finding detail (SENTRA-16)", () => {
 
   it("treats refs that are not an array as empty instead of failing", async () => {
     const s = await seedGroup();
+
     for (const refs of ["'{}'", "'\"text\"'", "'null'", "'7'"]) {
       await pool.query(`UPDATE vulnerabilities SET refs = ${refs}::jsonb WHERE id = $1`, [s.ghsa]);
       const res = await get(detailUrl(s.org.id, s.slug, s.ghsaFinding), s.admin.headers);
@@ -1200,20 +1286,24 @@ describe("finding detail (SENTRA-16)", () => {
   it("returns the same 404 for malformed, unknown, other-project and other-tenant ids", async () => {
     const mine = await newProject();
     const theirs = await seedGroup();
+
     const otherProject = await app.inject({
       method: "POST",
       url: `/v1/orgs/${mine.org.id}/projects`,
       headers: mine.admin.headers,
       payload: { name: "other", slug: "other" },
     });
+
     expect(otherProject.statusCode).toBe(201);
     const importId = await importFor(mine.org.id, mine.projectId, mine.admin.id);
+
     const sibling = await finding({
       orgId: mine.org.id,
       projectId: mine.projectId,
       importId,
       purl: "pkg:pypi/sibling@1",
     });
+
     const attempts = [
       "not-a-uuid",
       randomUUID(),
@@ -1230,8 +1320,9 @@ describe("finding detail (SENTRA-16)", () => {
       expect(res.body).not.toContain(theirs.purl);
       expect(res.body).not.toContain(theirs.org.id);
     }
-    const shapes = results.map((r) => ({ ...r.json(), correlationId: undefined }));
-    expect(new Set(shapes.map((s) => JSON.stringify(s))).size).toBe(1);
+
+    const bodies = results.map((r) => ({ ...r.json(), correlationId: undefined }));
+    expect(new Set(bodies.map((s) => JSON.stringify(s))).size).toBe(1);
     // The sibling is reachable in its own project.
     expect(
       (await get(detailUrl(mine.org.id, mine.slug, sibling), mine.admin.headers)).statusCode,

@@ -1,5 +1,6 @@
 import { errors, jwtVerify } from "jose";
 import { unauthenticated, unavailable } from "@sentra/ts-platform";
+import { isString } from "./json.ts";
 import { JwksUnavailableError, type JwksCache } from "./jwks.ts";
 
 export interface Claims {
@@ -10,14 +11,19 @@ export interface Claims {
 }
 
 /** Maps a jose failure to a coarse reason for logs and metrics. Never shown to clients. */
-function reasonFor(err: unknown): string {
-  if (err instanceof errors.JWTExpired) return "expired";
-  if (err instanceof errors.JWSSignatureVerificationFailed) return "invalid_signature";
-  if (err instanceof errors.JWKSNoMatchingKey) return "unknown_key";
-  if (err instanceof errors.JWTClaimValidationFailed) {
-    if (err.claim === "iss") return "unknown_issuer";
-    if (err.claim === "aud") return "wrong_audience";
+function reasonFor(cause: unknown): string {
+  if (cause instanceof errors.JWTExpired) return "expired";
+
+  if (cause instanceof errors.JWSSignatureVerificationFailed) return "invalid_signature";
+
+  if (cause instanceof errors.JWKSNoMatchingKey) return "unknown_key";
+
+  if (cause instanceof errors.JWTClaimValidationFailed) {
+    if (cause.claim === "iss") return "unknown_issuer";
+
+    if (cause.claim === "aud") return "wrong_audience";
   }
+
   return "invalid_token";
 }
 
@@ -31,8 +37,13 @@ export function createVerifier(options: { issuer: string; audiences: string[]; j
         clockTolerance: 30,
         requiredClaims: ["sub", "exp"],
       });
-      const claim = (name: string) =>
-        typeof payload[name] === "string" ? (payload[name] as string) : undefined;
+
+      const claim = (name: "email" | "name") => {
+        const value = payload[name];
+
+        return isString(value) ? value : undefined;
+      };
+
       return {
         issuer: payload.iss!,
         subject: payload.sub!,

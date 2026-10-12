@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 import { AppError } from "@sentra/ts-platform";
-import { decodeCursor, encodeCursor } from "./org-input.ts";
+import { decodeCursor, toPage } from "./org-input.ts";
 import { recordAudit } from "./org-tx.ts";
 import { inTransaction, type TenantContext } from "./orgs.ts";
 
@@ -28,7 +28,9 @@ export async function findProject(db: Pick<Pool, "query">, tenant: TenantContext
     "SELECT id FROM projects WHERE org_id = $1 AND slug = $2",
     [tenant.orgId, slug],
   );
+
   if (!rows[0]) throw new AppError("not_found", 404, "Not found", { reason: "project_not_found" });
+
   return rows[0].id;
 }
 
@@ -54,6 +56,7 @@ export async function projectPageParams(
 ) {
   const projectId = await findProject(db, tenant, slug);
   const after = cursor ? decodeCursor(cursor) : undefined;
+
   return [tenant.orgId, projectId, after?.createdAt ?? null, after?.orgId ?? null, limit + 1];
 }
 
@@ -70,6 +73,7 @@ function createProject(pool: Pool) {
          ON CONFLICT (org_id, slug) DO NOTHING RETURNING ${COLUMNS}`,
         [tenant.orgId, input.name, input.slug, tenant.userId],
       );
+
       if (inserted.rows[0]) {
         const project = toProject(inserted.rows[0]);
         await recordAudit(client, {
@@ -81,12 +85,15 @@ function createProject(pool: Pool) {
           targetId: project.id,
           metadata: { slug: project.slug },
         });
+
         return { project, created: true };
       }
+
       const existing = await client.query<ProjectRow>(
         `SELECT ${COLUMNS} FROM projects WHERE org_id = $1 AND slug = $2 AND name = $3`,
         [tenant.orgId, input.slug, input.name],
       );
+
       if (existing.rows[0]) return { project: toProject(existing.rows[0]), created: false };
       throw new AppError("slug_taken", 409, "Slug already in use", { reason: "slug_taken" });
     });
@@ -95,6 +102,7 @@ function createProject(pool: Pool) {
 function listProjects(pool: Pool) {
   return async (tenant: TenantContext, limit: number, cursor?: string) => {
     const after = cursor ? decodeCursor(cursor) : undefined;
+
     // The cursor's second field is a project ID here; `decodeCursor` only checks it is a UUID.
     const { rows } = await pool.query<ProjectRow & { cursor_ts: string }>(
       `SELECT ${COLUMNS}, created_at::text AS cursor_ts FROM projects
@@ -104,12 +112,8 @@ function listProjects(pool: Pool) {
        LIMIT $4`,
       [tenant.orgId, after?.createdAt ?? null, after?.orgId ?? null, limit + 1],
     );
-    const page = rows.slice(0, limit);
-    const last = page.at(-1);
-    return {
-      items: page.map(toProject),
-      nextCursor: rows.length > limit && last ? encodeCursor(last.cursor_ts, last.id) : null,
-    };
+
+    return toPage(rows, limit, toProject);
   };
 }
 
@@ -119,8 +123,10 @@ function getBySlug(pool: Pool) {
       `SELECT ${COLUMNS} FROM projects WHERE org_id = $1 AND slug = $2`,
       [tenant.orgId, slug],
     );
+
     if (!rows[0])
       throw new AppError("not_found", 404, "Not found", { reason: "project_not_found" });
+
     return toProject(rows[0]);
   };
 }

@@ -21,6 +21,7 @@ type OrgPage = { items: Org[]; nextCursor: string | null };
 
 function SupportId({ me }: { me: ApiResult<{ id: string }> }) {
   if (!me.ok) return null;
+
   return (
     <p data-testid="signed-in" className="mt-6 text-xs text-muted-foreground">
       Support ID: <code data-testid="user-id">{me.data.id}</code>
@@ -56,6 +57,7 @@ function OrgItems({ page, firstPage }: { page: OrgPage; firstPage: boolean }) {
       />
     );
   }
+
   return (
     <>
       <Card className="gap-0 overflow-hidden py-0">
@@ -81,6 +83,7 @@ function OrgItems({ page, firstPage }: { page: OrgPage; firstPage: boolean }) {
 
 function OrgList({ orgs, firstPage }: { orgs: ApiResult<OrgPage>; firstPage: boolean }) {
   if (orgs.ok) return <OrgItems page={orgs.data} firstPage={firstPage} />;
+
   return (
     <ErrorState
       testId="api-unavailable"
@@ -98,6 +101,7 @@ export default async function Home({
 }) {
   const { cursor } = await searchParams;
   const me = await callApi((token) => apiGet<{ id: string }>("/v1/me", token));
+
   const orgs = await callApi((token) =>
     apiGet<OrgPage>(`/v1/orgs${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`, token),
   );

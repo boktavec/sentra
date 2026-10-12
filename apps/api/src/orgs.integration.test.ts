@@ -14,12 +14,16 @@ import { createFindingStore } from "./findings.ts";
 import { createProjectStore } from "./projects.ts";
 import { createOrgStore } from "./orgs.ts";
 import { createUserStore } from "./users.ts";
+import { type LogLine, testUserId } from "./test-support.ts";
 
 const MAX = 3;
+
 const databaseUrl = process.env["DATABASE_URL"];
+
 if (!databaseUrl) throw new Error("DATABASE_URL is required (see `task api:test:integration`)");
 
-const logLines: Record<string, unknown>[] = [];
+const logLines: LogLine[] = [];
+
 const logger = createLogger("api-test", {
   level: "debug",
   destination: new Writable({
@@ -31,21 +35,35 @@ const logger = createLogger("api-test", {
 });
 
 let pool: Pool;
+
 let app: ReturnType<typeof buildApp>;
+
 const run = randomUUID().slice(0, 8);
+
 const slug = (name: string) => `${name}-${run}`;
 
 /** Creates a distinct real user row and returns the header that authenticates as them. */
 async function newUser() {
   const users = createUserStore(pool);
   const user = await users.resolve({ issuer: "http://orgs.test", subject: randomUUID() });
+
   return { id: user.id, headers: { "x-test-user": user.id } };
 }
 
-const post = (headers: Record<string, string>, payload: unknown) =>
-  app.inject({ method: "POST", url: "/v1/orgs", headers, payload: payload as object });
+type OrgPayload = {
+  name?: string;
+  slug?: string;
+  id?: string;
+  orgId?: string;
+  role?: string;
+};
+
+const post = (headers: Record<string, string>, payload: OrgPayload) =>
+  app.inject({ method: "POST", url: "/v1/orgs", headers, payload });
+
 const get = (headers: Record<string, string>, url: string) =>
   app.inject({ method: "GET", url, headers });
+
 const count = async (table: string, where: string, params: unknown[]) =>
   (await pool.query(`SELECT count(*)::int AS n FROM ${table} WHERE ${where}`, params)).rows[0].n;
 
@@ -67,13 +85,16 @@ beforeAll(async () => {
     trustedProxies: false,
     ready: async () => true,
     authenticate: async (request) => {
-      const id = request.headers["x-test-user" as "authorization"];
+      const id = testUserId(request.headers);
+
       if (!id) throw unauthenticated("missing_token");
       const { rows } = await pool.query("SELECT issuer, subject FROM users WHERE id = $1", [id]);
+
       return userStore.resolve(rows[0]);
     },
   });
 });
+
 afterAll(async () => {
   await app.close();
   await pool.end();
@@ -91,6 +112,7 @@ describe("creating an organization", () => {
     const { rows } = await pool.query("SELECT user_id, role FROM memberships WHERE org_id = $1", [
       org.id,
     ]);
+
     expect(rows).toEqual([{ user_id: user.id, role: "admin" }]);
     const audit = await pool.query("SELECT * FROM audit_events WHERE org_id = $1", [org.id]);
     expect(audit.rows).toHaveLength(1);
@@ -116,6 +138,7 @@ describe("creating an organization", () => {
   it("ignores tenant fields in the body: the ID is always generated", async () => {
     const user = await newUser();
     const forged = randomUUID();
+
     const res = await post(user.headers, {
       name: "X",
       slug: slug("forged"),
@@ -123,6 +146,7 @@ describe("creating an organization", () => {
       orgId: forged,
       role: "owner",
     });
+
     expect(res.statusCode).toBe(201);
     expect(res.json().id).not.toBe(forged);
     expect(res.json().role).toBe("admin");
@@ -130,6 +154,7 @@ describe("creating an organization", () => {
 
   it("rejects invalid input and unauthenticated callers with generic problem bodies", async () => {
     const user = await newUser();
+
     for (const payload of [
       {},
       { name: "", slug: "abc" },
@@ -140,6 +165,7 @@ describe("creating an organization", () => {
       expect(res.statusCode).toBe(400);
       expect(res.json().type).toBe("urn:sentra:error:invalid_input");
     }
+
     expect((await post({}, { name: "A", slug: slug("anon") })).statusCode).toBe(401);
     expect(await count("organizations", "slug = $1", [slug("anon")])).toBe(0);
   });
@@ -171,10 +197,12 @@ describe("retries and races", () => {
 
   it("lets exactly one of two users win a simultaneous slug race", async () => {
     const [a, b] = [await newUser(), await newUser()];
+
     const results = await Promise.all([
       post(a.headers, { name: "A", slug: slug("race") }),
       post(b.headers, { name: "B", slug: slug("race") }),
     ]);
+
     expect(results.map((r) => r.statusCode).sort()).toEqual([201, 409]);
     expect(await count("organizations", "slug = $1", [slug("race")])).toBe(1);
     expect(
@@ -188,11 +216,13 @@ describe("retries and races", () => {
 describe("limits and atomicity", () => {
   it("never exceeds the per-user cap under parallel creates, and a retry at the cap still succeeds", async () => {
     const user = await newUser();
+
     const results = await Promise.all(
       Array.from({ length: MAX + 4 }, (_, i) =>
         post(user.headers, { name: `C${i}`, slug: slug(`cap-${i}`) }),
       ),
     );
+
     const statuses = results.map((r) => r.statusCode);
     expect(statuses.filter((s) => s === 201)).toHaveLength(MAX);
     expect(statuses.filter((s) => s === 403)).toHaveLength(4);
@@ -216,6 +246,7 @@ describe("limits and atomicity", () => {
     await pool.query(
       "CREATE TRIGGER fail_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION fail_audit()",
     );
+
     try {
       const res = await app.inject({
         method: "POST",
@@ -223,11 +254,13 @@ describe("limits and atomicity", () => {
         headers: { ...user.headers, "x-correlation-id": "force-fail" },
         payload: { name: "Doomed", slug: slug("doomed") },
       });
+
       expect(res.statusCode).toBe(500);
     } finally {
       await pool.query("DROP TRIGGER fail_audit ON audit_events");
       await pool.query("DROP FUNCTION fail_audit()");
     }
+
     expect(await count("organizations", "slug = $1", [slug("doomed")])).toBe(0);
     expect(await count("memberships", "user_id = $1", [user.id])).toBe(0);
   });
@@ -249,8 +282,10 @@ describe("tenant isolation", () => {
       status: r.statusCode,
       body: { ...r.json(), correlationId: "x" },
     });
+
     const missing = normalize(await get(intruder.headers, `/v1/orgs/${randomUUID()}`));
     expect(missing.status).toBe(404);
+
     for (const url of [
       `/v1/orgs/${org.id}`,
       `/v1/orgs/by-slug/${org.slug}`,
@@ -259,6 +294,7 @@ describe("tenant isolation", () => {
     ]) {
       expect(normalize(await get(intruder.headers, url))).toEqual(missing);
     }
+
     expect(JSON.stringify(logLines)).not.toContain("Secret");
   });
 
@@ -275,6 +311,7 @@ describe("listing and logging", () => {
     const other = await newUser();
     await post(other.headers, { name: "Not yours", slug: slug("not-yours") });
     const created: string[] = [];
+
     for (let i = 0; i < MAX; i++) {
       created.push(
         (await post(user.headers, { name: `L${i}`, slug: slug(`list-${i}`) })).json().id,
@@ -284,6 +321,7 @@ describe("listing and logging", () => {
     const seen: string[] = [];
     let cursor: string | null = null;
     let pages = 0;
+
     do {
       const res = await get(user.headers, `/v1/orgs?limit=2${cursor ? `&cursor=${cursor}` : ""}`);
       expect(res.statusCode).toBe(200);
@@ -292,12 +330,14 @@ describe("listing and logging", () => {
       cursor = page.nextCursor;
       pages++;
     } while (cursor);
+
     expect(seen).toEqual(created);
     expect(pages).toBe(2);
   });
 
   it("rejects a bad limit or a tampered cursor with 400", async () => {
     const user = await newUser();
+
     for (const query of ["limit=0", "limit=101", "limit=abc", "cursor=garbage"]) {
       expect((await get(user.headers, `/v1/orgs?${query}`)).statusCode).toBe(400);
     }

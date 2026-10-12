@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { evidenceLinks, GAP_TEXT, type InvestigationResult } from "./investigation-result.ts";
 
-const result = {
+const result: Pick<InvestigationResult["result"], "evidence"> = {
   evidence: [
     {
       ref: "call:1",
@@ -26,7 +26,7 @@ const result = {
     },
     { ref: "call:4", tool: "lookup_advisory", kind: "advisory", advisoryId: "GHSA-aaaa" },
   ],
-} as InvestigationResult["result"];
+};
 
 describe("evidenceLinks", () => {
   it("links findings, lists occurrences without a link, and names advisories", () => {

@@ -16,13 +16,16 @@ import { createProjectStore } from "./projects.ts";
 import { createOrgStore, type Role } from "./orgs.ts";
 import type { Profile } from "./profile.ts";
 import { createUserStore } from "./users.ts";
+import { type LogLine, testUserId } from "./test-support.ts";
 
 const databaseUrl = process.env["DATABASE_URL"];
+
 if (!databaseUrl) throw new Error("DATABASE_URL is required (see `task api:test:integration`)");
 
 const LIMITS = { ttlHours: 168, maxPending: 3, maxPerDay: 6, maxMembers: 4 };
 
-const logLines: Record<string, unknown>[] = [];
+const logLines: LogLine[] = [];
+
 const logger = createLogger("api-test", {
   level: "debug",
   destination: new Writable({
@@ -34,9 +37,13 @@ const logger = createLogger("api-test", {
 });
 
 let pool: Pool;
+
 let app: ReturnType<typeof buildApp>;
+
 const run = randomUUID().slice(0, 8);
+
 const profiles = new Map<string, Profile>();
+
 let profileDown = false;
 
 interface TestUser {
@@ -48,11 +55,14 @@ interface TestUser {
 /** A real user row. The fake userinfo reports `verified` and `email` for their bearer token. */
 async function newUser(label: string, options: { verified?: boolean } = {}): Promise<TestUser> {
   const email = `${label}-${run}@example.com`;
+
   const user = await createUserStore(pool).resolve({
     issuer: "http://invitations.test",
     subject: randomUUID(),
   });
+
   profiles.set(user.id, { email, emailVerified: options.verified ?? true });
+
   return {
     id: user.id,
     email,
@@ -67,8 +77,10 @@ async function newOrg(admin: TestUser, members: [TestUser, Role][] = []) {
     headers: admin.headers,
     payload: { name: "Team", slug: `inv-${randomUUID().slice(0, 12)}` },
   });
+
   expect(res.statusCode).toBe(201);
   const org: { id: string; slug: string } = res.json();
+
   for (const [user, role] of members) {
     await pool.query("INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, $3)", [
       org.id,
@@ -76,19 +88,29 @@ async function newOrg(admin: TestUser, members: [TestUser, Role][] = []) {
       role,
     ]);
   }
+
   return org;
 }
+
+type CallPayload = {
+  token?: string | number | string[] | null;
+  email?: string;
+  role?: string;
+};
 
 const call = (
   who: TestUser | null,
   method: "GET" | "POST" | "DELETE",
   url: string,
-  payload?: object,
+  payload?: CallPayload,
 ) => app.inject({ method, url, headers: who?.headers ?? {}, payload });
+
 const invite = (who: TestUser, orgId: string, email: string, role: Role = "member") =>
   call(who, "POST", `/v1/orgs/${orgId}/invitations`, { email, role });
-const accept = (who: TestUser | null, token: unknown) =>
-  call(who, "POST", "/v1/invitations/accept", { token } as object);
+
+const accept = (who: TestUser | null, token: CallPayload["token"]) =>
+  call(who, "POST", "/v1/invitations/accept", { token });
+
 const invitationsPath = (orgId: string, id?: string) =>
   `/v1/orgs/${orgId}/invitations${id ? `/${id}` : ""}`;
 
@@ -99,9 +121,11 @@ const roleOf = async (orgId: string, userId: string) =>
       userId,
     ])
   ).rows[0]?.role;
+
 const memberCount = async (orgId: string) =>
   (await pool.query("SELECT count(*)::int AS n FROM memberships WHERE org_id = $1", [orgId]))
     .rows[0].n;
+
 const audit = async (orgId: string, action: string) =>
   (
     await pool.query("SELECT * FROM audit_events WHERE org_id = $1 AND action = $2", [
@@ -109,6 +133,7 @@ const audit = async (orgId: string, action: string) =>
       action,
     ])
   ).rows;
+
 const statusOf = async (id: string) =>
   (await pool.query("SELECT status FROM invitations WHERE id = $1", [id])).rows[0].status;
 
@@ -121,7 +146,8 @@ async function invitation(
 ) {
   const res = await invite(admin, orgId, invitee.email, role);
   expect(res.statusCode).toBe(201);
-  return res.json() as { id: string; token: string };
+
+  return res.json<{ id: string; token: string }>();
 }
 
 beforeAll(async () => {
@@ -139,22 +165,27 @@ beforeAll(async () => {
       webUrl: "http://localhost:3000",
       fetchProfile: async (token) => {
         if (profileDown) throw unavailable("profile_fetch_failed");
+
         return profiles.get(token) ?? { emailVerified: false };
       },
     }),
     trustedProxies: false,
     ready: async () => true,
     authenticate: async (request) => {
-      const id = request.headers["x-test-user" as "authorization"];
+      const id = testUserId(request.headers);
+
       if (!id) throw unauthenticated("missing_token");
       const { rows } = await pool.query("SELECT issuer, subject FROM users WHERE id = $1", [id]);
+
       return userStore.resolve(rows[0]);
     },
   });
 });
+
 beforeEach(() => {
   profileDown = false;
 });
+
 afterAll(async () => {
   await app.close();
   await pool.end();
@@ -203,9 +234,11 @@ describe("creating and managing invitations", () => {
     for (let i = 0; i < 3; i++) {
       expect((await call(admin, "DELETE", invitationsPath(org.id, first.id))).statusCode).toBe(204);
     }
+
     expect(await statusOf(first.id)).toBe("revoked");
     expect(await audit(org.id, "invitation.revoked")).toHaveLength(1);
     expect((await call(admin, "GET", invitationsPath(org.id))).json().items).toHaveLength(1);
+
     for (const id of [randomUUID(), "not-a-uuid"]) {
       expect((await call(admin, "DELETE", invitationsPath(org.id, id))).statusCode).toBe(204);
     }
@@ -217,6 +250,7 @@ describe("creating and managing invitations", () => {
       await newUser("x-other"),
       await newUser("x-invitee"),
     ];
+
     const org = await newOrg(admin);
     const otherOrg = await newOrg(other);
     const foreign = await invitation(admin, org.id, invitee);
@@ -229,6 +263,7 @@ describe("creating and managing invitations", () => {
   it("rejects invalid emails and roles", async () => {
     const admin = await newUser("v-admin");
     const org = await newOrg(admin);
+
     for (const payload of [
       {},
       { role: "member" },
@@ -271,6 +306,7 @@ describe("authorization", () => {
       await newUser("a-member"),
       await newUser("a-invitee"),
     ];
+
     const org = await newOrg(admin, [[member, "member"]]);
     const existing = await invitation(admin, org.id, invitee);
 
@@ -282,6 +318,7 @@ describe("authorization", () => {
       expect(res.statusCode).toBe(403);
       expect(res.json().type).toBe("urn:sentra:error:forbidden");
     }
+
     expect(await statusOf(existing.id)).toBe("pending");
     expect(await audit(org.id, "invitation.created")).toHaveLength(1);
   });
@@ -290,6 +327,7 @@ describe("authorization", () => {
     const [admin, outsider] = [await newUser("n-admin"), await newUser("n-outsider")];
     const org = await newOrg(admin);
     const existing = await invitation(admin, org.id, await newUser("n-invitee"));
+
     const normalize = (r: Awaited<ReturnType<typeof call>>) => ({
       status: r.statusCode,
       body: { ...r.json(), correlationId: "x" },
@@ -300,11 +338,13 @@ describe("authorization", () => {
       ["GET", (id) => invitationsPath(id)],
       ["DELETE", (id) => invitationsPath(id, existing.id)],
     ];
+
     for (const [method, url, payload] of probes) {
       const missing = normalize(await call(outsider, method, url(randomUUID()), payload));
       expect(missing.status).toBe(404);
       expect(normalize(await call(outsider, method, url(org.id), payload))).toEqual(missing);
     }
+
     expect(await statusOf(existing.id)).toBe("pending");
   });
 
@@ -321,11 +361,13 @@ describe("limits", () => {
   it("refuses invitations past the pending cap, even when sent in parallel", async () => {
     const admin = await newUser("p-admin");
     const org = await newOrg(admin);
+
     const results = await Promise.all(
       Array.from({ length: LIMITS.maxPending + 3 }, (_, i) =>
         invite(admin, org.id, `p${i}-${run}@example.com`),
       ),
     );
+
     const statuses = results.map((r) => r.statusCode);
     expect(statuses.filter((s) => s === 201)).toHaveLength(LIMITS.maxPending);
     expect(statuses.filter((s) => s === 403)).toHaveLength(3);
@@ -340,9 +382,11 @@ describe("limits", () => {
   it("refuses invitations past the daily cap, even when revoking and re-inviting", async () => {
     const admin = await newUser("d-admin");
     const org = await newOrg(admin);
+
     for (let i = 0; i < LIMITS.maxPerDay; i++) {
       expect((await invite(admin, org.id, `same-${run}@example.com`)).statusCode).toBe(201);
     }
+
     const res = await invite(admin, org.id, `same-${run}@example.com`);
     expect(res.statusCode).toBe(403);
     expect(res.json().type).toBe("urn:sentra:error:invitation_limit_reached");
@@ -351,6 +395,7 @@ describe("limits", () => {
   it("does not count expired invitations as pending", async () => {
     const admin = await newUser("e-admin");
     const org = await newOrg(admin);
+
     for (let i = 0; i < LIMITS.maxPending; i++)
       await invite(admin, org.id, `e${i}-${run}@example.com`);
     await pool.query(
@@ -364,10 +409,12 @@ describe("limits", () => {
   it("refuses to accept into an org at the member cap and keeps the invitation usable", async () => {
     const [admin, invitee] = [await newUser("m-admin"), await newUser("m-invitee")];
     const fillers = await Promise.all([1, 2, 3].map((i) => newUser(`m-fill${i}`)));
+
     const org = await newOrg(
       admin,
       fillers.map((u) => [u, "member"]),
     );
+
     expect(await memberCount(org.id)).toBe(LIMITS.maxMembers);
     const sent = await invitation(admin, org.id, invitee);
 
@@ -412,6 +459,7 @@ describe("accepting", () => {
       await newUser("w-other"),
       await newUser("w-unverified", { verified: false }),
     ];
+
     const org = await newOrg(admin);
     const sent = await invitation(admin, org.id, invitee);
     // Same address, but the identity provider says it is not verified.
@@ -426,6 +474,7 @@ describe("accepting", () => {
       );
       expect(await roleOf(org.id, who.id)).toBeUndefined();
     }
+
     expect(await statusOf(sent.id)).toBe("pending");
     expect((await accept(invitee, sent.token)).statusCode).toBe(200);
   });
@@ -436,11 +485,13 @@ describe("accepting", () => {
       await newUser("t-invitee"),
       await newUser("t-other"),
     ];
+
     const org = await newOrg(admin);
 
     for (const token of [randomUUID(), "x".repeat(43), "", "a".repeat(500)]) {
       expect((await accept(invitee, token)).statusCode).toBe(404);
     }
+
     for (const token of [undefined, 1, null, ["a"]]) {
       expect((await accept(invitee, token)).statusCode).toBe(400);
     }
@@ -486,6 +537,7 @@ describe("accepting", () => {
       await newUser("race-invitee"),
       await newUser("race-other"),
     ];
+
     const org = await newOrg(admin);
     const sent = await invitation(admin, org.id, invitee);
     const results = await Promise.all([accept(invitee, sent.token), accept(other, sent.token)]);
@@ -547,6 +599,7 @@ describe("failures", () => {
     await pool.query(
       "CREATE TRIGGER fail_invitation_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION fail_invitation_audit()",
     );
+
     try {
       const res = await app.inject({
         method: "POST",
@@ -554,11 +607,13 @@ describe("failures", () => {
         headers: { ...invitee.headers, "x-correlation-id": "force-fail" },
         payload: { token: sent.token },
       });
+
       expect(res.statusCode).toBe(500);
     } finally {
       await pool.query("DROP TRIGGER fail_invitation_audit ON audit_events");
       await pool.query("DROP FUNCTION fail_invitation_audit()");
     }
+
     expect(await statusOf(sent.id)).toBe("pending");
     expect(await roleOf(org.id, invitee.id)).toBeUndefined();
     expect((await accept(invitee, sent.token)).statusCode).toBe(200);
@@ -572,6 +627,7 @@ describe("secrets and observability", () => {
       await newUser("s-invitee"),
       await newUser("s-other"),
     ];
+
     const org = await newOrg(admin);
     logLines.length = 0;
     const sent = await invitation(admin, org.id, invitee);
@@ -589,6 +645,7 @@ describe("secrets and observability", () => {
     expect(logLines.some((l) => l["message"] === "invitation_accepted")).toBe(true);
 
     const text = (await app.inject({ method: "GET", url: "/metrics" })).body;
+
     for (const name of ["created", "accepted", "mismatch", "unknown"]) {
       expect(text).toContain(`invitation_outcomes_total{outcome="${name}"}`);
     }

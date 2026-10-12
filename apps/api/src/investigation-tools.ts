@@ -4,6 +4,7 @@
 import type { Pool, PoolClient } from "pg";
 import { AppError, type Logger } from "@sentra/ts-platform";
 import { TOOL_HANDLERS, type ToolOutput, type ToolScope } from "./investigation-tool-handlers.ts";
+import type { Json, JsonObject } from "./json.ts";
 import * as metrics from "./metrics.ts";
 import { inTransaction } from "./orgs.ts";
 import {
@@ -11,6 +12,7 @@ import {
   loadResultContract,
   RESULT_SCHEMA_VERSION,
   type LedgerCall,
+  type ToolResult,
   type ResultContract,
   type Snapshot,
   type ViolationCode,
@@ -20,8 +22,11 @@ import type { ToolName, ToolValidators } from "./tool-contracts.ts";
 import { signToken, type SigningKey } from "./tool-token.ts";
 
 const MAX_TOOL_CALLS = 8;
+
 export const MAX_ROUNDS = 4;
+
 const STATEMENT_TIMEOUT_MS = 2000;
+
 /** Runs stamped with this prompt version or later end with a stored result instead of a draft. */
 const PROMPT_VERSION_WITH_RESULT = 3;
 
@@ -56,6 +61,7 @@ interface LiveRunRow {
 }
 
 type CallOutcome = ToolOutput["outcome"] | "limit";
+
 type Outcome = CallOutcome | "error";
 
 interface LedgerEntry {
@@ -86,7 +92,9 @@ async function findLiveRun(
        AND (attempt_deadline_at IS NULL OR attempt_deadline_at > now())`,
     [investigationId, leaseOwner],
   );
+
   const row = rows[0];
+
   return (
     row && {
       orgId: row.org_id,
@@ -128,6 +136,7 @@ async function recordCall(
       entry.durationMs,
     ],
   );
+
   return rows[0]!.call_no;
 }
 
@@ -136,7 +145,7 @@ export interface ToolCall {
   leaseOwner: string;
   tool: ToolName;
   round: number;
-  args: Record<string, unknown>;
+  args: JsonObject;
 }
 
 /** Enforces the per-attempt cap and the argument contract, then runs the tool. */
@@ -151,13 +160,18 @@ async function runTool(
      WHERE investigation_id = $1 AND attempt = $2 AND tool <> 'token_exchange'`,
     [call.investigationId, run.attempt],
   );
+
   if (rows[0]!.n >= MAX_TOOL_CALLS) return { outcome: "limit", args: null };
+
   if (!validators.arguments(call.args)) return { outcome: "invalid_args", args: null };
   const output = await TOOL_HANDLERS[call.tool](db, run, call.args);
+
   if (output.outcome !== "ok") return { outcome: output.outcome, args: call.args };
+
   if (!validators.result(output.data)) {
     throw new Error(`${call.tool} result violates its contract`);
   }
+
   return { ...output, args: call.args };
 }
 
@@ -169,15 +183,19 @@ async function exchangeToken(
   leaseOwner: string,
 ) {
   const started = performance.now();
+
   return inTransaction(pool, async (db) => {
     await lockRun(db, investigationId);
     const run = await findLiveRun(db, investigationId, leaseOwner);
+
     if (!run) throw leaseLost();
+
     const token = signToken(signingKeys, {
       inv: investigationId,
       lease: leaseOwner,
       exp: Math.floor(run.expiresAt.getTime() / 1000),
     });
+
     await recordCall(db, investigationId, run, {
       tool: "token_exchange",
       round: 0,
@@ -186,6 +204,7 @@ async function exchangeToken(
       result: { expiresAt: run.expiresAt.toISOString() },
       durationMs: Math.round(performance.now() - started),
     });
+
     return { token, expiresAt: run.expiresAt.toISOString() };
   });
 }
@@ -199,6 +218,7 @@ async function callTool(
   const started = performance.now();
   const elapsed = () => Math.round(performance.now() - started);
   let run: LiveRun | undefined;
+
   const record = (outcome: Outcome, entry: Partial<LedgerEntry> = {}) => ({
     tool: call.tool,
     round: call.round,
@@ -208,6 +228,7 @@ async function callTool(
     durationMs: elapsed(),
     ...entry,
   });
+
   try {
     const result = await inTransaction(pool, async (db) => {
       await db.query("SELECT set_config('statement_timeout', $1, true)", [
@@ -215,8 +236,10 @@ async function callTool(
       ]);
       await lockRun(db, call.investigationId);
       run = await findLiveRun(db, call.investigationId, call.leaseOwner);
+
       if (!run) throw leaseLost();
       const done = await runTool(db, run, call, validators[call.tool]);
+
       const callNo = await recordCall(
         db,
         call.investigationId,
@@ -227,8 +250,10 @@ async function callTool(
           truncated: done.truncated ?? false,
         }),
       );
+
       return { ...done, callNo: callNo! };
     });
+
     metrics.inc("investigation_tool_calls_total", { tool: call.tool, outcome: result.outcome });
     metrics.observe("investigation_tool_duration_seconds", { tool: call.tool }, elapsed() / 1000);
     log.info(
@@ -241,15 +266,17 @@ async function callTool(
       },
       "investigation_tool_call",
     );
+
     return toResponse(result);
   } catch (err) {
     if (run && !(err instanceof AppError)) {
       // The transaction rolled back with the failure; keep evidence that the call happened.
       metrics.inc("investigation_tool_calls_total", { tool: call.tool, outcome: "error" });
-      await recordCall(pool, call.investigationId, run, record("error")).catch(
-        (ledgerErr: unknown) => log.error({ err: String(ledgerErr) }, "tool_ledger_write_failed"),
+      await recordCall(pool, call.investigationId, run, record("error")).catch((ledgerErr) =>
+        log.error({ err: String(ledgerErr) }, "tool_ledger_write_failed"),
       );
     }
+
     throw err;
   }
 }
@@ -258,6 +285,7 @@ function toResponse(done: Awaited<ReturnType<typeof runTool>> & { callNo: number
   if (done.outcome === "ok") {
     return { outcome: "ok", call: done.callNo, data: done.data!, truncated: done.truncated! };
   }
+
   return { outcome: done.outcome, error: { code: ERROR_CODES[done.outcome] } };
 }
 
@@ -270,7 +298,7 @@ interface LedgerRow {
   tool: ToolName;
   outcome: string;
   truncated: boolean;
-  result: unknown;
+  result: ToolResult | null;
 }
 
 /** The whole investigation's numbered calls; result bodies are loaded only for the current attempt. */
@@ -285,6 +313,7 @@ async function loadLedger(
      WHERE investigation_id = $1 AND call_no IS NOT NULL ORDER BY attempt, call_no`,
     [investigationId, attempt],
   );
+
   return rows.map((r) => ({
     callNo: r.call_no,
     attempt: r.attempt,
@@ -304,19 +333,22 @@ async function completeRun(
   contract: ResultContract,
   investigationId: string,
   leaseOwner: string,
-  answer: unknown,
+  answer: Json,
 ): Promise<CompleteOutcome & { orgId: string }> {
   return inTransaction(pool, async (db) => {
     await lockRun(db, investigationId);
     const run = await findLiveRun(db, investigationId, leaseOwner);
+
     if (!run) {
       const stored = await db.query<{ org_id: string }>(
         "SELECT org_id FROM investigation_results WHERE investigation_id = $1",
         [investigationId],
       );
+
       if (stored.rows[0]) return { outcome: "ok", orgId: stored.rows[0].org_id };
       throw leaseLost();
     }
+
     const { rows } = await db.query<{
       context_snapshot: Snapshot;
       model_id: string;
@@ -324,11 +356,15 @@ async function completeRun(
     }>("SELECT context_snapshot, model_id, prompt_version FROM investigations WHERE id = $1", [
       investigationId,
     ]);
+
     const row = rows[0]!;
+
     if (row.prompt_version < PROMPT_VERSION_WITH_RESULT) {
       throw new AppError("invalid_input", 400, "Invalid input", { reason: "prompt_version" });
     }
+
     const calls = await loadLedger(db, investigationId, run.attempt);
+
     const built = buildResult(
       contract,
       answer,
@@ -342,14 +378,17 @@ async function completeRun(
       },
       new Date(),
     );
+
     if (!built.ok) {
       return { outcome: "invalid_result", violations: built.violations, orgId: run.orgId };
     }
+
     await db.query(
       `INSERT INTO investigation_results (investigation_id, org_id, project_id, attempt, schema_version, result)
        VALUES ($1, $2, $3, $4, $5, $6)`,
       [investigationId, run.orgId, run.projectId, run.attempt, RESULT_SCHEMA_VERSION, built.value],
     );
+
     // The run may have left `running` since findLiveRun (swept, re-queued, re-claimed) while the INSERT
     // waited; completing it then would resurrect it. Zero rows rolls the INSERT back.
     const completed = await db.query(
@@ -359,7 +398,9 @@ async function completeRun(
        RETURNING id`,
       [investigationId, run.orgId, leaseOwner],
     );
+
     if (completed.rowCount === 0) throw leaseLost();
+
     return { outcome: "ok", orgId: run.orgId };
   });
 }
@@ -367,10 +408,11 @@ async function completeRun(
 async function complete(
   pool: Pool,
   contract: ResultContract,
-  request: { investigationId: string; leaseOwner: string; round: number; result: unknown },
+  request: { investigationId: string; leaseOwner: string; round: number; result: Json },
   log: Logger,
 ): Promise<CompleteOutcome> {
   let done: Awaited<ReturnType<typeof completeRun>>;
+
   try {
     done = await completeRun(
       pool,
@@ -383,10 +425,13 @@ async function complete(
     if (err instanceof AppError && err.code === "lease_lost") {
       metrics.inc("investigation_result_outcomes_total", { outcome: "lease_lost" });
     }
+
     throw err;
   }
+
   metrics.inc("investigation_result_outcomes_total", { outcome: done.outcome });
   const violations = done.outcome === "invalid_result" ? done.violations : [];
+
   for (const code of violations) metrics.inc("investigation_result_violations_total", { code });
   // Violation codes only: the answer itself is never logged.
   log.info(
@@ -399,6 +444,7 @@ async function complete(
     },
     "investigation_result",
   );
+
   return done.outcome === "ok" ? { outcome: "ok" } : { outcome: "invalid_result", violations };
 }
 
@@ -407,12 +453,13 @@ export function createInvestigationTools(
   options: { signingKeys: SigningKey[]; validators: Record<ToolName, ToolValidators> },
 ) {
   const resultContract = loadResultContract();
+
   return {
     exchangeToken: (investigationId: string, leaseOwner: string) =>
       exchangeToken(pool, options.signingKeys, investigationId, leaseOwner),
     callTool: (call: ToolCall, log: Logger) => callTool(pool, options.validators, call, log),
     complete: (
-      request: { investigationId: string; leaseOwner: string; round: number; result: unknown },
+      request: { investigationId: string; leaseOwner: string; round: number; result: Json },
       log: Logger,
     ) => complete(pool, resultContract, request, log),
   };

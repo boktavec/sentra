@@ -15,18 +15,20 @@ export interface ErrorResponse {
 }
 
 /** The only place errors become responses. Unknown errors never leak details. */
-export function toErrorResponse(err: unknown, correlationId: string): ErrorResponse {
+export function toErrorResponse(err: Error, correlationId: string): ErrorResponse {
   const known = err instanceof AppError;
   const status = known ? err.status : 500;
   const code = known ? err.code : "internal_error";
   const title = known ? err.message : "Internal server error";
-  const headers: Record<string, string> = { "content-type": "application/problem+json" };
+  const headers = new Map([["content-type", "application/problem+json"]]);
+
   if (known && err.options.retryAfterSeconds !== undefined) {
-    headers["retry-after"] = String(err.options.retryAfterSeconds);
+    headers.set("retry-after", String(err.options.retryAfterSeconds));
   }
+
   return {
     status,
-    headers,
+    headers: Object.fromEntries(headers),
     body: { type: `urn:sentra:error:${code}`, title, status, correlationId },
   };
 }

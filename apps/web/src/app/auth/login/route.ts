@@ -22,16 +22,20 @@ export async function GET() {
       state,
       nonce,
     });
+
     logger.info({}, "login_started");
     const response = NextResponse.redirect(url);
     response.cookies.set(LOGIN_COOKIE, state, cookieOptions(600));
+
     return response;
   } catch (err) {
     logger.error({ err: String(err) }, "login_start_failed");
+
     const { status, headers, body } = toErrorResponse(
       unavailable("login_start_failed", err),
       crypto.randomUUID(),
     );
+
     return NextResponse.json(body, { status, headers });
   }
 }

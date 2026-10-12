@@ -7,7 +7,9 @@ import { createOrg, signUp, screenshotPath } from "./helpers";
 const { Pool } = createRequire(new URL("../../api/package.json", import.meta.url))("pg");
 
 const HUGE_GROUP = 52;
+
 const UNAVAILABLE_PORT = 3001;
+
 const UNAVAILABLE_URL = `http://localhost:${UNAVAILABLE_PORT}`;
 
 /** Stops the server and the `next` process it started (its process group). */
@@ -24,6 +26,7 @@ async function startWebWithoutApi() {
     stdio: "ignore",
     detached: true,
   });
+
   for (let i = 0; i < 60; i++) {
     if (
       await fetch(`${UNAVAILABLE_URL}/auth/login`, { redirect: "manual" }).then(
@@ -34,6 +37,7 @@ async function startWebWithoutApi() {
       return server;
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
+
   stopServer(server);
   throw new Error("The web app without an API did not start");
 }
@@ -41,8 +45,10 @@ async function startWebWithoutApi() {
 /** Findings come from the correlator, so the browser test seeds them with SQL, one per scenario. */
 async function seed(orgSlug: string, projectSlug: string) {
   const databaseUrl = process.env["DATABASE_URL"];
+
   if (!databaseUrl) throw new Error("DATABASE_URL is required for the finding detail browser test");
   const pool = new Pool({ connectionString: databaseUrl });
+
   try {
     const { rows } = await pool.query(
       `SELECT o.id AS org_id, p.id AS project_id, p.created_by
@@ -50,7 +56,9 @@ async function seed(orgSlug: string, projectSlug: string) {
        WHERE o.slug = $1 AND p.slug = $2`,
       [orgSlug, projectSlug],
     );
+
     const { org_id: orgId, project_id: projectId, created_by: userId } = rows[0];
+
     const importId = (
       await pool.query(
         `INSERT INTO sbom_imports (org_id, project_id, created_by, filename, status, object_key, expires_at)
@@ -58,6 +66,7 @@ async function seed(orgSlug: string, projectSlug: string) {
         [orgId, projectId, userId, `detail-${randomUUID()}`],
       )
     ).rows[0].id;
+
     const cve = `CVE-2026-${parseInt(randomUUID().replaceAll("-", "").slice(0, 8), 16)}`;
 
     const advisory = async (
@@ -90,25 +99,29 @@ async function seed(orgSlug: string, projectSlug: string) {
             "a".repeat(64),
           ],
         )
-      ).rows[0].id as string;
+      ).rows[0].id;
+
     const group = async (ids: string[]) => {
       const id = randomUUID();
       await pool.query(
         "INSERT INTO vulnerability_groups (id, canonical_vulnerability_id) VALUES ($1, $2)",
         [id, ids[0]],
       );
+
       for (const v of ids)
         await pool.query(
           "INSERT INTO vulnerability_group_members (vulnerability_id, group_id) VALUES ($1, $2)",
           [v, id],
         );
     };
+
     const dependency = (purl: string, name: string, version: string) =>
       pool.query(
         `INSERT INTO sbom_dependencies (import_id, org_id, project_id, purl, purl_type, name, version, ecosystem, scope, occurrences)
          VALUES ($1, $2, $3, $4, 'pypi', $5, $6, 'PyPI', 'required', 1)`,
         [importId, orgId, projectId, purl, name, version],
       );
+
     const affected = async (vulnerabilityId: string, name: string, events: [string, string][]) => {
       const id = randomUUID();
       await pool.query(
@@ -116,6 +129,7 @@ async function seed(orgSlug: string, projectSlug: string) {
          VALUES ($1, $2, 'PyPI', $3)`,
         [id, vulnerabilityId, name],
       );
+
       for (const [i, [type, version]] of events.entries())
         await pool.query(
           `INSERT INTO vulnerability_ranges (affected_id, range_index, event_index, range_type, event_type, event_version)
@@ -123,6 +137,7 @@ async function seed(orgSlug: string, projectSlug: string) {
           [id, i, type, version],
         );
     };
+
     const finding = async (
       vulnerabilityId: string,
       purl: string,
@@ -149,7 +164,8 @@ async function seed(orgSlug: string, projectSlug: string) {
             JSON.stringify(o.evidence),
           ],
         )
-      ).rows[0].id as string;
+      ).rows[0].id;
+
     const range = (pkg: string, dependencyVersion: string, events: object[]) => ({
       package: pkg,
       dependencyVersion,
@@ -157,6 +173,7 @@ async function seed(orgSlug: string, projectSlug: string) {
       comparator: "pep440",
       range: { type: "ECOSYSTEM", events },
     });
+
     const events = [
       { type: "introduced", version: "0" },
       { type: "fixed", version: "1.2.0" },
@@ -173,6 +190,7 @@ async function seed(orgSlug: string, projectSlug: string) {
         { type: "WEB", url: null },
       ]),
     });
+
     const osv = await advisory("PYSEC-trac", { aliases: [cve], score: 9.8 });
     await group([ghsa, osv]);
     await dependency("pkg:pypi/trac@1.0.0", "trac", "1.0.0");
@@ -181,9 +199,11 @@ async function seed(orgSlug: string, projectSlug: string) {
       ["fixed", "1.2.0"],
     ]);
     await affected(ghsa, "unrelated-package", [["introduced", "0"]]);
+
     const trac = await finding(ghsa, "pkg:pypi/trac@1.0.0", "1.0.0", {
       evidence: range("trac", "1.0.0", events),
     });
+
     await finding(osv, "pkg:pypi/trac@1.0.0", "1.0.0", {
       evidence: range("trac", "1.0.0", events),
     });
@@ -202,6 +222,7 @@ async function seed(orgSlug: string, projectSlug: string) {
 
     const legacyAdvisory = await advisory("PYSEC-legacy", { score: 5.5 });
     await dependency("pkg:pypi/legacy@abc", "legacy", "abc");
+
     const unverifiable = await finding(legacyAdvisory, "pkg:pypi/legacy@abc", "abc", {
       unverifiable: true,
       evidence: range("legacy", "abc", events),
@@ -209,6 +230,7 @@ async function seed(orgSlug: string, projectSlug: string) {
 
     const withdrawn = await advisory("PYSEC-gone", { withdrawn: true });
     await dependency("pkg:pypi/gone@1.0", "gone", "1.0");
+
     const resolved = await finding(withdrawn, "pkg:pypi/gone@1.0", "1.0", {
       resolved: true,
       evidence: {
@@ -220,6 +242,7 @@ async function seed(orgSlug: string, projectSlug: string) {
     });
 
     const huge: string[] = [];
+
     for (let i = 0; i < HUGE_GROUP; i++)
       huge.push(
         await advisory(`PYSEC-huge-${i}`, {
@@ -235,6 +258,7 @@ async function seed(orgSlug: string, projectSlug: string) {
     await group(huge);
     await dependency("pkg:pypi/huge@1.0", "huge", "1.0");
     const hugeFindings: string[] = [];
+
     for (const id of huge)
       hugeFindings.push(
         await finding(id, "pkg:pypi/huge@1.0", "1.0", {
@@ -267,6 +291,7 @@ test("members can read the evidence behind a finding, and outsiders cannot", asy
   await expect(page.getByRole("link", { name: "View findings" })).toBeVisible();
   const ids = await seed(orgSlug, "web-app");
   const detail = (id: string) => `/orgs/${orgSlug}/projects/web-app/findings/${id}`;
+
   const shot = async (name: string, fullPage = true) => {
     await page.waitForLoadState("networkidle");
     await page.screenshot({
@@ -334,6 +359,7 @@ test("members can read the evidence behind a finding, and outsiders cannot", asy
 
   // The same pages served by a web app whose API is unreachable (same cookies: ports do not isolate them).
   const unavailable = await startWebWithoutApi();
+
   try {
     await page.goto(`${UNAVAILABLE_URL}${detail(ids.trac)}`);
     await expect(page.locator("main[role=alert]")).toContainText("Reference:");

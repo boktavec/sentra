@@ -16,8 +16,11 @@ import { RefreshButton } from "./refresh-button";
 export const dynamic = "force-dynamic";
 
 const STATUSES: FindingStatus[] = ["open", "resolved", "all"];
+
 const SORTS: FindingSort[] = ["priority", "severity", "newest"];
+
 const PRIORITIES: FindingPriorityFilter[] = ["all", "p1", "p2", "p3", "p4"];
+
 const SEVERITIES: FindingSeverity[] = [
   "all",
   "critical",
@@ -175,18 +178,21 @@ async function FindingsResults({
   base: string;
 }) {
   const result = await listFindings(orgId, projectSlug, filters, cursor);
+
   if (!result.ok)
     return (
       <p role="alert" data-testid="findings-error">
         Findings are temporarily unavailable. Reference: {result.correlationId}
       </p>
     );
+
   if (result.data.items.length === 0)
     return (
       <p data-testid="no-findings">
         No {filters.status === "open" ? "open " : ""}findings match these filters.
       </p>
     );
+
   return (
     <>
       <FindingsTable items={result.data.items} base={base} />
@@ -206,6 +212,7 @@ function NextPageLink({
 }) {
   if (!cursor) return null;
   const next = new URLSearchParams({ ...filters, cursor });
+
   return (
     <p>
       <Link href={`${base}/findings?${next}`}>Next page</Link>
@@ -214,7 +221,7 @@ function NextPageLink({
 }
 
 const choose = <T extends string>(options: T[], value: string | undefined, fallback: T): T =>
-  options.includes(value as T) ? (value as T) : fallback;
+  options.find((option) => option === value) ?? fallback;
 
 export default async function FindingsPage({
   params,
@@ -225,13 +232,16 @@ export default async function FindingsPage({
 }) {
   const { slug, projectSlug } = await params;
   const query = await searchParams;
+
   const filters: FindingFilters = {
     status: choose(STATUSES, query.status, "open"),
     severity: choose(SEVERITIES, query.severity, "all"),
     sort: choose(SORTS, query.sort, "priority"),
     priority: choose(PRIORITIES, query.priority, "all"),
   };
+
   const scope = await fetchProjectScope(slug, projectSlug);
+
   if (!scope.ok)
     return (
       <main role="alert">

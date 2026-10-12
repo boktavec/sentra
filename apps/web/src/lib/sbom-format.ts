@@ -27,19 +27,21 @@ export const STATUS_LABELS: Record<SbomStatus, string> = {
   expired: "Expired",
 };
 
-const REASONS: Record<string, string> = {
-  size: "The file is empty or larger than 10 MiB.",
-  not_json: "The file is not valid JSON.",
-  not_cyclonedx: "The file is JSON but not a CycloneDX SBOM.",
-  unsupported_version: "This CycloneDX version is not supported yet.",
-  no_components:
+const REASONS = new Map<string, string>([
+  ["size", "The file is empty or larger than 10 MiB."],
+  ["not_json", "The file is not valid JSON."],
+  ["not_cyclonedx", "The file is JSON but not a CycloneDX SBOM."],
+  ["unsupported_version", "This CycloneDX version is not supported yet."],
+  [
+    "no_components",
     "The SBOM has no components with a package URL (purl) and a version, so there is nothing to check.",
-  too_many_components: "The SBOM has more components than Sentra supports (50,000).",
-  processing_failed: "Sentra could not process the file. Upload it again.",
-};
+  ],
+  ["too_many_components", "The SBOM has more components than Sentra supports (50,000)."],
+  ["processing_failed", "Sentra could not process the file. Upload it again."],
+]);
 
 export const reasonMessage = (code: string | null) =>
-  code ? (REASONS[code] ?? "The file was rejected.") : "";
+  code ? (REASONS.get(code) ?? "The file was rejected.") : "";
 
 /** "12 dependencies, 3 skipped" for a parsed import; empty for any other state. */
 export function dependencySummary(
@@ -47,6 +49,7 @@ export function dependencySummary(
 ): string {
   if (item.status !== "parsed" || item.dependencyCount === null) return "";
   const text = `${item.dependencyCount} dependencies`;
+
   return item.skippedCount ? `${text}, ${item.skippedCount} skipped (no usable package URL)` : text;
 }
 
@@ -59,15 +62,21 @@ export function checkFile(name: string, size: number): string | null {
   if (!name.toLowerCase().endsWith(".json")) {
     return "Choose a CycloneDX JSON file (.json).";
   }
+
   if (size === 0) return "That file is empty.";
+
   if (size > MAX_SBOM_BYTES) return "That file is larger than 10 MiB.";
+
   return null;
 }
 
 export function formatBytes(bytes: number | null): string {
   if (bytes === null) return "";
+
   if (bytes < 1024) return `${bytes} B`;
+
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+
   return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
 }
 
@@ -75,12 +84,18 @@ export function formatBytes(bytes: number | null): string {
 export function apiErrorMessage(status: number, code?: string): string | null {
   if (status === 429)
     return "This project already has the maximum number of uploads in progress. Wait a few minutes and try again.";
+
   if (status === 404) return "That project was not found.";
+
   if (status === 400) return "That file cannot be uploaded. Check the name and size.";
+
   if (status === 409) {
     if (code === "expired") return "The upload took too long and expired. Start again.";
+
     if (code === "upload_missing") return "The file did not reach storage. Try uploading again.";
+
     if (code === "upload_invalid") return "The uploaded file was empty or too large.";
   }
+
   return null;
 }

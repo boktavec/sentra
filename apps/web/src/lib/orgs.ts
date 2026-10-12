@@ -31,6 +31,8 @@ export const listOrgs = cache(() =>
  */
 export async function fetchOrg(slug: string) {
   const org = await lookupOrg(slug);
+
   if (!org.ok && org.status === 404) notFound();
+
   return org;
 }

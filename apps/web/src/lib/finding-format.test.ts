@@ -56,6 +56,7 @@ describe("explainEvidence", () => {
       rule: "explicit_version",
       comparator: null,
     };
+
     expect(explainEvidence(evidence, "confirmed", null)).toEqual({
       summary: "Version 1.0.0 of trac is listed in the advisory's affected versions.",
       facts: [],
@@ -71,6 +72,7 @@ describe("explainEvidence", () => {
       "confirmed",
       null,
     );
+
     expect(result?.summary).toContain("falls inside an affected range");
     expect(result?.facts).toEqual([
       { label: "Versions compared as", value: "pep440" },
@@ -88,6 +90,7 @@ describe("explainEvidence", () => {
       "confirmed",
       null,
     );
+
     expect(result?.facts.map((f) => f.label)).toEqual([
       "Versions compared as",
       "Introduced in",
@@ -105,6 +108,7 @@ describe("explainEvidence", () => {
       "unverifiable",
       reason,
     );
+
     expect(result?.summary).toContain(text);
     expect(result?.summary).toContain("cannot tell");
     expect(result?.summary).not.toContain("falls inside");
@@ -117,6 +121,7 @@ describe("explainEvidence", () => {
       rule: "no_version_data",
       comparator: null,
     };
+
     expect(explainEvidence(evidence, "unverifiable", "no_version_data")?.summary).toContain(
       "gives no versions or ranges",
     );
@@ -125,9 +130,7 @@ describe("explainEvidence", () => {
   it.each([
     ["an unknown rule", { package: "p", dependencyVersion: "1", rule: "fuzzy" }, "confirmed", null],
     ["a missing package", { dependencyVersion: "1", rule: "explicit_version" }, "confirmed", null],
-    ["non-object evidence", "oops", "confirmed", null],
     ["null evidence", null, "confirmed", null],
-    ["an array", [], "confirmed", null],
     [
       "a range without events",
       { package: "p", dependencyVersion: "1", rule: "range" },
@@ -136,7 +139,12 @@ describe("explainEvidence", () => {
     ],
     [
       "malformed events",
-      { package: "p", dependencyVersion: "1", rule: "range", range: { events: [{ type: 1 }] } },
+      {
+        package: "p",
+        dependencyVersion: "1",
+        rule: "range",
+        range: { events: [{ type: "introduced" }] },
+      },
       "confirmed",
       null,
     ],

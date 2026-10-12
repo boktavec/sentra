@@ -3,6 +3,7 @@ import { auditEventsQuery, listAuditEvents, type AuditFilters } from "@/lib/audi
 import { fetchOrg } from "@/lib/orgs";
 
 export const dynamic = "force-dynamic";
+
 type Query = Partial<Record<keyof AuditFilters | "cursor", string>>;
 
 function Filters({ filters }: { filters: AuditFilters }) {
@@ -33,10 +34,11 @@ function Filters({ filters }: { filters: AuditFilters }) {
   );
 }
 
+const AUDIT_RESULTS = ["success", "failed"] as const;
+
 function filtersOf(query: Query): AuditFilters {
-  const result = ["success", "failed"].includes(query.result ?? "")
-    ? (query.result as "success" | "failed")
-    : undefined;
+  const result = AUDIT_RESULTS.find((outcome) => outcome === query.result);
+
   return { from: query.from, to: query.to, actorId: query.actorId, action: query.action, result };
 }
 
@@ -51,8 +53,10 @@ function Events({ page }: { page: Awaited<ReturnType<typeof listAuditEvents>> })
         Audit history is temporarily unavailable. Reference: {page.correlationId}
       </p>
     );
+
   if (page.data.items.length === 0)
     return <p data-testid="no-audit-events">No audit events match these filters.</p>;
+
   return (
     <table data-testid="audit-events">
       <thead>
@@ -95,6 +99,7 @@ function NextPage({
   filters: AuditFilters;
 }) {
   if (!page.ok || !page.data.nextCursor) return null;
+
   return (
     <p>
       <Link href={nextHref(filters, page.data.nextCursor)}>More audit events</Link>
@@ -105,6 +110,7 @@ function NextPage({
 async function History({ slug, orgId, query }: { slug: string; orgId: string; query: Query }) {
   const filters = filtersOf(query);
   const events = await listAuditEvents(orgId, filters, query.cursor);
+
   return (
     <main>
       <p>
@@ -127,6 +133,7 @@ export default async function AuditEventsPage({
 }) {
   const [{ slug }, query] = await Promise.all([params, searchParams]);
   const org = await fetchOrg(slug);
+
   if (!org.ok)
     return (
       <main>
@@ -135,11 +142,13 @@ export default async function AuditEventsPage({
         </p>
       </main>
     );
+
   if (org.data.role !== "admin")
     return (
       <main>
         <p>You do not have access to audit history.</p>
       </main>
     );
+
   return <History slug={slug} orgId={org.data.id} query={query} />;
 }

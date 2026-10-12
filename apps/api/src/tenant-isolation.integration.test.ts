@@ -17,7 +17,7 @@
 // coverage test fails. Adding a tenant-scoped resource: add its cases, and replace its `it.todo`.
 import { randomUUID } from "node:crypto";
 import { Writable } from "node:stream";
-import { Pool } from "pg";
+import { Pool, type QueryResultRow } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createLogger, unauthenticated } from "@sentra/ts-platform";
 import { buildApp } from "./app.ts";
@@ -36,19 +36,25 @@ import { createSbomStore } from "./sbom.ts";
 import { loadToolValidators } from "./tool-contracts.ts";
 import { parseSigningKeys } from "./tool-token.ts";
 import { createUserStore } from "./users.ts";
+import { testUserId } from "./test-support.ts";
 
 const need = (name: string) => {
   const value = process.env[name];
+
   if (!value) throw new Error(`${name} is required (see \`task api:test:isolation\`)`);
+
   return value;
 };
+
 const databaseUrl = need("DATABASE_URL");
+
 const storage = createSbomStorage({
   endpoint: need("S3_ENDPOINT"),
   bucket: process.env["S3_BUCKET"] ?? "sentra-raw",
   accessKey: need("S3_ACCESS_KEY"),
   secretKey: need("S3_SECRET_KEY"),
 });
+
 const limits = { maxBytes: 1000, uploadTtlSeconds: 900, maxPendingPerProject: 3 };
 
 const logger = createLogger("api-test", {
@@ -70,10 +76,23 @@ interface Target {
   findingId: string;
   investigationId: string;
 }
+
+interface AuditRow {
+  id: string;
+  org_id: string;
+  actor_user_id: string;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  result: string;
+  failure_code: string | null;
+}
+
 interface Req {
   url: string;
   payload?: object;
 }
+
 interface Case {
   route: string;
   /** Admin-only routes must also refuse a plain member of the victim org with 403. */
@@ -84,6 +103,7 @@ interface Case {
 }
 
 const org = (t: Target) => `/v1/orgs/${t.orgId}`;
+
 const sbom = (t: Target, project: string) => `${org(t)}/projects/${project}/sboms`;
 
 const CASES: Case[] = [
@@ -204,34 +224,40 @@ const CASES: Case[] = [
 ];
 
 /** Routes under /v1 that are not tenant-scoped on purpose. */
-const FAILURE_ACTIONS: Record<string, string> = {
-  "POST /v1/orgs/:orgId/projects": "project.create",
-  "POST /v1/orgs/:orgId/projects/:slug/sboms": "sbom.upload_initiated",
-  "POST /v1/orgs/:orgId/projects/:slug/sboms/:importId/complete": "sbom.upload_completed",
-  "PATCH /v1/orgs/:orgId/members/:userId": "member.role_changed",
-  "DELETE /v1/orgs/:orgId/members/:userId": "member.removed",
-  "POST /v1/orgs/:orgId/invitations": "invitation.create",
-  "DELETE /v1/orgs/:orgId/invitations/:invitationId": "invitation.revoked",
-  "POST /v1/orgs/:orgId/projects/:slug/findings/:findingId/investigations": "investigation.create",
-};
+const FAILURE_ACTIONS = new Map(
+  Object.entries({
+    "POST /v1/orgs/:orgId/projects": "project.create",
+    "POST /v1/orgs/:orgId/projects/:slug/sboms": "sbom.upload_initiated",
+    "POST /v1/orgs/:orgId/projects/:slug/sboms/:importId/complete": "sbom.upload_completed",
+    "PATCH /v1/orgs/:orgId/members/:userId": "member.role_changed",
+    "DELETE /v1/orgs/:orgId/members/:userId": "member.removed",
+    "POST /v1/orgs/:orgId/invitations": "invitation.create",
+    "DELETE /v1/orgs/:orgId/invitations/:invitationId": "invitation.revoked",
+    "POST /v1/orgs/:orgId/projects/:slug/findings/:findingId/investigations":
+      "investigation.create",
+  }),
+);
 
-const EXEMPT: Record<string, string> = {
-  "GET /v1/me": "returns the caller's own user ID only",
-  "POST /v1/orgs": "creates a new org for the caller; no existing tenant is addressed",
-  "GET /v1/orgs": "lists the caller's own orgs; checked separately below",
-  "POST /v1/invitations/accept":
-    "bearer-secret invitation token plus verified email; covered in invitations.integration.test.ts",
-  "POST /internal/v1/investigations/:id/token":
-    "worker-facing: service secret plus lease owner, no tenant caller; covered in investigation-tools.integration.test.ts",
-  "POST /internal/v1/investigations/:id/tools/:tool":
-    "worker-facing: scope comes from the run row; two-org and two-project isolation in investigation-tools.integration.test.ts",
-  "POST /internal/v1/investigations/:id/complete":
-    "worker-facing: scope comes from the run row and the ledger of this attempt; cross-run and cross-attempt citations in investigation-tools.integration.test.ts",
-};
+const EXEMPT = new Map(
+  Object.entries({
+    "GET /v1/me": "returns the caller's own user ID only",
+    "POST /v1/orgs": "creates a new org for the caller; no existing tenant is addressed",
+    "GET /v1/orgs": "lists the caller's own orgs; checked separately below",
+    "POST /v1/invitations/accept":
+      "bearer-secret invitation token plus verified email; covered in invitations.integration.test.ts",
+    "POST /internal/v1/investigations/:id/token":
+      "worker-facing: service secret plus lease owner, no tenant caller; covered in investigation-tools.integration.test.ts",
+    "POST /internal/v1/investigations/:id/tools/:tool":
+      "worker-facing: scope comes from the run row; two-org and two-project isolation in investigation-tools.integration.test.ts",
+    "POST /internal/v1/investigations/:id/complete":
+      "worker-facing: scope comes from the run row and the ledger of this attempt; cross-run and cross-attempt citations in investigation-tools.integration.test.ts",
+  }),
+);
 
 /** Tenant-scoped routes (anything under /v1 or /internal/v1) with neither a case nor an exemption. */
 function uncovered(routes: string[], covered: string[]) {
   const known = new Set(covered);
+
   return routes.filter((r) => r.split(" ")[1]!.match(/^\/(internal\/)?v1\//) && !known.has(r));
 }
 
@@ -239,9 +265,13 @@ function uncovered(routes: string[], covered: string[]) {
 const registered: string[] = [];
 
 let pool: Pool;
+
 let app: ReturnType<typeof buildApp>;
+
 let internalApp: ReturnType<typeof buildInternalApp>;
+
 const run = randomUUID().slice(0, 8);
+
 const headersOf = (id: string) => ({ "x-test-user": id });
 
 async function newUser() {
@@ -249,15 +279,32 @@ async function newUser() {
     issuer: "http://isolation.test",
     subject: randomUUID(),
   });
+
   return user.id;
 }
 
-async function call(userId: string | undefined, method: string, req: Req) {
+const METHODS = ["GET", "POST", "PATCH", "DELETE"] as const;
+
+type Method = (typeof METHODS)[number];
+
+const isMethod = (name: string | undefined): name is Method =>
+  METHODS.some((method) => method === name);
+
+/** The HTTP method of a "METHOD /path" route key. */
+function methodOf(route: string): Method {
+  const name = route.split(" ")[0];
+
+  if (!isMethod(name)) throw new Error(`Unsupported method in route "${route}"`);
+
+  return name;
+}
+
+async function call(userId: string | undefined, method: Method, req: Req) {
   return app.inject({
-    method: method as "GET",
+    method,
     url: req.url,
     headers: userId ? headersOf(userId) : {},
-    ...(req.payload ? { payload: req.payload } : {}),
+    payload: req.payload,
   });
 }
 
@@ -266,8 +313,10 @@ async function newOrg(admin: string) {
   const slug = `iso-${run}-${randomUUID().slice(0, 8)}`;
   const res = await call(admin, "POST", { url: "/v1/orgs", payload: { name: "Iso", slug } });
   expect(res.statusCode).toBe(201);
-  return { id: res.json().id as string, slug };
+
+  return { id: res.json<{ id: string }>().id, slug };
 }
+
 const join = (orgId: string, userId: string, role: string) =>
   pool.query("INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, $3)", [
     orgId,
@@ -282,6 +331,7 @@ interface World {
   victim: Target;
   home: { id: string; slug: string };
 }
+
 let world: World;
 
 /** Text inside the victim's stored result; it must never appear in any response to another tenant. */
@@ -296,18 +346,21 @@ async function seedFinding(orgId: string, importId: string) {
     orgId,
     "shared-app",
   ]);
+
   const vuln = await pool.query(
     `INSERT INTO vulnerabilities (source, source_id, modified_at, source_artifact_sha256, source_entry,
        schema_version, adapter_version)
      VALUES ('osv', $1, now(), $2, 'e', 1, 1) RETURNING id`,
     [`ISO-${run}`, "a".repeat(64)],
   );
+
   const inserted = await pool.query<{ id: string }>(
     `INSERT INTO findings (org_id, project_id, vulnerability_id, purl, version, ecosystem, scope, import_id,
        match_quality, matcher_version, evidence)
      VALUES ($1, $2, $3, $4, '1.0.0', 'PyPI', 'required', $5, 'confirmed', 1, '{"rule":"explicit_version"}') RETURNING id`,
     [orgId, project.rows[0].id, vuln.rows[0].id, FINDING_PURL, importId],
   );
+
   return inserted.rows[0]!.id;
 }
 
@@ -324,6 +377,7 @@ async function seed(): Promise<World> {
 
   const mk = (orgId: string, admin: string, slug: string) =>
     call(admin, "POST", { url: `/v1/orgs/${orgId}/projects`, payload: { name: slug, slug } });
+
   expect((await mk(victimOrg.id, victimAdmin, "victim-only")).statusCode).toBe(201);
   expect((await mk(victimOrg.id, victimAdmin, "shared-app")).statusCode).toBe(201);
   expect((await mk(home.id, outsider, "shared-app")).statusCode).toBe(201);
@@ -332,14 +386,17 @@ async function seed(): Promise<World> {
     url: `/v1/orgs/${victimOrg.id}/projects/shared-app/sboms`,
     payload: { filename: "bom.json", size_bytes: 10 },
   });
+
   expect(imp.statusCode).toBe(201);
-  const findingId = await seedFinding(victimOrg.id, imp.json().id as string);
+  const findingId = await seedFinding(victimOrg.id, imp.json<{ id: string }>().id);
+
   const createdRun = await call(victimAdmin, "POST", {
     url: `/v1/orgs/${victimOrg.id}/projects/shared-app/findings/${findingId}/investigations`,
   });
+
   expect(createdRun.statusCode).toBe(201);
   // Completed as a prompt version 3 run would be, so the result route has something to protect.
-  const investigationId = createdRun.json().id as string;
+  const investigationId = createdRun.json<{ id: string }>().id;
   await pool.query(
     `UPDATE investigations SET status = 'completed', prompt_version = 3, completed_at = now() WHERE id = $1`,
     [investigationId],
@@ -349,10 +406,12 @@ async function seed(): Promise<World> {
      SELECT id, org_id, project_id, 1, 1, $2 FROM investigations WHERE id = $1`,
     [investigationId, { summary: RESULT_MARKER }],
   );
+
   const inv = await call(victimAdmin, "POST", {
     url: `/v1/orgs/${victimOrg.id}/invitations`,
     payload: { email: `victim-${run}@example.com`, role: "member" },
   });
+
   expect(inv.statusCode).toBe(201);
 
   return {
@@ -366,8 +425,8 @@ async function seed(): Promise<World> {
       project: "victim-only",
       sharedProject: "shared-app",
       userId: member,
-      importId: imp.json().id as string,
-      invitationId: inv.json().id as string,
+      importId: imp.json<{ id: string }>().id,
+      invitationId: inv.json<{ id: string }>().id,
       findingId,
       investigationId,
     },
@@ -380,11 +439,14 @@ async function snapshot(orgIds: string[]) {
     `SELECT table_name FROM information_schema.columns
      WHERE table_schema = 'public' AND column_name = 'org_id' ORDER BY table_name`,
   );
-  const out: Record<string, unknown> = {};
+
+  const out: Record<string, QueryResultRow[]> = {};
+
   for (const orgId of orgIds) {
     out[`organizations:${orgId}`] = (
       await pool.query("SELECT * FROM organizations WHERE id = $1", [orgId])
     ).rows;
+
     for (const { table_name } of tables) {
       if (table_name === "audit_events") continue;
       out[`${table_name}:${orgId}`] = (
@@ -395,12 +457,13 @@ async function snapshot(orgIds: string[]) {
       ).rows;
     }
   }
+
   return out;
 }
 
 async function auditSnapshot(orgId: string) {
   return (
-    await pool.query<Record<string, unknown>>(
+    await pool.query<AuditRow>(
       `SELECT id, org_id, actor_user_id, action, target_type, target_id, result, failure_code
        FROM audit_events WHERE org_id = $1 ORDER BY id`,
       [orgId],
@@ -409,17 +472,18 @@ async function auditSnapshot(orgId: string) {
 }
 
 function expectSafeAuditChanges(
-  before: Record<string, unknown>[],
-  after: Record<string, unknown>[],
+  before: AuditRow[],
+  after: AuditRow[],
   actorUserId: string,
   route: string,
   statuses: number[],
 ) {
-  const action = FAILURE_ACTIONS[route];
+  const action = FAILURE_ACTIONS.get(route);
   const expectedCount = action ? statuses.filter((status) => status >= 400).length : 0;
   const previousIds = new Set(before.map((row) => row.id));
   const added = after.filter((row) => !previousIds.has(row.id));
   expect(added).toHaveLength(expectedCount);
+
   for (const row of added) {
     expect(row).toMatchObject({
       actor_user_id: actorUserId,
@@ -435,6 +499,7 @@ function expectSafeAuditChanges(
 const seen = (res: Awaited<ReturnType<typeof call>>) => {
   const body = res.body ? JSON.parse(res.body) : {};
   delete body.correlationId;
+
   return { status: res.statusCode, type: res.headers["content-type"], body };
 };
 
@@ -474,9 +539,11 @@ beforeAll(async () => {
     trustedProxies: false,
     ready: async () => true,
     authenticate: async (request) => {
-      const id = request.headers["x-test-user" as "authorization"];
+      const id = testUserId(request.headers);
+
       if (!id) throw unauthenticated("missing_token");
       const { rows } = await pool.query("SELECT issuer, subject FROM users WHERE id = $1", [id]);
+
       return userStore.resolve(rows[0]);
     },
   });
@@ -497,6 +564,7 @@ beforeAll(async () => {
   await Promise.all([app.ready(), internalApp.ready()]);
   world = await seed();
 });
+
 afterAll(async () => {
   await app.close();
   await internalApp.close();
@@ -508,6 +576,7 @@ describe("the public listener does not serve the worker-facing routes", () => {
   it("answers 404, with or without a caller, for every internal route", async () => {
     const { victim, dual } = world;
     const run = randomUUID();
+
     for (const url of [
       `/internal/v1/investigations/${run}/token`,
       `/internal/v1/investigations/${run}/tools/get_finding_risk`,
@@ -526,15 +595,15 @@ describe("the public listener does not serve the worker-facing routes", () => {
 describe("route coverage", () => {
   it("has an isolation case or a reasoned exemption for every /v1 route", () => {
     expect(registered.length).toBeGreaterThan(15); // the hook saw the routes, not nothing
-    const covered = [...CASES.map((c) => c.route), ...Object.keys(EXEMPT)];
+    const covered = [...CASES.map((c) => c.route), ...EXEMPT.keys()];
     expect(uncovered(registered, covered)).toEqual([]);
   });
 
   it("has no case for a route that no longer exists", () => {
     const routes = new Set(registered);
-    const stale = [...CASES.map((c) => c.route), ...Object.keys(EXEMPT)].filter(
-      (r) => !routes.has(r),
-    );
+
+    const stale = [...CASES.map((c) => c.route), ...EXEMPT.keys()].filter((r) => !routes.has(r));
+
     expect(stale).toEqual([]);
   });
 
@@ -550,10 +619,12 @@ describe.each(CASES)("$route", (c) => {
     const { victim, outsider, home } = world;
     const before = await snapshot([victim.orgId, home.id]);
     const auditsBefore = await Promise.all([auditSnapshot(victim.orgId), auditSnapshot(home.id)]);
+
     const [real, reference] = [
-      await call(outsider, c.route.split(" ")[0]!, c.build(victim)),
-      await call(outsider, c.route.split(" ")[0]!, c.build(randomTarget(victim))),
+      await call(outsider, methodOf(c.route), c.build(victim)),
+      await call(outsider, methodOf(c.route), c.build(randomTarget(victim))),
     ];
+
     expect(real.statusCode).toBe(404);
     expect(seen(real)).toEqual(seen(reference));
     expect(real.body).not.toContain(victim.orgId);
@@ -563,7 +634,7 @@ describe.each(CASES)("$route", (c) => {
   });
 
   it("is a 401 with no identity", async () => {
-    const res = await call(undefined, c.route.split(" ")[0]!, c.build(world.victim));
+    const res = await call(undefined, methodOf(c.route), c.build(world.victim));
     expect(res.statusCode).toBe(401);
     expect(res.body).not.toContain(world.victim.orgId);
   });
@@ -576,11 +647,13 @@ describe.each(CASES)("$route", (c) => {
       const swapped: Target = { ...victim, orgId: home.id, orgSlug: home.slug };
       const control = randomTarget(victim, { orgId: home.id, orgSlug: home.slug });
       const before = await snapshot([victim.orgId, home.id]);
+
       const [victimAuditsBefore, homeAuditsBefore] = await Promise.all([
         auditSnapshot(victim.orgId),
         auditSnapshot(home.id),
       ]);
-      const method = c.route.split(" ")[0]!;
+
+      const method = methodOf(c.route);
       const real = await call(dual, method, c.build(swapped));
       const reference = await call(dual, method, c.build(control));
       expect(seen(real)).toEqual(seen(reference));
@@ -597,7 +670,7 @@ describe.each(CASES)("$route", (c) => {
     const { victim, dual } = world;
     const before = await snapshot([victim.orgId]);
     const auditsBefore = await auditSnapshot(victim.orgId);
-    const res = await call(dual, c.route.split(" ")[0]!, c.build(victim));
+    const res = await call(dual, methodOf(c.route), c.build(victim));
     expect(res.statusCode).toBe(403);
     expect(await snapshot([victim.orgId])).toEqual(before);
     expectSafeAuditChanges(auditsBefore, await auditSnapshot(victim.orgId), dual, c.route, [
@@ -635,6 +708,7 @@ describe("findings", () => {
       const outsider = await call(world.outsider, "GET", {
         url: `${url(world.victim.orgId)}${query}`,
       });
+
       expect(outsider.statusCode).toBe(404);
       expect(outsider.body).not.toContain(FINDING_PURL);
       const sameSlug = await call(world.outsider, "GET", { url: `${url(world.home.id)}${query}` });
@@ -663,15 +737,18 @@ describe("findings", () => {
       const res = await call(world.member, "GET", {
         url: detail(world.victim.orgId, "shared-app", world.victim.findingId),
       });
+
       expect(res.statusCode).toBe(200);
       expect(res.json().purl).toBe(FINDING_PURL);
     });
 
     it("answers every way of reaching the victim's finding like a finding that does not exist", async () => {
       const { outsider, dual, home, victim } = world;
+
       const reference = seen(
         await call(dual, "GET", { url: detail(home.id, "shared-app", randomUUID()) }),
       );
+
       const [crossTenant, malformed, nonMember] = await Promise.all([
         // Another org's finding under the caller's own org and a same-named project.
         call(dual, "GET", { url: detail(home.id, "shared-app", victim.findingId) }),
@@ -679,20 +756,24 @@ describe("findings", () => {
         // The victim's org and project, by a caller who is not a member.
         call(outsider, "GET", { url: detail(victim.orgId, "shared-app", victim.findingId) }),
       ]);
+
       for (const res of [crossTenant, malformed, nonMember]) {
         expect(res.statusCode).toBe(404);
         expect(res.body).not.toContain(FINDING_PURL);
         expect(res.body).not.toContain(victim.orgId);
       }
+
       expect(seen(crossTenant)).toEqual(reference);
       expect(seen(malformed)).toEqual(reference);
     });
 
     it("does not resolve a finding of another project in the same org", async () => {
       const { member, victim } = world;
+
       const res = await call(member, "GET", {
         url: detail(victim.orgId, victim.project, victim.findingId),
       });
+
       expect(res.statusCode).toBe(404);
       expect(res.body).not.toContain(FINDING_PURL);
     });
@@ -712,6 +793,7 @@ describe("investigation results", () => {
       investigationId: victim.investigationId,
       result: { summary: RESULT_MARKER },
     });
+
     for (const url of [run, run.slice(0, run.lastIndexOf("/"))]) {
       expect((await call(member, "GET", { url })).body).not.toContain(RESULT_MARKER);
     }
@@ -719,12 +801,15 @@ describe("investigation results", () => {
 
   it("answers every way of reaching the victim's result like a run that does not exist", async () => {
     const { outsider, dual, home, victim } = world;
+
     const reference = seen(
       await call(dual, "GET", {
         url: `${resultUrl(home.id, "shared-app", randomUUID(), randomUUID())}/result`,
       }),
     );
+
     expect(reference.status).toBe(404);
+
     const attempts = await Promise.all([
       // The victim's IDs under the caller's own org and a same-named project.
       call(dual, "GET", {
@@ -742,17 +827,20 @@ describe("investigation results", () => {
         url: `${resultUrl(victim.orgId, "shared-app", victim.findingId, "not-a-uuid")}/result`,
       }),
     ]);
+
     for (const res of attempts) {
       expect(res.statusCode).toBe(404);
       expect(res.body).not.toContain(RESULT_MARKER);
       expect(res.body).not.toContain(victim.orgId);
     }
+
     for (const res of [attempts[0]!, attempts[2]!, attempts[3]!])
       expect(seen(res)).toEqual(reference);
   });
 
   it("answer 404 for a run that has no result, the same as for another tenant's", async () => {
     const { member, victim } = world;
+
     const legacy = (
       await pool.query<{ id: string }>(
         `INSERT INTO investigations (org_id, project_id, finding_id, created_by, context_snapshot, model_id,
@@ -762,9 +850,11 @@ describe("investigation results", () => {
         [victim.investigationId],
       )
     ).rows[0]!.id;
+
     const res = await call(member, "GET", {
       url: `${resultUrl(victim.orgId, "shared-app", victim.findingId, legacy)}/result`,
     });
+
     expect(res.statusCode).toBe(404);
     expect(res.body).not.toContain("private draft");
   });
@@ -775,6 +865,7 @@ describe("audit records", () => {
     const res = await call(world.outsider, "GET", {
       url: `/v1/orgs/${world.home.id}/audit-events?result=success`,
     });
+
     expect(res.statusCode).toBe(200);
     expect(res.body).not.toContain(world.victim.orgId);
   });

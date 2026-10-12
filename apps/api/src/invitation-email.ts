@@ -9,6 +9,7 @@ export function invitationEmail(input: {
   expiresAt: Date;
 }) {
   const article = input.role === "admin" ? "an admin" : "a member";
+
   return {
     subject: `You're invited to join ${input.orgName} on Sentra`,
     body: [

@@ -24,6 +24,7 @@ function CrumbLabel({ crumb }: { crumb: Crumb }) {
       </BreadcrumbPage>
     );
   }
+
   return (
     <BreadcrumbLink asChild>
       <Link href={crumb.href} title={crumb.label} className="truncate">
@@ -45,6 +46,7 @@ export function Breadcrumbs({
   switcher?: ReactNode;
 }) {
   const crumbs = buildBreadcrumbs(usePathname(), org, project);
+
   return (
     <Breadcrumb className="min-w-0">
       <BreadcrumbList className="flex-nowrap">

@@ -15,7 +15,9 @@ export function severityLabel({
 
 export function kevLabel(status: Finding["kevStatus"]) {
   if (status === "listed") return "In CISA KEV";
+
   if (status === "not_listed") return "Not listed in ingested CISA KEV catalog";
+
   return "Exploitation data unavailable";
 }
 
@@ -36,12 +38,16 @@ const BASE_REASONS: Record<FindingPriority["baseReason"], (score: number | null)
  */
 export function explainPriority({ baseReason, scopeAdjusted, factors }: FindingPriority): string[] {
   const reasons = [BASE_REASONS[baseReason](factors.cvss.score)];
+
   if (factors.kev !== "listed") reasons.push(kevLabel(factors.kev));
+
   if (scopeAdjusted) reasons.push(`Scope ${factors.scope}: lowered one tier`);
   else if (factors.scope !== "required")
     reasons.push(`Scope ${factors.scope}: already the lowest tier`);
+
   if (factors.matchQuality === "unverifiable")
     reasons.push("Version could not be verified: tier unchanged");
+
   return reasons;
 }
 
@@ -52,8 +58,10 @@ export function explainPriority({ baseReason, scopeAdjusted, factors }: FindingP
  */
 export function safeHref(url: string | null): string | null {
   if (!url) return null;
+
   try {
     const parsed = new URL(url);
+
     return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : null;
   } catch {
     return null;
@@ -65,87 +73,120 @@ export interface EvidenceExplanation {
   facts: { label: string; value: string }[];
 }
 
-const RANGE_EVENT_LABELS: Record<string, string> = {
-  introduced: "Introduced in",
-  fixed: "Fixed in (per advisory range)",
-  last_affected: "Last affected",
-};
+const RANGE_EVENT_LABELS = new Map([
+  ["introduced", "Introduced in"],
+  ["fixed", "Fixed in (per advisory range)"],
+  ["last_affected", "Last affected"],
+]);
+
+/** The matcher's stored evidence (services/pipeline correlate/match.py); every field is optional because the API returns it as stored JSON. */
+export interface MatchEvidence {
+  rule?: string;
+  package?: string;
+  dependencyVersion?: string;
+  comparator?: string | null;
+  range?: { events?: readonly { type?: string; version?: string }[] };
+}
 
 interface RangeEvent {
   type: string;
   version: string;
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+function rangeEvents(range: MatchEvidence["range"]): RangeEvent[] | null {
+  if (!Array.isArray(range?.events)) return null;
+  const events: RangeEvent[] = [];
 
-function rangeEvents(range: unknown): RangeEvent[] | null {
-  if (!isRecord(range) || !Array.isArray(range["events"])) return null;
-  const events = range["events"] as unknown[];
-  const valid = events.every(
-    (e) => isRecord(e) && typeof e["type"] === "string" && typeof e["version"] === "string",
-  );
-  return valid ? (events as RangeEvent[]) : null;
+  for (const { type, version } of range.events) {
+    if (type === undefined || version === undefined) return null;
+    events.push({ type, version });
+  }
+
+  return events;
 }
 
 const eventFact = ({ type, version }: RangeEvent) => ({
-  label: RANGE_EVENT_LABELS[type] ?? type,
+  label: RANGE_EVENT_LABELS.get(type) ?? type,
   value: type === "introduced" && version === "0" ? "the first release (0)" : version,
 });
 
 type Summary = (pkg: string, version: string) => string;
 
 /** Confirmed matches, by matcher rule. */
-const CONFIRMED_SUMMARIES: Record<string, Summary> = {
-  explicit_version: (pkg, version) =>
-    `Version ${version} of ${pkg} is listed in the advisory's affected versions.`,
-  range: (pkg, version) =>
-    `Version ${version} of ${pkg} falls inside an affected range of the advisory.`,
-};
+const CONFIRMED_SUMMARIES = new Map<string, Summary>([
+  [
+    "explicit_version",
+    (pkg, version) => `Version ${version} of ${pkg} is listed in the advisory's affected versions.`,
+  ],
+  [
+    "range",
+    (pkg, version) =>
+      `Version ${version} of ${pkg} falls inside an affected range of the advisory.`,
+  ],
+]);
 
 /** Unverifiable matches, by reason, with the rule that produces each. */
-const UNVERIFIABLE_SUMMARIES: Record<string, { rule: string; summary: Summary }> = {
-  no_version_data: {
-    rule: "no_version_data",
-    summary: (pkg, version) =>
-      `The advisory names ${pkg} but gives no versions or ranges, so Sentra cannot tell whether version ${version} is affected.`,
-  },
-  version_unparseable: {
-    rule: "range",
-    summary: (pkg, version) =>
-      `Sentra could not read version ${version} of ${pkg} under the advisory's version ordering, so it cannot tell whether it is in the affected range.`,
-  },
-  range_malformed: {
-    rule: "range",
-    summary: (pkg, version) =>
-      `The advisory's affected range for ${pkg} is malformed, so Sentra cannot tell whether version ${version} is affected.`,
-  },
-  ecosystem_unsupported: {
-    rule: "range",
-    summary: (pkg, version) =>
-      `Sentra has no version ordering for this ecosystem yet, so it cannot tell whether version ${version} of ${pkg} is in the affected range.`,
-  },
-};
+const UNVERIFIABLE_SUMMARIES = new Map<string, { rule: string; summary: Summary }>([
+  [
+    "no_version_data",
+    {
+      rule: "no_version_data",
+      summary: (pkg, version) =>
+        `The advisory names ${pkg} but gives no versions or ranges, so Sentra cannot tell whether version ${version} is affected.`,
+    },
+  ],
+  [
+    "version_unparseable",
+    {
+      rule: "range",
+      summary: (pkg, version) =>
+        `Sentra could not read version ${version} of ${pkg} under the advisory's version ordering, so it cannot tell whether it is in the affected range.`,
+    },
+  ],
+  [
+    "range_malformed",
+    {
+      rule: "range",
+      summary: (pkg, version) =>
+        `The advisory's affected range for ${pkg} is malformed, so Sentra cannot tell whether version ${version} is affected.`,
+    },
+  ],
+  [
+    "ecosystem_unsupported",
+    {
+      rule: "range",
+      summary: (pkg, version) =>
+        `Sentra has no version ordering for this ecosystem yet, so it cannot tell whether version ${version} of ${pkg} is in the affected range.`,
+    },
+  ],
+]);
 
 function summaryFor(
-  rule: unknown,
+  rule: string | undefined,
   matchQuality: "confirmed" | "unverifiable",
   matchReason: string | null,
 ): Summary | undefined {
-  if (typeof rule !== "string") return undefined;
+  if (rule === undefined) return undefined;
+
   if (matchQuality === "confirmed")
-    return matchReason === null ? CONFIRMED_SUMMARIES[rule] : undefined;
-  const entry = matchReason === null ? undefined : UNVERIFIABLE_SUMMARIES[matchReason];
+    return matchReason === null ? CONFIRMED_SUMMARIES.get(rule) : undefined;
+  const entry = matchReason === null ? undefined : UNVERIFIABLE_SUMMARIES.get(matchReason);
+
   return entry?.rule === rule ? entry.summary : undefined;
 }
 
-function rangeFacts(evidence: Record<string, unknown>): EvidenceExplanation["facts"] | null {
-  const events = rangeEvents(evidence["range"]);
+function rangeFacts(evidence: MatchEvidence): EvidenceExplanation["facts"] | null {
+  const events = rangeEvents(evidence.range);
+
   if (!events) return null;
+
+  const { comparator } = evidence;
+
   const compared =
-    typeof evidence["comparator"] === "string"
-      ? [{ label: "Versions compared as", value: evidence["comparator"] }]
-      : [];
+    comparator === undefined || comparator === null
+      ? []
+      : [{ label: "Versions compared as", value: comparator }];
+
   return [...compared, ...events.map(eventFact)];
 }
 
@@ -155,27 +196,29 @@ function rangeFacts(evidence: Record<string, unknown>): EvidenceExplanation["fac
  * guessing. An unverifiable match always says what Sentra could not determine, never "affected".
  */
 export function explainEvidence(
-  evidence: unknown,
+  evidence: MatchEvidence | null,
   matchQuality: "confirmed" | "unverifiable",
   matchReason: string | null,
 ): EvidenceExplanation | null {
-  if (!isRecord(evidence)) return null;
+  if (!evidence) return null;
   const { rule, package: pkg, dependencyVersion: version } = evidence;
-  if (typeof pkg !== "string" || typeof version !== "string") return null;
+
+  if (pkg === undefined || version === undefined) return null;
   const summary = summaryFor(rule, matchQuality, matchReason);
   const facts = rule === "range" ? rangeFacts(evidence) : [];
+
   return summary && facts ? { summary: summary(pkg, version), facts } : null;
 }
 
-const RESOLVED_REASONS: Record<string, string> = {
-  dependency_removed: "the dependency is no longer in the project",
-  version_changed: "the dependency version changed",
-  advisory_withdrawn: "the advisory was withdrawn",
-  advisory_updated: "the advisory was updated and no longer matches",
-};
+const RESOLVED_REASONS = new Map([
+  ["dependency_removed", "the dependency is no longer in the project"],
+  ["version_changed", "the dependency version changed"],
+  ["advisory_withdrawn", "the advisory was withdrawn"],
+  ["advisory_updated", "the advisory was updated and no longer matches"],
+]);
 
 export const resolvedReasonLabel = (reason: string | null) =>
-  (reason && RESOLVED_REASONS[reason]) ?? reason ?? "unknown reason";
+  (reason && RESOLVED_REASONS.get(reason)) ?? reason ?? "unknown reason";
 
 /** The UTC calendar date of an ISO timestamp. */
 export const formatDate = (iso: string) => iso.slice(0, 10);

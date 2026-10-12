@@ -33,6 +33,7 @@ export function createSbomStorage(config: SbomStorageConfig) {
     forcePathStyle: true,
     credentials: { accessKeyId: config.accessKey, secretAccessKey: config.secretKey },
   });
+
   const Bucket = config.bucket;
 
   return {
@@ -52,11 +53,13 @@ export function createSbomStorage(config: SbomStorageConfig) {
     async size(key: string): Promise<number | undefined> {
       try {
         const head = await client.send(new HeadObjectCommand({ Bucket, Key: key }));
+
         return head.ContentLength;
       } catch (err) {
         if (err instanceof S3ServiceException && err.$metadata.httpStatusCode === 404) {
           return undefined;
         }
+
         throw err;
       }
     },
@@ -70,9 +73,13 @@ export function createSbomStorage(config: SbomStorageConfig) {
       try {
         await client.send(new CreateBucketCommand({ Bucket }));
       } catch (err) {
-        const name = (err as { name?: string }).name;
-        if (name !== "BucketAlreadyOwnedByYou" && name !== "BucketAlreadyExists") throw err;
+        const alreadyExists =
+          err instanceof S3ServiceException &&
+          (err.name === "BucketAlreadyOwnedByYou" || err.name === "BucketAlreadyExists");
+
+        if (!alreadyExists) throw err;
       }
+
       await client.send(
         new PutBucketCorsCommand({
           Bucket,

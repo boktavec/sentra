@@ -6,7 +6,9 @@ import { accessTokenFor, currentSessionId, destroySession } from "./session.ts";
 async function requireSession(): Promise<{ sessionId: string; token: string }> {
   const sessionId = await currentSessionId();
   const token = sessionId ? await accessTokenFor(sessionId) : null;
+
   if (!sessionId || !token) redirect("/auth/login");
+
   return { sessionId, token };
 }
 
@@ -19,9 +21,11 @@ export async function callApi<T>(
 ): Promise<ApiResult<T>> {
   const { sessionId, token } = await requireSession();
   const result = await request(token);
+
   if (!result.ok && result.status === 401) {
     await destroySession(sessionId);
     redirect("/auth/login");
   }
+
   return result;
 }

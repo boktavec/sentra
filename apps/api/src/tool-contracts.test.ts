@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { isToolName, loadToolValidators, TOOL_NAMES } from "./tool-contracts.ts";
 
 const dir = new URL("../../../packages/contracts/ai-tools/", import.meta.url);
+
 const validators = loadToolValidators();
 
 describe("tool contracts", () => {
@@ -10,6 +11,7 @@ describe("tool contracts", () => {
     expect(readdirSync(dir).toSorted()).toEqual(
       [...TOOL_NAMES, "investigation-result"].map((t) => `${t}.v1.json`).toSorted(),
     );
+
     for (const tool of TOOL_NAMES) {
       const contract = JSON.parse(readFileSync(new URL(`${tool}.v1.json`, dir), "utf8"));
       expect(contract).toMatchObject({ tool, version: 1 });
@@ -25,7 +27,9 @@ describe("tool contracts", () => {
           : tool === "lookup_advisory"
             ? { id: "CVE-2020-1" }
             : {};
+
       expect(validators[tool].arguments(base), tool).toBe(true);
+
       for (const extra of ["orgId", "projectId", "findingId", "investigationId"]) {
         expect(validators[tool].arguments({ ...base, [extra]: "x" }), `${tool} ${extra}`).toBe(
           false,

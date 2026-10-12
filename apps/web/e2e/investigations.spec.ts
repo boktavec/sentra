@@ -25,11 +25,13 @@ function seedFinding(orgSlug: string) {
   SELECT i.org_id, i.project_id, a.id, 'pkg:pypi/browser-${orgSlug}@1.0', '1.0', 'PyPI',
     'required', i.id, 'unverifiable', 'no_version_data', 1, '{"rule":"no_version_data"}', 'open'
   FROM import i CROSS JOIN advisory a RETURNING id`;
+
   const output = execFileSync(
     "docker",
     ["exec", "sentra-sentra-postgres-1", "psql", "-U", "sentra", "-d", "sentra", "-Atc", sql],
     { encoding: "utf8" },
   );
+
   expect(output).toContain("INSERT 0 1");
 }
 
@@ -62,6 +64,7 @@ test("start and observe a finding investigation through the browser", async ({ p
   });
   await page.getByRole("button", { name: "Start investigation" }).click();
   await expect(page.getByTestId("investigation-runs")).toContainText(/queued|running|completed/);
+
   if (process.env["INVESTIGATION_EXPECT_MODEL"] === "1") {
     await expect(page.getByTestId("investigation-runs")).toContainText("completed", {
       timeout: 120_000,

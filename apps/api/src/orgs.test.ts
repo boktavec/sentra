@@ -102,6 +102,7 @@ describe("validateNewInvitation", () => {
 describe("validateAcceptBody", () => {
   it("returns a string token and rejects anything else", () => {
     expect(validateAcceptBody({ token: "abc" })).toBe("abc");
+
     for (const body of [undefined, {}, { token: 1 }, { token: null }, { token: ["a"] }]) {
       expect(() => validateAcceptBody(body)).toThrow(/Invalid input/);
     }

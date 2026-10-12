@@ -1,15 +1,21 @@
 import type { Pool } from "pg";
 import { AppError, type Logger } from "@sentra/ts-platform";
+import { isJsonObject, isString, type Json } from "./json.ts";
 import { isUuid } from "./org-input.ts";
 import type { TenantContext } from "./orgs.ts";
 
 const DEFAULT_LIMIT = 50;
+
 const MAX_LIMIT = 100;
+
 const MAX_CURSOR_LENGTH = 2048;
+
 const MAX_ACTION_LENGTH = 100;
+
 const ISO_UTC = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/;
 
 type Result = "success" | "failed";
+
 type TargetType =
   "organization" | "user" | "invitation" | "project" | "sbom_import" | "investigation";
 
@@ -24,6 +30,19 @@ interface AuditItem {
   result: Result;
   failureCode: string | null;
   correlationId: string | null;
+}
+
+type QueryValue = string | string[] | undefined;
+
+/** The query string as Fastify parses it: a repeated parameter arrives as an array and is rejected. */
+export interface AuditQueryParams {
+  from?: QueryValue;
+  to?: QueryValue;
+  actorId?: QueryValue;
+  action?: QueryValue;
+  result?: QueryValue;
+  limit?: QueryValue;
+  cursor?: QueryValue;
 }
 
 interface Query {
@@ -45,7 +64,7 @@ interface Cursor {
 export interface AuditStore {
   list(
     tenant: TenantContext,
-    raw: Record<string, unknown>,
+    raw: AuditQueryParams,
   ): Promise<{ items: AuditItem[]; nextCursor: string | null }>;
   recordFailure(event: {
     tenant: TenantContext;
@@ -57,59 +76,76 @@ export interface AuditStore {
 }
 
 const invalid = (reason: string) => new AppError("invalid_input", 400, "Invalid input", { reason });
-const optional = (value: unknown, name: string) => {
+
+const optional = (value: QueryValue, name: string) => {
   if (value === undefined) return undefined;
-  if (typeof value !== "string") throw invalid(name);
+
+  if (Array.isArray(value)) throw invalid(name);
+
   return value;
 };
 
 function utc(value: string | undefined, name: string) {
   if (value === undefined) return undefined;
+
   if (!ISO_UTC.test(value) || Number.isNaN(Date.parse(value))) throw invalid(name);
+
   return { value, milliseconds: Date.parse(value) };
 }
 
-function dateRange(raw: Record<string, unknown>) {
+function dateRange(raw: AuditQueryParams) {
   const from = utc(optional(raw.from, "from"), "from");
   const to = utc(optional(raw.to, "to"), "to");
+
   if (from && to && from.milliseconds >= to.milliseconds) throw invalid("date_range");
+
   return { from: from?.value, to: to?.value };
 }
 
-function actor(raw: Record<string, unknown>) {
+function actor(raw: AuditQueryParams) {
   const actorId = optional(raw.actorId, "actorId");
+
   if (actorId !== undefined && !isUuid(actorId)) throw invalid("actorId");
+
   return actorId;
 }
 
-function action(raw: Record<string, unknown>) {
+function action(raw: AuditQueryParams) {
   const value = optional(raw.action, "action");
+
   if (value !== undefined && (value.length === 0 || value.length > MAX_ACTION_LENGTH)) {
     throw invalid("action");
   }
+
   return value;
 }
 
-function result(raw: Record<string, unknown>) {
+function result(raw: AuditQueryParams) {
   const value = optional(raw.result, "result");
+
   if (value !== undefined && value !== "success" && value !== "failed") throw invalid("result");
+
   return value;
 }
 
-function limit(raw: Record<string, unknown>) {
+function limit(raw: AuditQueryParams) {
   const value = optional(raw.limit, "limit");
   const parsed = value === undefined ? DEFAULT_LIMIT : Number(value);
+
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_LIMIT) throw invalid("limit");
+
   return parsed;
 }
 
-function cursor(raw: Record<string, unknown>) {
+function cursor(raw: AuditQueryParams) {
   const value = optional(raw.cursor, "cursor");
+
   if (value && value.length > MAX_CURSOR_LENGTH) throw invalid("cursor");
+
   return value;
 }
 
-function parseQuery(raw: Record<string, unknown>): Query {
+function parseQuery(raw: AuditQueryParams): Query {
   return {
     ...dateRange(raw),
     actorId: actor(raw),
@@ -133,20 +169,24 @@ function filters(query: Query): Omit<Query, "cursor"> {
 
 function decodeCursor(query: Query): Pick<Cursor, "createdAt" | "id"> | undefined {
   if (!query.cursor) return undefined;
+
   try {
-    const cursor = JSON.parse(Buffer.from(query.cursor, "base64url").toString("utf8")) as Cursor;
+    const cursor: Json = JSON.parse(Buffer.from(query.cursor, "base64url").toString("utf8"));
+
     if (
+      isJsonObject(cursor) &&
       JSON.stringify(cursor.filters) === JSON.stringify(filters(query)) &&
-      typeof cursor.createdAt === "string" &&
+      isString(cursor.createdAt) &&
       /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(?:\.\d{1,6})?\+00$/.test(cursor.createdAt) &&
-      typeof cursor.id === "string" &&
+      isString(cursor.id) &&
       isUuid(cursor.id)
     ) {
-      return cursor;
+      return { createdAt: cursor.createdAt, id: cursor.id };
     }
   } catch {
     // Deliberately return one generic input error for malformed and mismatched cursors.
   }
+
   throw invalid("cursor");
 }
 
@@ -165,24 +205,33 @@ export function createAuditStore(pool: Pool, logger: Logger): AuditStore {
     async list(tenant, raw) {
       const query = parseQuery(raw);
       const after = decodeCursor(query);
-      const values: unknown[] = [tenant.orgId];
+      const values: (string | number)[] = [tenant.orgId];
       const where = ["org_id = $1"];
-      const add = (condition: string, value: unknown) => {
+
+      const add = (condition: string, value: string | number) => {
         values.push(value);
         where.push(condition.replace("?", `$${values.length}`));
       };
+
       if (query.from) add("created_at >= ?::timestamptz", query.from);
+
       if (query.to) add("created_at < ?::timestamptz", query.to);
+
       if (query.actorId) add("actor_user_id = ?::uuid", query.actorId);
+
       if (query.action) add("action = ?", query.action);
+
       if (query.result) add("result = ?", query.result);
+
       if (after) {
         values.push(after.createdAt, after.id);
         where.push(
           `(created_at, id) < ($${values.length - 1}::timestamptz, $${values.length}::uuid)`,
         );
       }
+
       values.push(query.limit + 1);
+
       const { rows } = await pool.query<{
         id: string;
         org_id: string;
@@ -202,6 +251,7 @@ export function createAuditStore(pool: Pool, logger: Logger): AuditStore {
          ORDER BY created_at DESC, id DESC LIMIT $${values.length}`,
         values,
       );
+
       const page = rows.slice(0, query.limit).map((row) => ({
         id: row.id,
         orgId: row.org_id,
@@ -215,7 +265,9 @@ export function createAuditStore(pool: Pool, logger: Logger): AuditStore {
         correlationId: row.correlation_id,
         cursorTs: row.cursor_ts,
       }));
+
       const last = page.at(-1);
+
       return {
         items: page.map((item) => ({
           id: item.id,
