@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { apiGet, type ApiResult } from "@/lib/api";
+import { CenteredLayout } from "@/components/shell/centered-layout";
 import { callApi } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -69,17 +70,19 @@ export default async function Home({
   );
 
   return (
-    <main>
-      <h1>Sentra</h1>
-      <UserStatus me={me} />
-      <h2>Your organizations</h2>
-      <OrgList orgs={orgs} firstPage={!cursor} />
-      <p>
-        <Link href="/orgs/new">Create organization</Link>
-      </p>
-      <form action="/auth/logout" method="post">
-        <button type="submit">Sign out</button>
-      </form>
-    </main>
+    <CenteredLayout>
+      <main>
+        <h1>Sentra</h1>
+        <UserStatus me={me} />
+        <h2>Your organizations</h2>
+        <OrgList orgs={orgs} firstPage={!cursor} />
+        <p>
+          <Link href="/orgs/new">Create organization</Link>
+        </p>
+        <form action="/auth/logout" method="post">
+          <button type="submit">Sign out</button>
+        </form>
+      </main>
+    </CenteredLayout>
   );
 }

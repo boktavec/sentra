@@ -13,7 +13,11 @@ import { parseTheme, themeClass, THEME_COOKIE, THEME_MAX_AGE_SECONDS, THEMES } f
 import type { Theme } from "@/lib/theme";
 import { useState } from "react";
 
-const LABELS: Record<Theme, string> = { light: "Light", dark: "Dark", system: "System" };
+const OPTIONS: Record<Theme, { label: string; Icon: typeof Sun }> = {
+  light: { label: "Light", Icon: Sun },
+  dark: { label: "Dark", Icon: Moon },
+  system: { label: "System", Icon: Monitor },
+};
 
 function readCookieTheme(): Theme {
   const entry = document.cookie.split("; ").find((c) => c.startsWith(`${THEME_COOKIE}=`));
@@ -51,12 +55,15 @@ export function ThemeToggle() {
             applyTheme(next);
           }}
         >
-          {THEMES.map((option) => (
-            <DropdownMenuRadioItem key={option} value={option}>
-              {option === "system" && <Monitor aria-hidden className="size-4" />}
-              {LABELS[option]}
-            </DropdownMenuRadioItem>
-          ))}
+          {THEMES.map((option) => {
+            const { label, Icon } = OPTIONS[option];
+            return (
+              <DropdownMenuRadioItem key={option} value={option}>
+                <Icon aria-hidden className="size-4" />
+                {label}
+              </DropdownMenuRadioItem>
+            );
+          })}
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenu>

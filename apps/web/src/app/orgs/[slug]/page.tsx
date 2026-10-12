@@ -74,15 +74,11 @@ export default async function OrgPage({
       <p>
         Your role: <strong data-testid="org-role">{org.data.role}</strong>
       </p>
-      <p>
-        <Link href={`/orgs/${org.data.slug}/members`}>Members</Link>
-        {org.data.role === "admin" && (
-          <>
-            {" "}
-            · <Link href={`/orgs/${org.data.slug}/audit-events`}>Audit history</Link>
-          </>
-        )}
-      </p>
+      {org.data.role === "admin" && (
+        <p>
+          <Link href={`/orgs/${org.data.slug}/audit-events`}>Audit history</Link>
+        </p>
+      )}
       <h2>Projects</h2>
       <Projects org={org.data} cursor={cursor} />
       <h3>Create project</h3>

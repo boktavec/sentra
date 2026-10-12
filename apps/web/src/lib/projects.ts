@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { notFound } from "next/navigation";
 import { apiGet } from "./api.ts";
 import { callApi } from "./auth.ts";
@@ -19,11 +20,16 @@ export const listProjects = (orgId: string, cursor?: string) =>
     ),
   );
 
+// Per-request memo: a layout and its page both look the project up, but the API is called once.
+const lookupProject = cache((orgId: string, slug: string) =>
+  callApi((token) =>
+    apiGet<Project>(`/v1/orgs/${orgId}/projects/by-slug/${encodeURIComponent(slug)}`, token),
+  ),
+);
+
 /** A missing project and one in an org the user is not in both return 404 and render not-found. */
 export async function fetchProject(orgId: string, slug: string) {
-  const project = await callApi((token) =>
-    apiGet<Project>(`/v1/orgs/${orgId}/projects/by-slug/${encodeURIComponent(slug)}`, token),
-  );
+  const project = await lookupProject(orgId, slug);
   if (!project.ok && project.status === 404) notFound();
   return project;
 }
