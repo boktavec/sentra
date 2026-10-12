@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { severityLevel } from "@/lib/badge-status";
 import {
   explainEvidence,
   explainPriority,
@@ -13,6 +14,12 @@ import {
 import type { FindingDetail, FindingMember, KevEntry } from "@/lib/findings";
 
 const DETAILS_PREVIEW_CHARS = 1000;
+
+// Accent only for the levels that need triage attention; the severity itself is also shown as text below.
+const HEADER_ACCENT: Partial<Record<ReturnType<typeof severityLevel>, string>> = {
+  critical: "border-l-4 border-severity-critical pl-3",
+  high: "border-l-4 border-severity-high pl-3",
+};
 
 const card = {
   border: "1px solid #d1d5db",
@@ -300,8 +307,10 @@ export function FindingDetailView({
         <Link href={base}>{projectName}</Link> /{" "}
         <Link href={`${base}/findings`}>Back to findings</Link>
       </p>
-      <h1 style={{ overflowWrap: "anywhere" }}>{title}</h1>
-      {v.summary && <p style={textBlock}>{v.summary}</p>}
+      <div className={HEADER_ACCENT[severityLevel(v.severityCategory)]}>
+        <h1 style={{ overflowWrap: "anywhere" }}>{title}</h1>
+        {v.summary && <p style={textBlock}>{v.summary}</p>}
+      </div>
       <dl style={grid}>
         <dt>Status</dt>
         <dd style={value} data-testid="finding-status">

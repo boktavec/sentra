@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { CenteredLayout } from "@/components/shell/centered-layout";
 import { AcceptForm } from "./accept-form";
 
 export const dynamic = "force-dynamic";
@@ -12,19 +13,21 @@ export default async function AcceptPage({
 }) {
   const { token } = await searchParams;
   return (
-    <main>
-      <h1>Join an organization</h1>
-      {token ? (
-        <>
-          <p>You have been invited to join an organization on Sentra.</p>
-          <AcceptForm token={token} />
-        </>
-      ) : (
-        <p data-testid="accept-error">This invitation link is not valid.</p>
-      )}
-      <p>
-        <Link href="/">Home</Link>
-      </p>
-    </main>
+    <CenteredLayout>
+      <main>
+        <h1>Join an organization</h1>
+        {token ? (
+          <>
+            <p>You have been invited to join an organization on Sentra.</p>
+            <AcceptForm token={token} />
+          </>
+        ) : (
+          <p data-testid="accept-error">This invitation link is not valid.</p>
+        )}
+        <p>
+          <Link href="/">Home</Link>
+        </p>
+      </main>
+    </CenteredLayout>
   );
 }

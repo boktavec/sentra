@@ -1,3 +1,4 @@
+import { spawn, type ChildProcess } from "node:child_process";
 import { expect, type Page } from "@playwright/test";
 
 const MAILPIT = "http://localhost:8025";
@@ -72,4 +73,30 @@ export async function createOrg(page: Page, name: string, slug: string) {
   await page.getByLabel("Slug").fill(slug);
   await page.getByRole("button", { name: "Create organization" }).click();
   await expect(page).toHaveURL(`http://localhost:3000/orgs/${slug}`);
+}
+
+export const UNAVAILABLE_URL = "http://localhost:3001";
+
+/** Stops a server from `startWebWithoutApi` and the `next` process it started (its process group). */
+export const stopServer = (server: ChildProcess) => process.kill(-server.pid!);
+
+/** A second dev server (own build directory) whose API address refuses connections. */
+export async function startWebWithoutApi(distDir: string) {
+  const server = spawn("pnpm", ["exec", "next", "dev", "-p", "3001"], {
+    env: { ...process.env, API_URL: "http://127.0.0.1:1", NEXT_DIST_DIR: distDir },
+    stdio: "ignore",
+    detached: true,
+  });
+  for (let i = 0; i < 60; i++) {
+    if (
+      await fetch(`${UNAVAILABLE_URL}/auth/login`, { redirect: "manual" }).then(
+        () => true,
+        () => false,
+      )
+    )
+      return server;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  stopServer(server);
+  throw new Error("The web app without an API did not start");
 }
