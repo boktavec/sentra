@@ -1,7 +1,7 @@
 {
   "packages": [
     {
-      "source": "npm:pi-subagents",
+      "source": "npm:pi-subagents@0.77.0",
       "extensions": ["./index.js"],
       "skills": [],
       "prompts": []
