@@ -1,3 +1,5 @@
 {
-  "entry": ["infra/docker/bootstrap-zitadel.mjs"]
+  "entry": ["infra/docker/bootstrap-zitadel.mjs", "oxlint.config.ts"],
+  "ignorePatterns": ["tools/oxlint/anti-slop/**"],
+  "ignoreDependencies": ["@oxlint/plugins"]
 }
