@@ -1,6 +1,6 @@
 # SENTRA-34: UI foundation (tokens, theme, app shell, shared primitives)
 
-- Status: PR1 implemented (foundation); PR2 (shell) pending
+- Status: PR1 implemented (foundation); PR2 (shell) implemented, awaiting review
 - YouTrack: [SENTRA-34](http://localhost:8080/issue/SENTRA-34)
 - Owner: apps/web
 - Dependent stories: SENTRA-35 (entry/onboarding), SENTRA-36 (org pages), SENTRA-37 (project overview), SENTRA-38 (findings/investigations pages)
@@ -143,16 +143,16 @@ PR1 (foundation):
 
 PR2 (shell):
 
-- [ ] All `/orgs/[slug]/**` routes render inside the app shell with sidebar navigation (org: Projects, Members, Audit events; project: Overview, Findings, Investigations), switcher, and breadcrumbs showing org/project names.
-- [ ] The org switcher lists up to 20 of the user's orgs plus "All organizations"; the project switcher lists up to 20 projects plus "All projects"; both mark the current item.
-- [ ] Org and project lookups run once per request (layout and page share the call).
-- [ ] If list or lookup calls fail, pages still render their existing error states and the shell degrades to current-item plus "All..." links without showing data the API did not return.
-- [ ] `/`, `/orgs/new`, `/invitations/accept` use the centered layout with the theme toggle.
-- [ ] Finding detail header uses the severity accent for critical and high findings (accent only; body unchanged).
-- [ ] Below the `md` breakpoint, the sidebar opens as a sheet.
-- [ ] All existing e2e specs pass unchanged (same `data-testid`s and accessible names).
-- [ ] axe reports no WCAG 2 A/AA violations on one shell route (org page) in light and dark.
-- [ ] PR includes Playwright screenshots of `/dev/ui` and the org/project shell in light and dark, committed under `docs/features/SENTRA-34-ui-foundation/screenshots/`.
+- [x] All `/orgs/[slug]/**` routes render inside the app shell with sidebar navigation (org: Projects, Members, Audit events; project: Overview, Findings, Investigations), switcher, and breadcrumbs showing org/project names.
+- [x] The org switcher lists up to 20 of the user's orgs plus "All organizations"; the project switcher lists up to 20 projects plus "All projects"; both mark the current item.
+- [x] Org and project lookups run once per request (layout and page share the call).
+- [x] If list or lookup calls fail, pages still render their existing error states and the shell degrades to current-item plus "All..." links without showing data the API did not return.
+- [x] `/`, `/orgs/new`, `/invitations/accept` use the centered layout with the theme toggle.
+- [x] Finding detail header uses the severity accent for critical and high findings (accent only; body unchanged).
+- [x] Below the `md` breakpoint, the sidebar opens as a sheet.
+- [x] All existing e2e specs pass unchanged (same `data-testid`s and accessible names).
+- [x] axe reports no WCAG 2 A/AA violations on one shell route (org page) in light and dark.
+- [x] PR includes Playwright screenshots of `/dev/ui` and the org/project shell in light and dark, committed under `docs/features/SENTRA-34-ui-foundation/screenshots/`.
 
 ## Implementation plan
 
@@ -207,7 +207,7 @@ PR2: branched from PR1 (shell)
 - **Verified (PR1):** Geist and Geist Mono load through `next/font/google` in Next 16.3.8 (build and dev succeed; no `geist` package needed).
 - **Verified (PR1):** `shadcn@4.21.4` `add` works with Tailwind 4.3.3, React 19.3 and Next 16.3.8 using a hand-written `components.json` (new-york style, `tailwind.config` empty). Two quirks: the generated components imported `cn` from a bogus npm package `cn` (rewritten to `@/lib/utils`, package removed), and `table.tsx` got `"use client"` (removed so tables stay server components). Output is run through Prettier.
 - **Verified (PR1):** `/dev/ui` returns 404 under `next build && next start`; axe (wcag2a, wcag2aa, wcag21a, wcag21aa) reports zero violations in light and dark.
-- **Assumed:** existing org-list and project-list helpers return a page usable for the switcher without API changes. Validate in PR2 step 9; if not, cap client-side and do not change the API.
+- **Verified (PR2):** `GET /v1/orgs` and the project list return a default page without a size parameter; the switcher caps client-side at 20 (`switcherItems`, unit-tested) and the API is unchanged.
 - Future options (not in scope): TanStack Table for client table state (e.g. bulk triage selection); switcher search; command palette; severity summary charts (SENTRA-37).
 
 ## PR1 implementation notes
@@ -220,3 +220,23 @@ PR2: branched from PR1 (shell)
 - Status tokens: `resolved` and `kev` have their own palettes; `open`, `queued`, `running`, `succeeded`, `failed` alias severity/resolved tones. Investigation API status `completed` maps to the `succeeded` badge.
 - `src/css.d.ts` declares `*.css` because TypeScript 6 rejects the side-effect import of `globals.css` on a fresh checkout (`next-env.d.ts` is gitignored and generated).
 - Screenshots: `screenshots/dev-ui-light.png`, `screenshots/dev-ui-dark.png` (the Next dev overlay button is visible bottom-left).
+
+## PR2 implementation notes
+
+- Shell: `src/components/shell/*` (`app-sidebar`, `entity-switcher` used for both org and project switchers, `breadcrumbs`, `shell-header`, `org-frame`, `legacy-page`, `centered-layout`); pure helpers and tests in `src/lib/shell.ts` / `shell.test.ts`; layouts at `orgs/[slug]/layout.tsx` and `projects/[projectSlug]/layout.tsx`. `fetchOrg`, `fetchProject` and the new `listOrgs` are wrapped in React `cache()` (the 404 to `notFound()` step stays outside the memo).
+- Deviation, header placement: a parent layout cannot see child params, so on project routes `OrgFrame` (client, `useParams()`) steps aside and the project layout renders the full header (breadcrumbs with the project name, project switcher after the project crumb). Org routes render the header from the org layout.
+- Deviation, page bodies: the body links "Members" (org page) and "Investigations" (project page) were removed because the sidebar now provides them and the unchanged e2e specs locate those links by accessible name (strict mode would match two). "All organizations" and "Audit history" body links stay (the sidebar item is "Audit events", admin only).
+- Deviation, accessible names: the switcher triggers are icon-only buttons named "Switch organization" / "Switch project"; the current name is shown as text next to them. An org named like an existing control (for example "Invite ...") would otherwise collide with e2e button locators, and visible text then matches the accessible name.
+- Deviation, shadcn items: `tooltip`, `input`, `skeleton` usage in the sidebar, and the sidebar's icon/floating/inset/right variants, rail, groups and sub-menus were pruned (nothing consumes them and `task fallow` rejects unused exports). The shadcn CLI re-added the bogus `cn` dependency on every run; it was reverted each time and imports rewritten to `@/lib/utils`.
+- R2 carry-over: legacy element styles are scoped to `[data-legacy]` (base layer), the compensating `m-0`s and the `body:not(:has([data-layout="wide"]))` rule are gone. Optional polish done: Light/Dark theme menu icons, `/dev/ui` purl cell wraps, system-mode axe case (org page, OS dark, no cookie class).
+- Finding detail: critical and high findings get a left severity accent on the title block only.
+- e2e: `shell.spec.ts` (shell smoke, mobile sheet, degraded shell against the API-down dev server), org-page axe cases (light, dark, system) in `accessibility.spec.ts`; `startWebWithoutApi` moved into `e2e/helpers.ts` for the new spec (older specs keep their own copies).
+- Not changed: `fetchProjectScope` (not used by layouts). `task fallow` reports 3 advisory CSS selector-complexity notes on the legacy block in `globals.css` (exit status 0); the block is temporary.
+- Screenshots (dev server, so the Next dev indicator is visible): `screenshots/org-shell-light.png`, `org-shell-dark.png`, `project-shell-light.png`, `project-shell-dark.png`, `org-shell-mobile-sheet.png`.
+- Review fixes: the mobile sheet closes on navigation (effect on `usePathname()` in `AppSidebar`) and returns focus to the Toggle Sidebar button on close; the collapsed desktop sidebar container is `inert` (out of tab order and the accessibility tree); the Cmd/Ctrl+B shortcut ignores keystrokes in inputs, textareas, selects and contenteditable. Covered in `shell.spec.ts`.
+
+## Known limitations and follow-ups (PR2)
+
+- **No-JavaScript mobile navigation:** below `md` the sidebar is a sheet that needs JS, and the "Members" and "Investigations" body links were removed, so without JS a mobile user has no link to those two pages (breadcrumbs and remaining body links still work). Follow-up: restore a no-JS path (for example a `<noscript>`/CSS-only nav or a small in-page link set) if this matters.
+- **Stale shell data:** org name, role and the switcher lists are fetched when the layout renders and persist across client navigation, so changes made in-app (rename, role change, new project) show only after a full reload or `router.refresh()`.
+- **Follow-up, not done:** breadcrumb truncation on narrow screens (R8): long names truncate but the trail is not collapsed to the current page on mobile.

@@ -73,6 +73,7 @@ const COLUMNS: Column<FixtureRow>[] = [
   {
     key: "purl",
     header: "Dependency",
+    className: "whitespace-normal",
     cell: (row) => <code className="wrap-anywhere">{row.purl}</code>,
   },
 ];
@@ -89,7 +90,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 export default function DevUiPage() {
   if (process.env.NODE_ENV === "production") notFound();
   return (
-    <div data-layout="wide" className="mx-auto max-w-5xl p-6">
+    <div className="mx-auto max-w-5xl p-6">
       <PageHeader
         title="UI reference"
         description="Every shared primitive in every variant. Development only."

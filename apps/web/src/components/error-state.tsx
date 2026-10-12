@@ -19,10 +19,10 @@ export function ErrorState({
     >
       <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
       <div className="min-w-0">
-        <p className="m-0 font-medium">{title}</p>
-        <p className="m-0 mt-1 text-muted-foreground">{message}</p>
+        <p className="font-medium">{title}</p>
+        <p className="mt-1 text-muted-foreground">{message}</p>
         {correlationId && (
-          <p className="m-0 mt-1 text-xs text-muted-foreground">
+          <p className="mt-1 text-xs text-muted-foreground">
             Reference: <code>{correlationId}</code>
           </p>
         )}
