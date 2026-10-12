@@ -25,6 +25,38 @@ test.describe("accessibility (WCAG 2 A/AA)", () => {
     });
   }
 
+  // Entry and onboarding pages. /orgs/new and the token-less accept page make no API calls on
+  // render, so a placeholder session cookie is enough.
+  for (const theme of ["light", "dark"] as const) {
+    for (const [path, heading] of [
+      ["/orgs/new", "Create organization"],
+      ["/invitations/accept", "Join an organization"],
+    ] as const) {
+      test(`${path} has no violations in ${theme} theme`, async ({ page, context }) => {
+        await context.addCookies([
+          { name: "sentra_session", value: "axe-fixture", url: "http://localhost:3000" },
+          { name: "sentra-theme", value: theme, url: "http://localhost:3000" },
+        ]);
+        await page.goto(path);
+        await expect(page.getByRole("heading", { level: 1, name: heading })).toBeVisible();
+        await expect(page.locator("html")).toHaveClass(new RegExp(theme));
+        await expectNoViolations(page);
+      });
+    }
+
+    test(`/ (no organizations) has no violations in ${theme} theme`, async ({ page, context }) => {
+      const run = Date.now().toString(36);
+      await signUp(page, `axe-home-${theme}-${run}@example.com`);
+      await context.addCookies([
+        { name: "sentra-theme", value: theme, url: "http://localhost:3000" },
+      ]);
+      await page.reload();
+      await expect(page.getByTestId("no-orgs")).toBeVisible();
+      await expect(page.locator("html")).toHaveClass(new RegExp(theme));
+      await expectNoViolations(page);
+    });
+  }
+
   // The org page runs inside the shell (sidebar, header, breadcrumbs). "system" has no class on
   // <html>, so the color scheme comes from the emulated OS preference.
   for (const [theme, scheme] of [

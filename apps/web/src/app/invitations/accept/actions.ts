@@ -10,7 +10,7 @@ export interface AcceptState {
 
 const MESSAGES: Record<string, string> = {
   invitation_email_mismatch:
-    "This invitation was sent to a different email address. Sign in with the invited address, and make sure it is verified.",
+    "This invitation was sent to a different email address. Sign out, sign in with the invited address (it must be verified), then open the invitation link from the email again.",
   invitation_expired: "This invitation has expired. Ask an admin to send a new one.",
   invitation_unavailable: "This invitation was already used or was cancelled.",
   member_limit_reached: "This organization has reached its member limit. Ask an admin for help.",

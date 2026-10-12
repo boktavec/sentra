@@ -6,3 +6,6 @@ export const slugify = (name: string) =>
     .replace(/^-+|-+$/g, "")
     .slice(0, 40)
     .replace(/-+$/, "");
+
+/** The URL path an organization with this slug will get, shown while the user types the slug. */
+export const orgPathPreview = (slug: string) => `/orgs/${slug.trim() || "<slug>"}`;

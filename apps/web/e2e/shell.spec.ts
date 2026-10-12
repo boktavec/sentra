@@ -1,7 +1,12 @@
 import { expect, test } from "@playwright/test";
-import { createOrg, signUp, startWebWithoutApi, stopServer, UNAVAILABLE_URL } from "./helpers";
-
-const SHOTS = "../../docs/features/SENTRA-34-ui-foundation/screenshots";
+import {
+  createOrg,
+  signUp,
+  startWebWithoutApi,
+  stopServer,
+  UNAVAILABLE_URL,
+  screenshotPath,
+} from "./helpers";
 
 test("the shell shows navigation, switchers and breadcrumbs with names from the API", async ({
   page,
@@ -19,7 +24,7 @@ test("the shell shows navigation, switchers and breadcrumbs with names from the 
   const crumbs = page.getByRole("navigation", { name: "breadcrumb" });
   await expect(crumbs.getByRole("link", { name: "Organizations" })).toBeVisible();
   await expect(crumbs.getByText(orgName)).toHaveAttribute("aria-current", "page");
-  await page.screenshot({ path: `${SHOTS}/org-shell-light.png` });
+  await page.screenshot({ path: screenshotPath("SENTRA-34-ui-foundation", "org-shell-light.png") });
   await page.getByRole("button", { name: "Switch organization" }).click();
   await expect(page.getByRole("menuitem", { name: orgName })).toHaveAttribute(
     "aria-current",
@@ -55,14 +60,18 @@ test("the shell shows navigation, switchers and breadcrumbs with names from the 
     `/orgs/${orgSlug}`,
   );
   await page.keyboard.press("Escape");
-  await page.screenshot({ path: `${SHOTS}/project-shell-light.png` });
+  await page.screenshot({
+    path: screenshotPath("SENTRA-34-ui-foundation", "project-shell-light.png"),
+  });
 
   await page.getByRole("button", { name: "Theme" }).click();
   await page.getByRole("menuitemradio", { name: "Dark" }).click();
   await expect(page.locator("html")).toHaveClass(/dark/);
-  await page.screenshot({ path: `${SHOTS}/project-shell-dark.png` });
+  await page.screenshot({
+    path: screenshotPath("SENTRA-34-ui-foundation", "project-shell-dark.png"),
+  });
   await page.goto(`/orgs/${orgSlug}`);
-  await page.screenshot({ path: `${SHOTS}/org-shell-dark.png` });
+  await page.screenshot({ path: screenshotPath("SENTRA-34-ui-foundation", "org-shell-dark.png") });
 
   // Below md the sidebar is a sheet opened from the header.
   await page.setViewportSize({ width: 390, height: 800 });
@@ -71,7 +80,9 @@ test("the shell shows navigation, switchers and breadcrumbs with names from the 
   await expect(page.getByRole("dialog")).toBeVisible();
   await expect(page.getByRole("dialog").getByRole("link", { name: "Members" })).toBeVisible();
   await page.waitForTimeout(600); // let the slide-in finish before the screenshot
-  await page.screenshot({ path: `${SHOTS}/org-shell-mobile-sheet.png` });
+  await page.screenshot({
+    path: screenshotPath("SENTRA-34-ui-foundation", "org-shell-mobile-sheet.png"),
+  });
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toBeHidden();
   await expect(page.getByRole("button", { name: "Toggle Sidebar" })).toBeFocused();
@@ -121,6 +132,13 @@ test("the shell degrades to a minimal frame when the API is unavailable", async 
       await expect(page.getByRole("menuitem")).toHaveText(["All organizations"]);
       await page.keyboard.press("Escape");
     }
+
+    // The entry page degrades too: an error state with a reference, no Support ID, Sign out intact.
+    await page.goto(`${UNAVAILABLE_URL}/`);
+    await expect(page.getByTestId("api-unavailable")).toContainText("Reference:");
+    await expect(page.getByTestId("user-id")).toHaveCount(0);
+    await expect(page.getByTestId("org-list")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
   } finally {
     stopServer(unavailable);
   }
