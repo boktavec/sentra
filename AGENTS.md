@@ -88,7 +88,10 @@ Agent definitions live in `.claude/agents/` (Claude Code) and `.pi/agents/` (Pi)
 
 1. **Plan:** use `senior-engineering-planner` to interview the user (relay one question at a time, resuming it with the answer) and save the approved spec.
 2. **Implement:** after the user approves the spec, use `senior-software-engineer` with the spec path.
-   For stories with UI scope, also use `senior-ux-design-engineer` with the spec path (after any API/contract it consumes exists or is agreed). It builds the screens in `apps/web`, verifies them in a browser, and produces the PR screenshots. Run it and the software engineer in separate worktrees or sequentially; never in the same files at once.
+   **Every story with UI scope** (any change to screens, components, layout, copy, or interaction in `apps/web`) involves `senior-ux-design-engineer`; do not leave UI/UX decisions to the software engineer alone.
+   - **Research and recommendations first:** before the software engineer starts, run the UX agent with the spec path to research references (Refero, existing design system) and recommend layout, states, copy, and accessibility. Fold its recommendations into the spec, or flag them to the user if they change scope.
+   - **Implementation together:** the software engineer owns logic, data, tests, and contracts; the UX agent owns the screens in `apps/web`, verifies them in a browser, and produces the PR screenshots. It consumes any API/contract once it exists or is agreed.
+   - Run them in separate worktrees or sequentially; never in the same files at once.
 3. **Review:** use `staff-engineering-reviewer` with the spec path, the diff, and the implementer's handoff.
 4. **Fix loop:** on CHANGES REQUIRED, resume the implementer with the blocking findings, then re-run the reviewer. Repeat until PASS or PASS WITH ADVISORIES.
 5. **Escalate to the user** (do not loop) on planning-level findings, BLOCKED / INCONCLUSIVE, or after 3 review rounds without PASS.

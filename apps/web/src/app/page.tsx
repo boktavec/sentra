@@ -1,6 +1,12 @@
 import Link from "next/link";
+import { ChevronRight, Plus } from "lucide-react";
 import { apiGet, type ApiResult } from "@/lib/api";
 import { CenteredLayout } from "@/components/shell/centered-layout";
+import { EmptyState } from "@/components/empty-state";
+import { ErrorState } from "@/components/error-state";
+import { PageHeader } from "@/components/page-header";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { callApi } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -13,38 +19,62 @@ interface Org {
 
 type OrgPage = { items: Org[]; nextCursor: string | null };
 
-function UserStatus({ me }: { me: ApiResult<{ id: string }> }) {
+function SupportId({ me }: { me: ApiResult<{ id: string }> }) {
   if (!me.ok) return null;
   return (
-    <p data-testid="signed-in">
-      Signed in. Your Sentra user ID: <code data-testid="user-id">{me.data.id}</code>
+    <p data-testid="signed-in" className="mt-6 text-xs text-muted-foreground">
+      Support ID: <code data-testid="user-id">{me.data.id}</code>
     </p>
   );
 }
 
-function MoreLink({ cursor }: { cursor: string | null }) {
-  if (!cursor) return null;
+function OrgRow({ org }: { org: Org }) {
   return (
-    <p>
-      <Link href={`/?cursor=${encodeURIComponent(cursor)}`}>More organizations</Link>
-    </p>
+    <li>
+      <Link
+        href={`/orgs/${org.slug}`}
+        title={org.name}
+        className="flex items-center gap-3 px-4 py-3 outline-none hover:bg-accent focus-visible:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset"
+      >
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-medium">{org.name}</span>
+          <code className="block truncate font-mono text-xs text-muted-foreground">{org.slug}</code>
+        </span>
+        <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+      </Link>
+    </li>
   );
 }
 
 function OrgItems({ page, firstPage }: { page: OrgPage; firstPage: boolean }) {
   if (page.items.length === 0 && firstPage) {
-    return <p data-testid="no-orgs">You are not in any organization yet.</p>;
+    return (
+      <EmptyState
+        testId="no-orgs"
+        title="You are not in any organization yet."
+        description="Create an organization to get started, or open the invitation link you received by email to join one."
+      />
+    );
   }
   return (
     <>
-      <ul data-testid="org-list">
-        {page.items.map((org) => (
-          <li key={org.id}>
-            <Link href={`/orgs/${org.slug}`}>{org.name}</Link> <code>{org.slug}</code>
-          </li>
-        ))}
-      </ul>
-      <MoreLink cursor={page.nextCursor} />
+      <Card className="gap-0 overflow-hidden py-0">
+        <ul data-testid="org-list" className="divide-y">
+          {page.items.map((org) => (
+            <OrgRow key={org.id} org={org} />
+          ))}
+        </ul>
+      </Card>
+      {page.nextCursor && (
+        <p className="mt-3">
+          <Link
+            href={`/?cursor=${encodeURIComponent(page.nextCursor)}`}
+            className="text-primary underline underline-offset-4"
+          >
+            More organizations
+          </Link>
+        </p>
+      )}
     </>
   );
 }
@@ -52,9 +82,12 @@ function OrgItems({ page, firstPage }: { page: OrgPage; firstPage: boolean }) {
 function OrgList({ orgs, firstPage }: { orgs: ApiResult<OrgPage>; firstPage: boolean }) {
   if (orgs.ok) return <OrgItems page={orgs.data} firstPage={firstPage} />;
   return (
-    <p data-testid="api-unavailable">
-      Signed in, but the service is temporarily unavailable. Reference: {orgs.correlationId}
-    </p>
+    <ErrorState
+      testId="api-unavailable"
+      title="Your organizations could not be loaded"
+      message="Signed in, but the service is temporarily unavailable. Try again in a moment."
+      correlationId={orgs.correlationId}
+    />
   );
 }
 
@@ -70,19 +103,20 @@ export default async function Home({
   );
 
   return (
-    <CenteredLayout>
-      <main>
-        <h1>Sentra</h1>
-        <UserStatus me={me} />
-        <h2>Your organizations</h2>
-        <OrgList orgs={orgs} firstPage={!cursor} />
-        <p>
-          <Link href="/orgs/new">Create organization</Link>
-        </p>
-        <form action="/auth/logout" method="post">
-          <button type="submit">Sign out</button>
-        </form>
-      </main>
+    <CenteredLayout width="wide">
+      <PageHeader
+        title="Your organizations"
+        actions={
+          <Button asChild>
+            <Link href="/orgs/new">
+              <Plus aria-hidden />
+              Create organization
+            </Link>
+          </Button>
+        }
+      />
+      <OrgList orgs={orgs} firstPage={!cursor} />
+      <SupportId me={me} />
     </CenteredLayout>
   );
 }

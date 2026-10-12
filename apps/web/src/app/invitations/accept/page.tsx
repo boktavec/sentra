@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { CenteredLayout } from "@/components/shell/centered-layout";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { AcceptForm } from "./accept-form";
 
 export const dynamic = "force-dynamic";
@@ -14,20 +15,31 @@ export default async function AcceptPage({
   const { token } = await searchParams;
   return (
     <CenteredLayout>
-      <main>
-        <h1>Join an organization</h1>
-        {token ? (
-          <>
-            <p>You have been invited to join an organization on Sentra.</p>
+      <Card>
+        <CardHeader>
+          <CardTitle role="heading" aria-level={1} className="text-xl">
+            Join an organization
+          </CardTitle>
+          {token && (
+            <CardDescription>
+              You have been invited to join an organization on Sentra. Accept the invitation to
+              become a member.
+            </CardDescription>
+          )}
+        </CardHeader>
+        <CardContent className="flex flex-col gap-5">
+          {token ? (
             <AcceptForm token={token} />
-          </>
-        ) : (
-          <p data-testid="accept-error">This invitation link is not valid.</p>
-        )}
-        <p>
-          <Link href="/">Home</Link>
-        </p>
-      </main>
+          ) : (
+            <p role="alert" data-testid="accept-error" className="text-destructive">
+              This invitation link is not valid.
+            </p>
+          )}
+          <Link href="/" className="text-muted-foreground underline underline-offset-4">
+            Back to home
+          </Link>
+        </CardContent>
+      </Card>
     </CenteredLayout>
   );
 }

@@ -32,7 +32,9 @@ tasks:
       - 'if [ -f package.json ]; then pnpm run test; else echo "apps/web has not been scaffolded yet; skipping."; fi'
 
   test:e2e:
-    desc: Playwright sign-in E2E (needs `task stack:up` and `task stack:bootstrap`)
+    desc: Playwright E2E (needs `task stack:up` and `task stack:bootstrap`)
+    # Screenshots go to the gitignored apps/web/test-results/screenshots/. To refresh the committed
+    # ones in docs/features/*/screenshots/, run with SENTRA_E2E_DOC_SCREENSHOTS=1.
     cmds:
       - pnpm run test:e2e
 

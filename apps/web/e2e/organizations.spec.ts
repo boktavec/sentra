@@ -1,13 +1,13 @@
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { signUp } from "./helpers";
-
-const SHOTS = "../../docs/features/SENTRA-2-create-organization/screenshots";
+import { signUp, screenshotPath } from "./helpers";
 
 async function createOrg(page: Page, name: string, slug: string) {
   await page.getByRole("link", { name: "Create organization" }).click();
   await page.getByLabel("Name").fill(name);
   await expect(page.getByLabel("Slug")).toHaveValue(slug); // suggested from the name
-  await page.screenshot({ path: `${SHOTS}/2-create-form.png` });
+  await page.screenshot({
+    path: screenshotPath("SENTRA-2-create-organization", "2-create-form.png"),
+  });
   await page.getByRole("button", { name: "Create organization" }).click();
 }
 
@@ -16,7 +16,7 @@ async function expectOrgPage(page: Page, name: string, slug: string) {
   await expect(page.getByTestId("org-name")).toHaveText(name);
   await expect(page.getByTestId("org-slug")).toHaveText(slug);
   await expect(page.getByTestId("org-role")).toHaveText("admin");
-  await page.screenshot({ path: `${SHOTS}/3-org-page.png` });
+  await page.screenshot({ path: screenshotPath("SENTRA-2-create-organization", "3-org-page.png") });
 }
 
 async function expectSlugConflict(page: Page, slug: string) {
@@ -25,7 +25,9 @@ async function expectSlugConflict(page: Page, slug: string) {
   await page.getByLabel("Slug").fill(slug);
   await page.getByRole("button", { name: "Create organization" }).click();
   await expect(page.getByTestId("form-error")).toContainText("already taken");
-  await page.screenshot({ path: `${SHOTS}/4-slug-conflict.png` });
+  await page.screenshot({
+    path: screenshotPath("SENTRA-2-create-organization", "4-slug-conflict.png"),
+  });
 }
 
 /** Another user gets the same not-found page as for an org that does not exist. */
@@ -36,7 +38,9 @@ async function expectInvisibleToOthers(browser: Browser, run: string, name: stri
   const response = await page.goto(`/orgs/${slug}`);
   expect(response?.status()).toBe(404);
   const forbidden = await page.locator("body").innerText();
-  await page.screenshot({ path: `${SHOTS}/5-not-a-member.png` });
+  await page.screenshot({
+    path: screenshotPath("SENTRA-2-create-organization", "5-not-a-member.png"),
+  });
   const missing = await page.goto(`/orgs/nothing-${run}`);
   expect(missing?.status()).toBe(404);
   expect(await page.locator("body").innerText()).toBe(forbidden);
@@ -63,7 +67,9 @@ test("create an organization, see it listed, and keep it invisible to other user
 
   await signUp(page, `org-owner-${run}@example.com`);
   await expect(page.getByTestId("no-orgs")).toBeVisible(); // a new user belongs to no org
-  await page.screenshot({ path: `${SHOTS}/1-empty-home.png` });
+  await page.screenshot({
+    path: screenshotPath("SENTRA-2-create-organization", "1-empty-home.png"),
+  });
 
   await createOrg(page, name, slug);
   await expectOrgPage(page, name, slug);

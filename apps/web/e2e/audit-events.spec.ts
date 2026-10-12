@@ -1,9 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import { expect, test } from "@playwright/test";
-import { createOrg, signUp } from "./helpers";
+import { createOrg, signUp, screenshotPath } from "./helpers";
 
-const SHOTS = "../../docs/features/SENTRA-20-audit-log/screenshots";
 const { Pool } = createRequire(new URL("../../api/package.json", import.meta.url))("pg");
 const UNAVAILABLE_PORT = 3001;
 const UNAVAILABLE_URL = `http://localhost:${UNAVAILABLE_PORT}`;
@@ -67,7 +66,7 @@ test("an admin can filter organization audit history", async ({ page }) => {
   await page.getByRole("button", { name: "Filter" }).click();
   await expect(page).toHaveURL(/result=success/);
   await expect(page.getByTestId("audit-events")).toContainText("org.created");
-  await page.screenshot({ path: `${SHOTS}/1-filtered-history.png` });
+  await page.screenshot({ path: screenshotPath("SENTRA-20-audit-log", "1-filtered-history.png") });
 });
 
 test("an admin sees the empty state when no audit events match", async ({ page }) => {
