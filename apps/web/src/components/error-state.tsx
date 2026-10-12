@@ -1,0 +1,32 @@
+import { CircleAlert } from "lucide-react";
+
+export function ErrorState({
+  title,
+  message,
+  correlationId,
+  testId,
+}: {
+  title: string;
+  message: string;
+  correlationId?: string;
+  testId?: string;
+}) {
+  return (
+    <div
+      role="alert"
+      data-testid={testId}
+      className="flex gap-3 rounded-lg border border-severity-critical-border bg-severity-critical-subtle p-4"
+    >
+      <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
+      <div className="min-w-0">
+        <p className="m-0 font-medium">{title}</p>
+        <p className="m-0 mt-1 text-muted-foreground">{message}</p>
+        {correlationId && (
+          <p className="m-0 mt-1 text-xs text-muted-foreground">
+            Reference: <code>{correlationId}</code>
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}

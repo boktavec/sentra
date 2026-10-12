@@ -1,0 +1,271 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/*
+ * Dark mode applies when <html> has class "dark", or when the OS prefers dark and the user has not
+ * forced light (<html class="light">). No class at all means "system". Color tokens declare both
+ * values once with light-dark(), which follows color-scheme (forced by .light/.dark, otherwise the
+ * OS). The dark: utility variant below mirrors the same rule.
+ */
+@custom-variant dark {
+  &:where(.dark, .dark *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not(.light), :root:not(.light) *) {
+      @slot;
+    }
+  }
+}
+
+/*
+ * Tokens. Layers: semantic (--background, --primary, ...) and severity/status tones
+ * (--severity-<level>, --status-<name>), each with -foreground (text on the solid color),
+ * -subtle (tinted background) and -border. Components use the semantic names, never raw colors.
+ */
+:root {
+  color-scheme: light dark;
+  --radius: 0.375rem;
+  --background: light-dark(oklch(1 0 0), oklch(0.16 0.01 260));
+  --foreground: light-dark(oklch(0.2 0.01 260), oklch(0.95 0.005 260));
+  --card: light-dark(oklch(1 0 0), oklch(0.2 0.01 260));
+  --card-foreground: light-dark(oklch(0.2 0.01 260), oklch(0.95 0.005 260));
+  --popover: light-dark(oklch(1 0 0), oklch(0.2 0.01 260));
+  --popover-foreground: light-dark(oklch(0.2 0.01 260), oklch(0.95 0.005 260));
+  --primary: light-dark(oklch(0.27 0.02 260), oklch(0.92 0.005 260));
+  --primary-foreground: light-dark(oklch(0.985 0 0), oklch(0.2 0.01 260));
+  --secondary: light-dark(oklch(0.96 0.005 260), oklch(0.26 0.01 260));
+  --secondary-foreground: light-dark(oklch(0.27 0.02 260), oklch(0.95 0.005 260));
+  --muted: light-dark(oklch(0.96 0.005 260), oklch(0.26 0.01 260));
+  --muted-foreground: light-dark(oklch(0.47 0.02 260), oklch(0.72 0.015 260));
+  --accent: light-dark(oklch(0.95 0.008 260), oklch(0.28 0.012 260));
+  --accent-foreground: light-dark(oklch(0.27 0.02 260), oklch(0.95 0.005 260));
+  --destructive: light-dark(oklch(0.5 0.2 27), oklch(0.7 0.19 25));
+  --border: light-dark(oklch(0.9 0.005 260), oklch(0.3 0.01 260));
+  --input: light-dark(oklch(0.9 0.005 260), oklch(0.34 0.01 260));
+  --ring: light-dark(oklch(0.55 0.15 260), oklch(0.65 0.14 260));
+  --sidebar: light-dark(oklch(0.98 0.003 260), oklch(0.19 0.01 260));
+  --sidebar-foreground: light-dark(oklch(0.27 0.02 260), oklch(0.95 0.005 260));
+  --sidebar-primary: light-dark(oklch(0.27 0.02 260), oklch(0.92 0.005 260));
+  --sidebar-primary-foreground: light-dark(oklch(0.985 0 0), oklch(0.2 0.01 260));
+  --sidebar-accent: light-dark(oklch(0.94 0.008 260), oklch(0.27 0.012 260));
+  --sidebar-accent-foreground: light-dark(oklch(0.27 0.02 260), oklch(0.95 0.005 260));
+  --sidebar-border: light-dark(oklch(0.9 0.005 260), oklch(0.3 0.01 260));
+  --sidebar-ring: light-dark(oklch(0.55 0.15 260), oklch(0.65 0.14 260));
+  --severity-critical: light-dark(oklch(0.5 0.2 27), oklch(0.68 0.2 25));
+  --severity-critical-foreground: light-dark(oklch(0.99 0 0), oklch(0.16 0.03 25));
+  --severity-critical-subtle: light-dark(oklch(0.96 0.02 27), oklch(0.26 0.06 25));
+  --severity-critical-border: light-dark(oklch(0.85 0.08 27), oklch(0.42 0.12 25));
+  --severity-high: light-dark(oklch(0.5 0.15 50), oklch(0.74 0.16 55));
+  --severity-high-foreground: light-dark(oklch(0.99 0 0), oklch(0.18 0.03 55));
+  --severity-high-subtle: light-dark(oklch(0.96 0.025 55), oklch(0.27 0.05 55));
+  --severity-high-border: light-dark(oklch(0.86 0.08 55), oklch(0.44 0.1 55));
+  --severity-medium: light-dark(oklch(0.82 0.16 90), oklch(0.84 0.15 92));
+  --severity-medium-foreground: light-dark(oklch(0.25 0.05 90), oklch(0.2 0.04 92));
+  --severity-medium-subtle: light-dark(oklch(0.97 0.04 95), oklch(0.28 0.05 92));
+  --severity-medium-border: light-dark(oklch(0.87 0.1 95), oklch(0.46 0.1 92));
+  --severity-low: light-dark(oklch(0.5 0.14 250), oklch(0.72 0.13 250));
+  --severity-low-foreground: light-dark(oklch(0.99 0 0), oklch(0.16 0.03 250));
+  --severity-low-subtle: light-dark(oklch(0.96 0.02 250), oklch(0.26 0.05 250));
+  --severity-low-border: light-dark(oklch(0.86 0.06 250), oklch(0.42 0.09 250));
+  --severity-info: light-dark(oklch(0.48 0.02 260), oklch(0.75 0.02 260));
+  --severity-info-foreground: light-dark(oklch(0.99 0 0), oklch(0.18 0.01 260));
+  --severity-info-subtle: light-dark(oklch(0.96 0.005 260), oklch(0.27 0.01 260));
+  --severity-info-border: light-dark(oklch(0.87 0.01 260), oklch(0.42 0.015 260));
+  --status-resolved: light-dark(oklch(0.48 0.13 150), oklch(0.74 0.15 150));
+  --status-resolved-foreground: light-dark(oklch(0.99 0 0), oklch(0.16 0.03 150));
+  --status-resolved-subtle: light-dark(oklch(0.96 0.03 150), oklch(0.26 0.05 150));
+  --status-resolved-border: light-dark(oklch(0.85 0.08 150), oklch(0.42 0.1 150));
+  --status-kev: light-dark(oklch(0.47 0.18 320), oklch(0.74 0.15 320));
+  --status-kev-foreground: light-dark(oklch(0.99 0 0), oklch(0.16 0.03 320));
+  --status-kev-subtle: light-dark(oklch(0.96 0.025 320), oklch(0.27 0.06 320));
+  --status-kev-border: light-dark(oklch(0.85 0.08 320), oklch(0.44 0.12 320));
+}
+
+.light {
+  color-scheme: light;
+}
+
+.dark {
+  color-scheme: dark;
+}
+
+/*
+ * Statuses without their own palette reuse a tone. Aliases resolve at use time, so they follow the
+ * active theme and need no dark counterpart.
+ */
+:root {
+  --status-open: var(--severity-high);
+  --status-open-foreground: var(--severity-high-foreground);
+  --status-open-subtle: var(--severity-high-subtle);
+  --status-open-border: var(--severity-high-border);
+  --status-queued: var(--severity-info);
+  --status-queued-foreground: var(--severity-info-foreground);
+  --status-queued-subtle: var(--severity-info-subtle);
+  --status-queued-border: var(--severity-info-border);
+  --status-running: var(--severity-low);
+  --status-running-foreground: var(--severity-low-foreground);
+  --status-running-subtle: var(--severity-low-subtle);
+  --status-running-border: var(--severity-low-border);
+  --status-succeeded: var(--status-resolved);
+  --status-succeeded-foreground: var(--status-resolved-foreground);
+  --status-succeeded-subtle: var(--status-resolved-subtle);
+  --status-succeeded-border: var(--status-resolved-border);
+  --status-failed: var(--severity-critical);
+  --status-failed-foreground: var(--severity-critical-foreground);
+  --status-failed-subtle: var(--severity-critical-subtle);
+  --status-failed-border: var(--severity-critical-border);
+}
+
+@theme inline {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-severity-critical: var(--severity-critical);
+  --color-severity-critical-foreground: var(--severity-critical-foreground);
+  --color-severity-critical-subtle: var(--severity-critical-subtle);
+  --color-severity-critical-border: var(--severity-critical-border);
+  --color-severity-high: var(--severity-high);
+  --color-severity-high-foreground: var(--severity-high-foreground);
+  --color-severity-high-subtle: var(--severity-high-subtle);
+  --color-severity-high-border: var(--severity-high-border);
+  --color-severity-medium: var(--severity-medium);
+  --color-severity-medium-foreground: var(--severity-medium-foreground);
+  --color-severity-medium-subtle: var(--severity-medium-subtle);
+  --color-severity-medium-border: var(--severity-medium-border);
+  --color-severity-low: var(--severity-low);
+  --color-severity-low-foreground: var(--severity-low-foreground);
+  --color-severity-low-subtle: var(--severity-low-subtle);
+  --color-severity-low-border: var(--severity-low-border);
+  --color-severity-info: var(--severity-info);
+  --color-severity-info-foreground: var(--severity-info-foreground);
+  --color-severity-info-subtle: var(--severity-info-subtle);
+  --color-severity-info-border: var(--severity-info-border);
+
+  --color-status-open: var(--status-open);
+  --color-status-open-foreground: var(--status-open-foreground);
+  --color-status-open-subtle: var(--status-open-subtle);
+  --color-status-open-border: var(--status-open-border);
+  --color-status-resolved: var(--status-resolved);
+  --color-status-resolved-foreground: var(--status-resolved-foreground);
+  --color-status-resolved-subtle: var(--status-resolved-subtle);
+  --color-status-resolved-border: var(--status-resolved-border);
+  --color-status-kev: var(--status-kev);
+  --color-status-kev-foreground: var(--status-kev-foreground);
+  --color-status-kev-subtle: var(--status-kev-subtle);
+  --color-status-kev-border: var(--status-kev-border);
+  --color-status-queued: var(--status-queued);
+  --color-status-queued-foreground: var(--status-queued-foreground);
+  --color-status-queued-subtle: var(--status-queued-subtle);
+  --color-status-queued-border: var(--status-queued-border);
+  --color-status-running: var(--status-running);
+  --color-status-running-foreground: var(--status-running-foreground);
+  --color-status-running-subtle: var(--status-running-subtle);
+  --color-status-running-border: var(--status-running-border);
+  --color-status-succeeded: var(--status-succeeded);
+  --color-status-succeeded-foreground: var(--status-succeeded-foreground);
+  --color-status-succeeded-subtle: var(--status-succeeded-subtle);
+  --color-status-succeeded-border: var(--status-succeeded-border);
+  --color-status-failed: var(--status-failed);
+  --color-status-failed-foreground: var(--status-failed-foreground);
+  --color-status-failed-subtle: var(--status-failed-subtle);
+  --color-status-failed-border: var(--status-failed-border);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background font-sans text-sm text-foreground antialiased;
+  }
+
+  /*
+   * Legacy page bodies (rebuilt in SENTRA-35..38) were written for a 640px column with browser
+   * default element styles that preflight removes. Restore just enough to keep them readable.
+   * Pages that bring their own layout opt out with data-layout="wide". Remove with the shell (PR2).
+   */
+  body:not(:has([data-layout="wide"])) {
+    @apply mx-auto max-w-2xl px-4 py-8;
+  }
+  h1 {
+    @apply mb-3 text-xl font-semibold;
+  }
+  h2 {
+    @apply mt-6 mb-2 text-base font-semibold;
+  }
+  h3 {
+    @apply mb-1 font-semibold;
+  }
+  p,
+  ul,
+  ol,
+  dl,
+  pre,
+  form,
+  table {
+    @apply my-3;
+  }
+  ul:not([role]) {
+    @apply list-disc pl-5;
+  }
+  a {
+    @apply text-primary underline underline-offset-2;
+  }
+  label {
+    @apply font-medium;
+  }
+  input:not([type]),
+  input[type="email"],
+  select,
+  textarea {
+    @apply rounded-md border border-input bg-background px-2 py-1;
+  }
+  button:not([data-slot]) {
+    @apply cursor-pointer rounded-md border border-input bg-secondary px-3 py-1 text-secondary-foreground hover:bg-accent;
+  }
+  th,
+  td {
+    @apply border-b px-2 py-1 text-left;
+  }
+  code,
+  pre {
+    @apply font-mono text-[0.9em];
+  }
+  pre {
+    @apply overflow-x-auto rounded-md bg-muted p-2;
+  }
+}
