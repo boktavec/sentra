@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { LegacyPage } from "@/components/shell/legacy-page";
 import { apiGet } from "@/lib/api";
 import { callApi } from "@/lib/auth";
 import { fetchOrg, type Org } from "@/lib/orgs";
@@ -231,16 +232,16 @@ export default async function MembersPage({
 
   if ("failedWith" in view) {
     return (
-      <main>
+      <LegacyPage>
         <p data-testid="api-unavailable">
           The service is temporarily unavailable. Reference: {view.failedWith}
         </p>
-      </main>
+      </LegacyPage>
     );
   }
 
   return (
-    <main>
+    <LegacyPage>
       <p>
         <Link href={`/orgs/${view.org.slug}`}>{view.org.name}</Link>
       </p>
@@ -253,6 +254,6 @@ export default async function MembersPage({
           <Link href={`?cursor=${encodeURIComponent(view.page.nextCursor)}`}>More members</Link>
         </p>
       )}
-    </main>
+    </LegacyPage>
   );
 }

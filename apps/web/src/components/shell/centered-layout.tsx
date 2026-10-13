@@ -1,13 +1,13 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { SignOutButton } from "./sign-out-button";
 
 /**
  * Frame for pages outside an organization: wordmark, theme toggle, Sign out, one centered column.
  * Signed-out visitors never reach these routes (the proxy sends them to sign-in), so Sign out is
- * always valid. It is a plain POST form, so it works without JavaScript.
+ * always valid.
  */
 export function CenteredLayout({
   children,
@@ -24,11 +24,7 @@ export function CenteredLayout({
         </Link>
         <div className="flex items-center gap-1">
           <ThemeToggle />
-          <form action="/auth/logout" method="post">
-            <Button type="submit" variant="ghost" size="sm">
-              Sign out
-            </Button>
-          </form>
+          <SignOutButton />
         </div>
       </header>
       <main

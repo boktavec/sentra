@@ -286,6 +286,7 @@ test("members can read the evidence behind a finding, and outsiders cannot", asy
   const orgSlug = `detail-${run}`;
   await signUp(page, `detail-owner-${run}@example.com`);
   await createOrg(page, `Detail ${run}`, orgSlug);
+  await page.getByRole("button", { name: "New project" }).click();
   await page.getByLabel("Project name").fill("Web App");
   await page.getByRole("button", { name: "Create project" }).click();
   await expect(page.getByRole("link", { name: "View findings" })).toBeVisible();

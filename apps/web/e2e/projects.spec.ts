@@ -15,6 +15,7 @@ test("create projects, see them listed, and keep them invisible to non-members",
     path: screenshotPath("SENTRA-4-create-project", "1-empty-projects.png"),
   });
 
+  await page.getByRole("button", { name: "New project" }).click();
   await page.getByLabel("Project name").fill("Web App");
   await expect(page.getByLabel("Project slug")).toHaveValue("web-app"); // suggested from the name
   await page.screenshot({ path: screenshotPath("SENTRA-4-create-project", "2-create-form.png") });
@@ -25,11 +26,15 @@ test("create projects, see them listed, and keep them invisible to non-members",
 
   // The same slug with a different name is a conflict; the same name with a new slug is fine.
   await page.goto(`/orgs/${orgSlug}`);
+  await page.getByRole("button", { name: "New project" }).click();
   await page.getByLabel("Project name").fill("Other");
   await page.getByLabel("Project slug").fill("web-app");
   await page.getByRole("button", { name: "Create project" }).click();
   await expect(page.getByTestId("project-form-error")).toContainText("already taken");
   await page.screenshot({ path: screenshotPath("SENTRA-4-create-project", "4-slug-conflict.png") });
+  // The dialog stays open with the values kept, so the slug can be corrected in place.
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.getByLabel("Project name")).toHaveValue("Other");
   await page.getByLabel("Project name").fill("Web App");
   await page.getByLabel("Project slug").fill("web-app-2");
   await page.getByRole("button", { name: "Create project" }).click();

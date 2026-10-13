@@ -1,50 +1,81 @@
 import Link from "next/link";
+import { DataTable } from "@/components/data-table";
+import { EmptyState } from "@/components/empty-state";
+import { ErrorState } from "@/components/error-state";
+import { PageHeader } from "@/components/page-header";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { fetchOrg, type Org } from "@/lib/orgs";
 import { listProjects } from "@/lib/projects";
-import { NewProjectForm } from "./projects/new-project-form";
+import { NewProjectDialog } from "./projects/new-project-dialog";
 
 export const dynamic = "force-dynamic";
 
-type ProjectPage = Awaited<ReturnType<typeof listProjects>>;
+async function Projects({ org, cursor }: { org: Org; cursor?: string }) {
+  const page = await listProjects(org.id, cursor);
 
-function MoreProjects({ org, cursor }: { org: Org; cursor: string | null }) {
-  if (!cursor) return null;
-
-  return (
-    <p>
-      <Link href={`/orgs/${org.slug}?cursor=${encodeURIComponent(cursor)}`}>More projects</Link>
-    </p>
-  );
-}
-
-function ProjectResults({ org, cursor, page }: { org: Org; cursor?: string; page: ProjectPage }) {
   if (!page.ok)
     return (
-      <p data-testid="api-unavailable">
-        Projects are temporarily unavailable. Reference: {page.correlationId}
-      </p>
+      <ErrorState
+        testId="api-unavailable"
+        title="Projects are temporarily unavailable"
+        message="Try again shortly."
+        correlationId={page.correlationId}
+      />
     );
 
-  if (page.data.items.length === 0 && !cursor)
-    return <p data-testid="no-projects">This organization has no projects yet.</p>;
+  const { items, nextCursor } = page.data;
 
   return (
-    <>
-      <ul data-testid="project-list">
-        {page.data.items.map((project) => (
-          <li key={project.id}>
-            <Link href={`/orgs/${org.slug}/projects/${project.slug}`}>{project.name}</Link>{" "}
-            <code>{project.slug}</code>
-          </li>
-        ))}
-      </ul>
-      <MoreProjects org={org} cursor={page.data.nextCursor} />
-    </>
+    <DataTable
+      testId="project-list"
+      rows={items}
+      rowKey={(project) => project.id}
+      loadMoreLabel="More projects"
+      loadMoreHref={
+        nextCursor ? `/orgs/${org.slug}?cursor=${encodeURIComponent(nextCursor)}` : null
+      }
+      columns={[
+        {
+          key: "name",
+          header: "Name",
+          cell: (project) => (
+            <Link
+              href={`/orgs/${org.slug}/projects/${project.slug}`}
+              title={project.name}
+              className="block max-w-[28ch] truncate text-primary underline underline-offset-4"
+            >
+              {project.name}
+            </Link>
+          ),
+        },
+        {
+          key: "slug",
+          header: "Slug",
+          cell: (project) => (
+            <code className="font-mono text-muted-foreground">{project.slug}</code>
+          ),
+        },
+      ]}
+      empty={
+        cursor ? undefined : (
+          <EmptyState
+            testId="no-projects"
+            title="This organization has no projects yet."
+            description="Projects hold the SBOMs and findings for one application."
+            action={
+              <NewProjectDialog
+                orgId={org.id}
+                orgSlug={org.slug}
+                label="Create your first project"
+                variant="outline"
+              />
+            }
+          />
+        )
+      }
+    />
   );
-}
-
-async function Projects({ org, cursor }: { org: Org; cursor?: string }) {
-  return <ProjectResults org={org} cursor={cursor} page={await listProjects(org.id, cursor)} />;
 }
 
 export default async function OrgPage({
@@ -60,34 +91,41 @@ export default async function OrgPage({
 
   if (!org.ok)
     return (
-      <main>
-        <p data-testid="api-unavailable">
-          The service is temporarily unavailable. Reference: {org.correlationId}
-        </p>
-      </main>
+      <ErrorState
+        testId="api-unavailable"
+        title="The service is temporarily unavailable"
+        message="Try again shortly."
+        correlationId={org.correlationId}
+      />
     );
 
   return (
-    <main>
-      <p>
-        <Link href="/">All organizations</Link>
-      </p>
-      <h1 data-testid="org-name">{org.data.name}</h1>
-      <p>
-        Slug: <code data-testid="org-slug">{org.data.slug}</code>
-      </p>
-      <p>
-        Your role: <strong data-testid="org-role">{org.data.role}</strong>
-      </p>
-      {org.data.role === "admin" && (
-        <p>
-          <Link href={`/orgs/${org.data.slug}/audit-events`}>Audit history</Link>
-        </p>
-      )}
-      <h2>Projects</h2>
+    <>
+      <PageHeader
+        title={org.data.name}
+        titleTestId="org-name"
+        description={
+          <>
+            <code data-testid="org-slug" className="font-mono">
+              {org.data.slug}
+            </code>{" "}
+            <Badge variant="outline" data-testid="org-role">
+              {org.data.role}
+            </Badge>
+          </>
+        }
+        actions={
+          <>
+            {org.data.role === "admin" && (
+              <Button asChild variant="outline">
+                <Link href={`/orgs/${org.data.slug}/audit-events`}>Audit history</Link>
+              </Button>
+            )}
+            <NewProjectDialog orgId={org.data.id} orgSlug={org.data.slug} label="New project" />
+          </>
+        }
+      />
       <Projects org={org.data} cursor={cursor} />
-      <h3>Create project</h3>
-      <NewProjectForm orgId={org.data.id} orgSlug={org.data.slug} />
-    </main>
+    </>
   );
 }

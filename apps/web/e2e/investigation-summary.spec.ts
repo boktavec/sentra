@@ -164,6 +164,7 @@ test("a member reads the validated summary of a completed run, with links to its
 
   await signUp(page, `summary-${run}@example.com`);
   await createOrg(page, `Summary ${run}`, orgSlug);
+  await page.getByRole("button", { name: "New project" }).click();
   await page.getByLabel("Project name").fill("Web App");
   await page.getByRole("button", { name: "Create project" }).click();
   await expect(page).toHaveURL(`http://localhost:3000/orgs/${orgSlug}/projects/web-app`);

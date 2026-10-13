@@ -14,6 +14,7 @@ test("upload SBOMs, watch them validate or get rejected, and keep them private t
 
   await signUp(page, `sbom-owner-${run}@example.com`);
   await createOrg(page, orgName, orgSlug);
+  await page.getByRole("button", { name: "New project" }).click();
   await page.getByLabel("Project name").fill("Web App");
   await page.getByRole("button", { name: "Create project" }).click();
   const projectUrl = `http://localhost:3000/orgs/${orgSlug}/projects/web-app`;

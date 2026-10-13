@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { LegacyPage } from "@/components/shell/legacy-page";
 import { auditEventsQuery, listAuditEvents, type AuditFilters } from "@/lib/audits";
 import { fetchOrg } from "@/lib/orgs";
 
@@ -112,7 +113,7 @@ async function History({ slug, orgId, query }: { slug: string; orgId: string; qu
   const events = await listAuditEvents(orgId, filters, query.cursor);
 
   return (
-    <main>
+    <LegacyPage>
       <p>
         <Link href={`/orgs/${slug}`}>Organization</Link>
       </p>
@@ -120,7 +121,7 @@ async function History({ slug, orgId, query }: { slug: string; orgId: string; qu
       <Filters filters={filters} />
       <Events page={events} />
       <NextPage page={events} filters={filters} />
-    </main>
+    </LegacyPage>
   );
 }
 
@@ -136,18 +137,18 @@ export default async function AuditEventsPage({
 
   if (!org.ok)
     return (
-      <main>
+      <LegacyPage>
         <p data-testid="api-unavailable">
           The service is temporarily unavailable. Reference: {org.correlationId}
         </p>
-      </main>
+      </LegacyPage>
     );
 
   if (org.data.role !== "admin")
     return (
-      <main>
+      <LegacyPage>
         <p>You do not have access to audit history.</p>
-      </main>
+      </LegacyPage>
     );
 
   return <History slug={slug} orgId={org.data.id} query={query} />;
