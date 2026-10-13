@@ -1,127 +1,175 @@
-import Link from "next/link";
-import { LegacyPage } from "@/components/shell/legacy-page";
-import { auditEventsQuery, listAuditEvents, type AuditFilters } from "@/lib/audits";
+import type { ReactNode } from "react";
+import { DataTable, type Column } from "@/components/data-table";
+import { EmptyState } from "@/components/empty-state";
+import { ErrorState } from "@/components/error-state";
+import { LocalTime } from "@/components/local-time";
+import { PageHeader } from "@/components/page-header";
+import { StatusBadge } from "@/components/status-badge";
+import {
+  FILTER_ERROR_ID,
+  hasActiveFilters,
+  issueId,
+  parseAuditFilters,
+  rawAuditQuery,
+  type FilterIssue,
+  type RawAuditQuery,
+} from "@/lib/audit-filters";
+import {
+  actorLabel,
+  auditEventsQuery,
+  isRejectedFilters,
+  listAuditEvents,
+  shortId,
+  type AuditEvent,
+  type AuditFilters,
+} from "@/lib/audits";
+import { fetchMe } from "@/lib/me";
 import { fetchOrg } from "@/lib/orgs";
+import { AuditFilterForm } from "./audit-filter-form";
 
 export const dynamic = "force-dynamic";
 
-type Query = Partial<Record<keyof AuditFilters | "cursor", string>>;
+type Query = RawAuditQuery & { cursor?: string };
 
-function Filters({ filters }: { filters: AuditFilters }) {
+const REJECTED_MESSAGE =
+  "The service rejected these filters. Apply the filters again or clear them.";
+
+function auditColumns(youId?: string): Column<AuditEvent>[] {
+  return [
+    {
+      key: "time",
+      header: "Time",
+      className: "max-sm:order-1",
+      cell: (event) => (
+        <LocalTime iso={event.createdAt} className="whitespace-nowrap tabular-nums" />
+      ),
+    },
+    {
+      key: "action",
+      header: "Action",
+      className: "max-sm:order-3 max-sm:col-span-2",
+      cell: (event) => <code className="break-words">{event.action}</code>,
+    },
+    {
+      key: "result",
+      header: "Result",
+      className: "max-sm:order-4",
+      cell: (event) => (
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <StatusBadge status={event.result === "success" ? "succeeded" : "failed"} />
+          {event.failureCode && <code>{event.failureCode}</code>}
+        </span>
+      ),
+    },
+    {
+      key: "actor",
+      header: "Actor",
+      className: "max-sm:order-2 max-sm:justify-self-end max-sm:text-muted-foreground",
+      cell: (event) => (
+        <code title={event.actorUserId}>{actorLabel(event.actorUserId, youId)}</code>
+      ),
+    },
+    {
+      key: "target",
+      header: "Target",
+      className: "max-sm:order-5 max-sm:justify-self-end",
+      cell: (event) => (
+        <span className="flex flex-wrap items-baseline gap-x-1.5 max-sm:justify-end">
+          <span className="text-muted-foreground">{event.targetType}</span>
+          {event.targetId && <code title={event.targetId}>{shortId(event.targetId)}</code>}
+        </span>
+      ),
+    },
+  ];
+}
+
+function FilterIssues({ issues }: { issues: FilterIssue[] }) {
   return (
-    <form method="get">
-      <label>
-        From (UTC ISO 8601) <input name="from" defaultValue={filters.from} />
-      </label>{" "}
-      <label>
-        To (UTC ISO 8601) <input name="to" defaultValue={filters.to} />
-      </label>{" "}
-      <label>
-        Actor ID <input name="actorId" defaultValue={filters.actorId} />
-      </label>{" "}
-      <label>
-        Action <input name="action" defaultValue={filters.action} />
-      </label>{" "}
-      <label>
-        Result{" "}
-        <select name="result" defaultValue={filters.result ?? ""}>
-          <option value="">All</option>
-          <option value="success">Success</option>
-          <option value="failed">Failed</option>
-        </select>
-      </label>{" "}
-      <button type="submit">Filter</button>
-    </form>
+    <ErrorState
+      testId={FILTER_ERROR_ID}
+      title="Check the filters"
+      message="Fix the following and filter again."
+    >
+      <ul className="mt-1 list-disc pl-5">
+        {issues.map((issue) => (
+          <li key={issue.field} id={issueId(issue.field)}>
+            {issue.message}
+          </li>
+        ))}
+      </ul>
+    </ErrorState>
   );
 }
 
-const AUDIT_RESULTS = ["success", "failed"] as const;
+type EventsResult = Awaited<ReturnType<typeof listAuditEvents>>;
 
-function filtersOf(query: Query): AuditFilters {
-  const result = AUDIT_RESULTS.find((outcome) => outcome === query.result);
-
-  return { from: query.from, to: query.to, actorId: query.actorId, action: query.action, result };
-}
-
-function nextHref(filters: AuditFilters, cursor: string) {
-  return `?${auditEventsQuery(filters, cursor)}`;
-}
-
-function Events({ page }: { page: Awaited<ReturnType<typeof listAuditEvents>> }) {
-  if (!page.ok)
+/** A rejected filter is user input (validation); anything else is an outage with a reference. */
+function EventsFailure({ result }: { result: Extract<EventsResult, { ok: false }> }) {
+  if (isRejectedFilters(result))
     return (
-      <p data-testid="api-unavailable">
-        Audit history is temporarily unavailable. Reference: {page.correlationId}
-      </p>
+      <ErrorState testId={FILTER_ERROR_ID} title="Check the filters" message={REJECTED_MESSAGE} />
     );
 
-  if (page.data.items.length === 0)
-    return <p data-testid="no-audit-events">No audit events match these filters.</p>;
-
   return (
-    <table data-testid="audit-events">
-      <thead>
-        <tr>
-          <th>Time</th>
-          <th>Action</th>
-          <th>Result</th>
-          <th>Actor</th>
-          <th>Target</th>
-        </tr>
-      </thead>
-      <tbody>
-        {page.data.items.map((event) => (
-          <tr key={event.id}>
-            <td>{new Date(event.createdAt).toLocaleString("en-US")}</td>
-            <td>{event.action}</td>
-            <td>
-              {event.result}
-              {event.failureCode ? ` (${event.failureCode})` : ""}
-            </td>
-            <td>
-              <code>{event.actorUserId}</code>
-            </td>
-            <td>
-              {event.targetType}
-              {event.targetId ? `: ${event.targetId}` : ""}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <ErrorState
+      testId="api-unavailable"
+      title="Audit history is temporarily unavailable"
+      message="Try again shortly."
+      correlationId={result.correlationId}
+    />
   );
 }
 
-function NextPage({
-  page,
+async function Events({
+  orgId,
   filters,
+  cursor,
 }: {
-  page: Awaited<ReturnType<typeof listAuditEvents>>;
+  orgId: string;
   filters: AuditFilters;
+  cursor?: string;
 }) {
-  if (!page.ok || !page.data.nextCursor) return null;
+  const [events, me] = await Promise.all([listAuditEvents(orgId, filters, cursor), fetchMe()]);
+
+  if (!events.ok) return <EventsFailure result={events} />;
+
+  const { items, nextCursor } = events.data;
 
   return (
-    <p>
-      <Link href={nextHref(filters, page.data.nextCursor)}>More audit events</Link>
-    </p>
+    <DataTable
+      testId="audit-events"
+      rows={items}
+      rowKey={(event) => event.id}
+      columns={auditColumns(me.ok ? me.data.id : undefined)}
+      empty={<EmptyState testId="no-audit-events" title="No audit events match these filters." />}
+      stackedRow="max-sm:grid-cols-[1fr_auto]"
+      loadMoreLabel="More audit events"
+      loadMoreHref={nextCursor ? `?${auditEventsQuery(filters, nextCursor)}` : null}
+    />
   );
 }
 
-async function History({ slug, orgId, query }: { slug: string; orgId: string; query: Query }) {
-  const filters = filtersOf(query);
-  const events = await listAuditEvents(orgId, filters, query.cursor);
+async function History({ orgId, query }: { orgId: string; query: Query }) {
+  const { filters, issues } = parseAuditFilters(query);
 
   return (
-    <LegacyPage>
-      <p>
-        <Link href={`/orgs/${slug}`}>Organization</Link>
-      </p>
-      <h1>Audit history</h1>
-      <Filters filters={filters} />
-      <Events page={events} />
-      <NextPage page={events} filters={filters} />
-    </LegacyPage>
+    <>
+      <AuditFilterForm filters={filters} issues={issues} canClear={hasActiveFilters(query)} />
+      {issues.length > 0 ? (
+        <FilterIssues issues={issues} />
+      ) : (
+        <Events orgId={orgId} filters={filters} cursor={query.cursor} />
+      )}
+    </>
+  );
+}
+
+function Page({ children }: { children: ReactNode }) {
+  return (
+    <>
+      <PageHeader title="Audit history" />
+      {children}
+    </>
   );
 }
 
@@ -130,26 +178,35 @@ export default async function AuditEventsPage({
   searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<Query>;
+  searchParams: Promise<Parameters<typeof rawAuditQuery>[0]>;
 }) {
-  const [{ slug }, query] = await Promise.all([params, searchParams]);
+  const [{ slug }, search] = await Promise.all([params, searchParams]);
+  const query = rawAuditQuery(search);
   const org = await fetchOrg(slug);
 
   if (!org.ok)
     return (
-      <LegacyPage>
-        <p data-testid="api-unavailable">
-          The service is temporarily unavailable. Reference: {org.correlationId}
-        </p>
-      </LegacyPage>
+      <ErrorState
+        testId="api-unavailable"
+        title="The service is temporarily unavailable"
+        message="Try again shortly."
+        correlationId={org.correlationId}
+      />
     );
 
   if (org.data.role !== "admin")
     return (
-      <LegacyPage>
-        <p>You do not have access to audit history.</p>
-      </LegacyPage>
+      <Page>
+        <EmptyState
+          title="You do not have access to audit history."
+          description="Only organization admins can view it."
+        />
+      </Page>
     );
 
-  return <History slug={slug} orgId={org.data.id} query={query} />;
+  return (
+    <Page>
+      <History orgId={org.data.id} query={query} />
+    </Page>
+  );
 }

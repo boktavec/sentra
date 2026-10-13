@@ -1,6 +1,6 @@
 # SENTRA-36: Revamp organization pages
 
-- Status: Approved (planning complete), not implemented
+- Status: Implemented across three stacked PRs (PR3 in review)
 - YouTrack: [SENTRA-36](http://localhost:8080/issue/SENTRA-36)
 - Owner: apps/web
 - Depends on: [SENTRA-34](http://localhost:8080/issue/SENTRA-34) (UI foundation, merged), see [`docs/features/SENTRA-34-ui-foundation/spec.md`](../SENTRA-34-ui-foundation/spec.md). Builds on the patterns of [SENTRA-35](http://localhost:8080/issue/SENTRA-35), see [`docs/features/SENTRA-35-ui-entry-onboarding/spec.md`](../SENTRA-35-ui-entry-onboarding/spec.md).
@@ -136,6 +136,7 @@ Done means:
 | Non-admin opens `/audit-events` | `EmptyState` "You do not have access to audit history."; no API call for events | Existing/added e2e assertion |
 | Non-member or unknown org | `notFound()` from `fetchOrg` (unchanged), no shell data | `organizations.spec.ts`, tenant isolation tests |
 | Audit From ≥ To, unparsable date, non-UUID actor ID, action > 100 chars | `audit-filter-error` alert, no API call, inputs keep values | Vitest for the parser; e2e for From ≥ To |
+| Unparsable From/To (a hand-edited URL only; the control never produces one) | The value is dropped, so the input renders empty while the `audit-filter-error` alert names the field | Vitest for the parser |
 | API returns 400 `invalid_input` for audit filters (for example a tampered cursor) | Same `audit-filter-error` alert, not `api-unavailable` | Unit test of the result mapping; e2e with a bad `cursor` query |
 | Unknown action typed | Accepted; empty result shows `no-audit-events` | `audit-events.spec.ts` |
 | No-JS audit filter submit | Bare `datetime-local` values treated as UTC, normalized, hint "Times in UTC"; table shows UTC times | e2e in a JS-disabled context |
@@ -336,3 +337,27 @@ Sources: Refero (invite dialogs, remove confirms, audit logs, members tables), t
 - **Verified:** destructive confirm contrast (white text) is 6.64:1 light and 6.43:1 dark (sampled from screenshots). The stale `?error=` banner behind the Remove-confirm screenshot came from the e2e reloading after the last-admin attempt; it now opens the bare URL.
 - The pending-invitations `ErrorState` was verified visually by renaming the `invitations` table for a moment (members still render, no overflow); it is still not covered by e2e.
 - UX agent changes (mobile polish): `DataTable` gained an optional `stackedRow` prop (grid template classes) that turns each row into a small grid below `sm` with a screen-reader-only header, used by the members and invitations tables; `Dialog`/`AlertDialog` content got `grid-cols-[minmax(0,1fr)]` so long emails and links wrap instead of widening the dialog; pending-invitation expiry wraps. To keep fallow green `DataTable` was split into `HeaderRow`, `DataRow` and `LoadMore` (no behavior or test-ID change).
+
+## PR3 implementation notes (2026-10-13)
+
+- **Verified (Chromium):** the `datetime-local` `stepMismatch` claim is true in one situation. A field whose `value` attribute is `...:00` and whose value is later set from script to a value with seconds reports `stepMismatch: true` (the attribute is the step base), as does a field with no `value` attribute given non-zero seconds. With `step="1"` it is `false` in both. A value prefilled only through the markup (the no-JS path) never mismatches, because the attribute becomes the step base. The form uses `step={1}` on From and To; an e2e fills seconds (`10:00:05`) and submits.
+- **Verified (Playwright/Chromium):** a no-JS `datetime-local` submits `YYYY-MM-DDTHH:mm` (no zone, no seconds); the no-JS e2e asserts `from=2026-01-15T10%3A00`, the "Times in UTC" hint and UTC table times. Also: Playwright `fill("...T00:00:00")` fails with "Malformed value" because Chromium normalizes zero seconds away; the specs fill minutes only unless seconds are non-zero.
+- **Verified (Vitest, `TZ=Europe/Amsterdam` set in `beforeAll`):** `new Date("YYYY-MM-DDTHH:mm")` is read as local time; `Intl` `timeZoneName: "short"` gives `CET`/`CEST` (the test also accepts `GMT+1`/`GMT+2`; Chromium in the e2e showed `GMT+2` for `en-CA`). Spring-forward gap (`02:30` on 2026-03-29) resolves to `01:30Z`; fall-back overlap (`02:30` on 2026-10-25) resolves to the first occurrence (`00:30Z`).
+- **Verified (code read of `apps/api/src/org-input.ts`):** the API's UUID pattern is lowercase only, so the web trims and lowercases the actor ID before validating and sending it (an uppercase UUID would otherwise 400).
+- Known audit actions re-grepped from `apps/api/src`: the spec's 14 are unchanged. `investigation.requested`, `sbom.uploaded` are Kafka event types, not audit actions, and are not in the list.
+- `LocalTime` uses `useEffect` as specified. It is used for audit Time and now for the pending-invitation expiry on the members page (`YYYY-MM-DD HH:mm:ss UTC` before hydration, so the fixed text gained seconds).
+- New pure modules: `lib/local-time.ts` (`formatUtc`, `formatLocal`, `toLocalInputValue`, `fromLocalInputValue`), `lib/audit-filters.ts` (`parseAuditFilters`, `normalizeInstant`, `hasActiveFilters`, `rawAuditQuery`, issue ids), `lib/audit-actions.ts`, `lib/me.ts` (`fetchMe`, now also used by the members page), and `actorLabel`/`shortId`/`isRejectedFilters` in `lib/audits.ts`. `rawAuditQuery` reduces a repeated parameter (an array in `searchParams`) to its first value so user input cannot crash the page.
+- The audit filter form submit uses `router.push` with a UTC-converted query, because a `datetime-local` input cannot hold a `Z` value. The form is remounted by `key` when the normalized filters change (Clear filters, pagination) so its state follows the URL. The hint line is `min-h-4` so the swap does not shift layout. `FILTER_BAR_CLASS` is exported from `filter-bar.tsx`. Constants used by server code (`FILTER_ERROR_ID`, `issueId`) live in `lib/audit-filters.ts`: exported non-components from a `"use client"` file arrive as references on the server (first attempt caused a 500 on the invalid-filter page).
+- `ErrorState` gained optional `children` (the per-field issue list). Field errors link to inputs with `aria-invalid` and `aria-describedby`; From >= To is attached to the To field.
+- Widths: From/To are `sm:w-64` (the spec's `w-52` clipped the seconds and AM/PM of the native control in Chromium).
+- The forbidden state shows the page header, the title "You do not have access to audit history." and the description "Only organization admins can view it."
+- e2e: `audit-events.spec.ts` (exact labels; "You" marker; local filter with UTC URL, local prefill, hint and Clear filters, no hydration console errors; From >= To plus bad actor alert; bad cursor alert not `api-unavailable`; no-JS filtering and server-side From >= To; non-admin forbidden state), axe on the audit page (light/dark, plus the alert at 320px). `psql`, `seedMember`, `signedInUserId` and `newSession` moved from `members.spec.ts` to `helpers.ts` for reuse. Screenshots: `audit-filtered.png`, `audit-invalid.png`, `audit-invalid-m390.png`.
+- Not verified: `e2e/sbom-upload.spec.ts` still fails in this environment (pipeline consumer not running; unrelated). Dark-theme and mobile screenshots of the filtered table were not captured (axe covers dark); the Clipboard failure status and the pending-invitations `ErrorState` remain untested by e2e. Follow-ups 1-4 still need recording in YouTrack (not done here).
+
+### PR3 review fixes (2026-10-13)
+
+- The filter form is no longer remounted by `key` (it lost keyboard focus after every submit). All fields are controlled and follow the URL through an effect; after a submit with issues, focus moves to the first offending field (e2e asserts it). The Actor cell uses `actorLabel` only.
+
+### Decided: audit "To" is exclusive (2026-10-13)
+
+The API treats `to` as exclusive (`created_at < to`) and the UI has second precision, so an event at 10:00:05.5 is excluded by To = 10:00:05. The user chose to keep the half-open range and document it; no code change.

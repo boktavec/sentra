@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { CircleAlert } from "lucide-react";
 
 export function ErrorState({
@@ -5,11 +6,13 @@ export function ErrorState({
   message,
   correlationId,
   testId,
+  children,
 }: {
   title: string;
   message: string;
   correlationId?: string;
   testId?: string;
+  children?: ReactNode;
 }) {
   return (
     <div
@@ -21,6 +24,7 @@ export function ErrorState({
       <div className="min-w-0">
         <p className="font-medium">{title}</p>
         <p className="mt-1 text-muted-foreground">{message}</p>
+        {children}
         {correlationId && (
           <p className="mt-1 text-xs text-muted-foreground">
             Reference: <code>{correlationId}</code>

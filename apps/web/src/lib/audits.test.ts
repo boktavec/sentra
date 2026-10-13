@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { auditEventsQuery } from "./audits.ts";
+import { actorLabel, auditEventsQuery, isRejectedFilters } from "./audits.ts";
 
 describe("auditEventsQuery", () => {
   it("builds a next-page query with only the cursor when no filters are selected", () => {
@@ -24,5 +24,27 @@ describe("auditEventsQuery", () => {
       result: "success",
       cursor: "next-page",
     });
+  });
+});
+
+describe("actorLabel", () => {
+  const actor = "3f2b8c1e-9d4a-4b7e-8c21-5a6f0d3e1b94";
+
+  it("is 'You' for the signed-in user and the short ID for anyone else", () => {
+    expect(actorLabel(actor, actor)).toBe("You");
+    expect(actorLabel(actor, "someone-else")).toBe("3f2b8c1e");
+  });
+
+  it("falls back to the short ID when /v1/me failed", () => {
+    expect(actorLabel(actor, undefined)).toBe("3f2b8c1e");
+  });
+});
+
+describe("isRejectedFilters", () => {
+  it("treats only a 400 invalid_input as rejected filters", () => {
+    expect(isRejectedFilters({ ok: false, status: 400, code: "invalid_input" })).toBe(true);
+    expect(isRejectedFilters({ ok: false, status: 400, code: "other" })).toBe(false);
+    expect(isRejectedFilters({ ok: false, status: 503 })).toBe(false);
+    expect(isRejectedFilters({ ok: true, status: 200 })).toBe(false);
   });
 });
