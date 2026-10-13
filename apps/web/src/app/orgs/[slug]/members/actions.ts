@@ -41,6 +41,7 @@ export async function leaveOrganization(form: FormData) {
 
 export interface InviteState {
   link?: string;
+  email?: string;
   error?: string;
 }
 
@@ -75,6 +76,7 @@ export async function createInvitation(_prev: InviteState, form: FormData): Prom
 
   // The token is shown once, here; the API keeps only its hash.
   return {
+    email: field(form, "email"),
     link: `${config().webUrl}/invitations/accept?token=${encodeURIComponent(result.data.token)}`,
   };
 }

@@ -1,9 +1,7 @@
 "use client";
 
-import { LoaderCircle } from "lucide-react";
 import { useActionState, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { DialogClose, DialogFooter } from "@/components/ui/dialog";
+import { DialogFormFooter } from "@/components/dialog-form-footer";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { slugify } from "@/lib/slugify";
@@ -62,17 +60,7 @@ export function NewProjectForm({ orgId, orgSlug }: { orgId: string; orgSlug: str
           {state.error}
         </p>
       )}
-      <DialogFooter>
-        <DialogClose asChild>
-          <Button type="button" variant="outline">
-            Cancel
-          </Button>
-        </DialogClose>
-        <Button type="submit" disabled={pending} aria-busy={pending}>
-          {pending && <LoaderCircle className="animate-spin" aria-hidden="true" />}
-          Create project
-        </Button>
-      </DialogFooter>
+      <DialogFormFooter pending={pending} submitLabel="Create project" />
     </form>
   );
 }

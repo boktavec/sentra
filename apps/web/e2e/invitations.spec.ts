@@ -10,10 +10,12 @@ async function newPerson(browser: Browser) {
   return { context, page: await context.newPage() };
 }
 
+/** Leaves the dialog open on its success state: the link is shown once and only Done closes it. */
 async function invite(admin: Page, email: string, role: "member" | "admin") {
-  await admin.getByLabel("Email").fill(email);
-  await admin.getByLabel("Invitation role").selectOption(role);
-  await admin.getByRole("button", { name: "Invite" }).click();
+  await admin.getByRole("button", { name: "Invite member" }).click();
+  await admin.getByLabel("Email", { exact: true }).fill(email);
+  await admin.getByLabel("Invitation role", { exact: true }).selectOption(role);
+  await admin.getByRole("button", { name: "Invite", exact: true }).click();
   const link = await admin.getByTestId("invite-link").textContent();
   expect(link).toMatch(/\/invitations\/accept\?token=[A-Za-z0-9_-]{43}$/);
 
@@ -106,6 +108,8 @@ test("an admin invites someone, who signs in through the link and joins; wrong a
   await admin.goto(`/orgs/${slug}/members`);
   await expect(admin.getByTestId("invitation-row")).toHaveCount(1);
   await admin.getByRole("button", { name: "Revoke" }).click();
+  await expect(admin.getByRole("alertdialog")).toContainText("inv-later-");
+  await admin.getByRole("alertdialog").getByRole("button", { name: "Revoke", exact: true }).click();
   await expect(admin.getByTestId("invitation-row")).toHaveCount(0);
   const { context: lateContext, page: late } = await newPerson(browser);
   await signUp(late, `inv-later-${run}@example.com`);
@@ -116,4 +120,78 @@ test("an admin invites someone, who signs in through the link and joins; wrong a
     path: screenshotPath("SENTRA-29-invitation-email-delivery", "5-revoked.png"),
   });
   await lateContext.close();
+});
+
+test("the invite link is locked in the dialog until Done, and can be copied", async ({
+  page: admin,
+  context,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const run = Date.now().toString(36);
+  await signUp(admin, `inv-lock-${run}@example.com`);
+  await createOrg(admin, `Lock ${run}`, `lock-${run}`);
+  await admin.goto(`/orgs/lock-${run}/members`);
+  const inviteeEmail = `inv-lock-invitee-${run}@example.com`;
+  const link = await invite(admin, inviteeEmail, "member");
+  const dialog = admin.getByRole("dialog");
+  await expect(dialog).toContainText(`Invitation sent to ${inviteeEmail}`);
+  await expect(dialog).toContainText("Shown only once");
+  // The token is a live credential: mask it in the committed screenshots.
+  const maskLink = [admin.getByTestId("invite-link")];
+
+  await admin.screenshot({
+    path: screenshotPath("SENTRA-36-ui-org-pages", "members-invite-link.png"),
+    mask: maskLink,
+  });
+
+  // Esc, a click outside and the (absent) close button cannot dismiss the one-time link.
+  await admin.keyboard.press("Escape");
+  await expect(dialog).toBeVisible();
+  await admin.mouse.click(2, 2);
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Close" })).toHaveCount(0);
+  await expect(admin.getByTestId("invite-link")).toHaveText(link);
+
+  await dialog.getByRole("button", { name: "Copy link" }).click();
+  await expect(dialog.getByText("Copied")).toBeVisible();
+  expect(await admin.evaluate(() => navigator.clipboard.readText())).toBe(link);
+
+  // Done closes it, the pending list has refreshed behind it, and the link is gone from the page.
+  await dialog.getByRole("button", { name: "Done" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(admin.getByRole("button", { name: "Invite member" })).toBeFocused();
+  await expect(admin.getByTestId("invitation-row")).toHaveCount(1);
+  await expect(admin.getByTestId("invitation-row")).toContainText(inviteeEmail);
+  await expect(admin.getByTestId("invite-link")).toHaveCount(0);
+
+  // Dark and narrow, for the PR screenshots (the theme is a cookie read on render).
+  await context.addCookies([{ name: "sentra-theme", value: "dark", url: "http://localhost:3000" }]);
+  await admin.setViewportSize({ width: 320, height: 700 });
+  await admin.reload();
+  await invite(admin, `inv-lock-dark-${run}@example.com`, "member");
+  await admin.screenshot({
+    path: screenshotPath("SENTRA-36-ui-org-pages", "members-invite-link-dark-m320.png"),
+    mask: maskLink,
+  });
+});
+
+test("a denied clipboard shows a failure status and leaves the link selectable", async ({
+  page: admin,
+  context,
+}) => {
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: () => Promise.reject(new Error("denied")) },
+    });
+  });
+
+  const run = Date.now().toString(36);
+  await signUp(admin, `inv-deny-${run}@example.com`);
+  await createOrg(admin, `Deny ${run}`, `deny-${run}`);
+  await admin.goto(`/orgs/deny-${run}/members`);
+  const link = await invite(admin, `inv-deny-invitee-${run}@example.com`, "member");
+  const dialog = admin.getByRole("dialog");
+  await dialog.getByRole("button", { name: "Copy link" }).click();
+  await expect(dialog.getByText("Copy failed, select the link instead")).toBeVisible();
+  await expect(admin.getByTestId("invite-link")).toHaveText(link);
 });
