@@ -42,6 +42,7 @@ test("start and observe a finding investigation through the browser", async ({ p
 
   await signUp(page, `investigator-${run}@example.com`);
   await createOrg(page, `Investigations ${run}`, orgSlug);
+  await page.getByRole("button", { name: "New project" }).click();
   await page.getByLabel("Project name").fill("Web App");
   await page.getByRole("button", { name: "Create project" }).click();
   await expect(page).toHaveURL(`http://localhost:3000/orgs/${orgSlug}/projects/web-app`);

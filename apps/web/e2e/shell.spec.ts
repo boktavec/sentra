@@ -21,6 +21,7 @@ test("the shell shows navigation, switchers and breadcrumbs with names from the 
   await expect(nav.getByRole("link", { name: "Projects" })).toHaveAttribute("aria-current", "page");
   await expect(nav.getByRole("link", { name: "Members" })).toBeVisible();
   await expect(nav.getByRole("link", { name: "Audit events" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sign out" })).toHaveCount(1);
   const crumbs = page.getByRole("navigation", { name: "breadcrumb" });
   await expect(crumbs.getByRole("link", { name: "Organizations" })).toBeVisible();
   await expect(crumbs.getByText(orgName)).toHaveAttribute("aria-current", "page");
@@ -37,6 +38,7 @@ test("the shell shows navigation, switchers and breadcrumbs with names from the 
   await page.keyboard.press("Escape");
 
   // Project level: the sidebar switches to project navigation.
+  await page.getByRole("button", { name: "New project" }).click();
   await page.getByLabel("Project name").fill("Web App");
   await page.getByRole("button", { name: "Create project" }).click();
   await expect(page.getByTestId("project-name")).toHaveText("Web App");
@@ -48,6 +50,7 @@ test("the shell shows navigation, switchers and breadcrumbs with names from the 
   await expect(projectNav.getByRole("link", { name: "Findings" })).toBeVisible();
   await expect(projectNav.getByRole("link", { name: "Investigations" })).toBeVisible();
   await expect(projectNav.getByRole("link", { name: "Projects" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Sign out" })).toHaveCount(1);
   await expect(crumbs.getByRole("link", { name: orgName })).toBeVisible();
   await expect(crumbs.getByText("Web App")).toHaveAttribute("aria-current", "page");
   await page.getByRole("button", { name: "Switch project" }).click();
@@ -75,6 +78,8 @@ test("the shell shows navigation, switchers and breadcrumbs with names from the 
 
   // Below md the sidebar is a sheet opened from the header.
   await page.setViewportSize({ width: 390, height: 800 });
+  // Sign out is icon only at this width but keeps its name.
+  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Primary" })).toBeHidden();
   await page.getByRole("button", { name: "Toggle Sidebar" }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
@@ -92,6 +97,16 @@ test("the shell shows navigation, switchers and breadcrumbs with names from the 
   await page.getByRole("dialog").getByRole("link", { name: "Members" }).click();
   await expect(page).toHaveURL(`http://localhost:3000/orgs/${orgSlug}/members`);
   await expect(page.getByRole("dialog")).toBeHidden();
+});
+
+test("Sign out in the shell header ends the session", async ({ page }) => {
+  const run = Date.now().toString(36);
+  await signUp(page, `shell-signout-${run}@example.com`);
+  await createOrg(page, `Sign Out ${run}`, `signout-${run}`);
+
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.goto(`/orgs/signout-${run}`);
+  await expect(page).toHaveURL(/localhost:8180\/ui\/v2\/login\/loginname/);
 });
 
 test("a collapsed sidebar is out of the tab order", async ({ page, context }) => {
@@ -129,6 +144,7 @@ test("the shell degrades to a minimal frame when the API is unavailable", async 
       // Nothing the API did not return: no names, no org navigation.
       await expect(page.locator("body")).not.toContainText(orgName);
       await expect(page.getByRole("navigation", { name: "Primary" })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Sign out" })).toHaveCount(1);
       await expect(page.getByRole("navigation", { name: "breadcrumb" })).toContainText(
         "Organizations",
       );

@@ -2,7 +2,6 @@
 
 import type { ReactNode } from "react";
 import { useParams } from "next/navigation";
-import { LegacyPage } from "./legacy-page";
 
 /**
  * Org routes get the header and page column here. Project routes render their own header (it needs
@@ -16,7 +15,7 @@ export function OrgFrame({ header, children }: { header: ReactNode; children: Re
   return (
     <>
       {header}
-      <LegacyPage>{children}</LegacyPage>
+      <div className="mx-auto w-full max-w-5xl px-4 py-6 md:px-6">{children}</div>
     </>
   );
 }

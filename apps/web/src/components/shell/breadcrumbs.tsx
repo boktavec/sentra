@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -11,6 +11,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
+import { cn } from "@/lib/utils";
 import { buildBreadcrumbs, type Crumb, type Named } from "@/lib/shell";
 
 // Organizations / <org> / <project>
@@ -34,6 +35,26 @@ function CrumbLabel({ crumb }: { crumb: Crumb }) {
   );
 }
 
+function CrumbItem({
+  crumb,
+  separatorClass,
+  trailing,
+}: {
+  crumb: Crumb;
+  separatorClass?: string;
+  trailing?: ReactNode;
+}) {
+  return (
+    <>
+      <BreadcrumbSeparator className={separatorClass} />
+      <BreadcrumbItem className="min-w-0">
+        <CrumbLabel crumb={crumb} />
+        {trailing}
+      </BreadcrumbItem>
+    </>
+  );
+}
+
 /** Trail for the current path; names are the org/project the API returned, truncated with the full name in `title`. */
 export function Breadcrumbs({
   org,
@@ -45,19 +66,25 @@ export function Breadcrumbs({
   /** Rendered right after the project crumb. */
   switcher?: ReactNode;
 }) {
-  const crumbs = buildBreadcrumbs(usePathname(), org, project);
+  const [root, ...rest] = buildBreadcrumbs(usePathname(), org, project);
+  // On narrow screens the root crumb is dropped from deep trails so the org and project stay legible.
+  const hideRoot = rest.length > 1 ? "max-sm:hidden" : undefined;
 
   return (
     <Breadcrumb className="min-w-0">
       <BreadcrumbList className="flex-nowrap">
-        {crumbs.map((crumb, index) => (
-          <Fragment key={`${index}-${crumb.label}`}>
-            {index > 0 && <BreadcrumbSeparator />}
-            <BreadcrumbItem className="min-w-0">
-              <CrumbLabel crumb={crumb} />
-              {index === PROJECT_CRUMB_INDEX && switcher}
-            </BreadcrumbItem>
-          </Fragment>
+        {root && (
+          <BreadcrumbItem className={cn("min-w-0", hideRoot)}>
+            <CrumbLabel crumb={root} />
+          </BreadcrumbItem>
+        )}
+        {rest.map((crumb, i) => (
+          <CrumbItem
+            key={`${i}-${crumb.label}`}
+            crumb={crumb}
+            separatorClass={i === 0 ? hideRoot : undefined}
+            trailing={i + 1 === PROJECT_CRUMB_INDEX ? switcher : undefined}
+          />
         ))}
       </BreadcrumbList>
     </Breadcrumb>

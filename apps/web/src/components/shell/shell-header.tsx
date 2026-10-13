@@ -4,8 +4,9 @@ import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import type { Named } from "@/lib/shell";
 import { Breadcrumbs } from "./breadcrumbs";
+import { SignOutButton } from "./sign-out-button";
 
-/** Top bar of the shell: sidebar toggle, breadcrumbs, an optional switcher, and the theme toggle. */
+/** Top bar of the shell: sidebar toggle, breadcrumbs, an optional switcher, the theme toggle, and Sign out. */
 export function ShellHeader({
   org,
   project,
@@ -20,8 +21,9 @@ export function ShellHeader({
       <SidebarTrigger />
       <Separator orientation="vertical" className="h-4" />
       <Breadcrumbs org={org} project={project} switcher={switcher} />
-      <div className="ml-auto">
+      <div className="ml-auto flex items-center gap-1">
         <ThemeToggle />
+        <SignOutButton />
       </div>
     </header>
   );

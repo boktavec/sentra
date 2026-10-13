@@ -92,6 +92,7 @@ test("members can review and filter findings without exposing them to outsiders"
   const orgSlug = `findings-${run}`;
   await signUp(page, `findings-owner-${run}@example.com`);
   await createOrg(page, `Findings ${run}`, orgSlug);
+  await page.getByRole("button", { name: "New project" }).click();
   await page.getByLabel("Project name").fill("Web App");
   await page.getByRole("button", { name: "Create project" }).click();
   await page.getByRole("link", { name: "View findings" }).click();

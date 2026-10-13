@@ -72,11 +72,26 @@ test.describe("accessibility (WCAG 2 A/AA)", () => {
       const run = Date.now().toString(36);
       await signUp(page, `axe-${theme}-${run}@example.com`);
       await createOrg(page, `Axe ${run}`, `axe-${theme}-${run}`);
+      // One project, so the populated table is scanned rather than the empty state.
+      await page.getByRole("button", { name: "New project" }).click();
+      await page.getByLabel("Project name").fill("Web App");
+      await page.getByRole("button", { name: "Create project" }).click();
+      await expect(page.getByTestId("project-name")).toHaveText("Web App");
+      await page.goto(`/orgs/axe-${theme}-${run}`);
       await context.addCookies([
         { name: "sentra-theme", value: theme, url: "http://localhost:3000" },
       ]);
       await page.reload();
       await expect(page.getByTestId("org-name")).toBeVisible();
+      await expectNoViolations(page);
+
+      // The New project dialog open, at a narrow width where Sign out is icon only.
+      await page.setViewportSize({ width: 320, height: 700 });
+      await page.getByRole("button", { name: "New project" }).click();
+      const dialog = page.getByRole("dialog");
+      await expect(dialog).toBeVisible();
+      // axe reads colors mid fade-in as near-transparent text; wait for the animation to finish.
+      await dialog.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)));
       await expectNoViolations(page);
     });
   }
