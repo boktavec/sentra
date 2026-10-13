@@ -49,5 +49,14 @@ export function resolveCorrelationId(incoming: string | undefined): string {
   return incoming && CORRELATION_ID.test(incoming) ? incoming : randomUUID();
 }
 
-export const requestLogger = (logger: Logger, correlationId: string, extra: object = {}) =>
-  logger.child({ correlationId, ...extra });
+/** Identity fields added to a request's log lines once they are known. */
+export interface RequestLogFields {
+  userId?: string;
+  orgId?: string;
+}
+
+export const requestLogger = (
+  logger: Logger,
+  correlationId: string,
+  extra: RequestLogFields = {},
+) => logger.child({ correlationId, ...extra });

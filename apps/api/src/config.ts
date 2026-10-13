@@ -2,7 +2,9 @@ import { assertSecretLength, parseSigningKeys, type SigningKey } from "./tool-to
 
 const required = (name: string): string => {
   const value = process.env[name];
+
   if (!value) throw new Error(`Missing required env var ${name}`);
+
   return value;
 };
 
@@ -59,11 +61,13 @@ export interface Config {
 function toolServiceToken(): string {
   const token = required("INTELLIGENCE_TOOL_TOKEN");
   assertSecretLength("INTELLIGENCE_TOOL_TOKEN", token);
+
   return token;
 }
 
 export function loadConfig(): Config {
   const issuer = required("ZITADEL_ISSUER");
+
   return {
     port: int("PORT", 4000),
     issuer,

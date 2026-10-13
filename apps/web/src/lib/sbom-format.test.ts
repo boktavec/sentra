@@ -47,6 +47,7 @@ describe("isActive", () => {
   it("is true only while the import is still moving", () => {
     expect(isActive("pending_upload")).toBe(true);
     expect(isActive("uploaded")).toBe(true);
+
     for (const done of ["validated", "parsed", "rejected", "expired"] as const) {
       expect(isActive(done)).toBe(false);
     }

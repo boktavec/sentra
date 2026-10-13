@@ -20,6 +20,7 @@ const ORG_SWITCHER = {
 /** First page of the user's orgs; if that call fails, only the current org (the lookup answered). */
 async function orgSwitcher(org: Org): Promise<SwitcherProps> {
   const orgs = await listOrgs();
+
   return {
     ...ORG_SWITCHER,
     currentSlug: org.slug,

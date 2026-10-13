@@ -12,6 +12,7 @@ beforeEach(() => {
   vi.stubEnv("INTELLIGENCE_TOOL_TOKEN", "t".repeat(32));
   vi.stubEnv("INVESTIGATION_TOOL_SIGNING_KEYS", `k1:${key()}`);
 });
+
 afterEach(() => vi.unstubAllEnvs());
 
 describe("investigation tool listener config", () => {

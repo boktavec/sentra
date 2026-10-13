@@ -26,14 +26,20 @@ import { reprocess } from "./sbom-reprocess.ts";
 import { createSbomStorage } from "./sbom-storage.ts";
 import { createSbomStore } from "./sbom.ts";
 import { createUserStore } from "./users.ts";
+import { testUserId } from "./test-support.ts";
 
 const need = (name: string) => {
   const value = process.env[name];
+
   if (!value) throw new Error(`${name} is required (see \`task api:test:integration\`)`);
+
   return value;
 };
+
 const databaseUrl = need("DATABASE_URL");
+
 const kafka = need("KAFKA_BOOTSTRAP").split(",");
+
 const storage = createSbomStorage({
   endpoint: need("S3_ENDPOINT"),
   bucket: process.env["S3_BUCKET"] ?? "sentra-raw",
@@ -42,7 +48,9 @@ const storage = createSbomStorage({
 });
 
 const MAX = 1000;
+
 const PENDING_CAP = 3;
+
 const limits = { maxBytes: MAX, uploadTtlSeconds: 900, maxPendingPerProject: PENDING_CAP };
 
 const logger = createLogger("api-test", {
@@ -51,11 +59,15 @@ const logger = createLogger("api-test", {
 });
 
 let pool: Pool;
+
 let app: ReturnType<typeof buildApp>;
+
 let sbomStore: ReturnType<typeof createSbomStore>;
+
 const run = randomUUID().slice(0, 8);
 
 type Headers = Record<string, string>;
+
 interface Created {
   id: string;
   status: string;
@@ -67,6 +79,7 @@ async function newUser() {
     issuer: "http://sbom.test",
     subject: randomUUID(),
   });
+
   return { id: user.id, headers: { "x-test-user": user.id } };
 }
 
@@ -74,12 +87,14 @@ async function newUser() {
 async function newOrgWithProject() {
   const admin = await newUser();
   const member = await newUser();
+
   const res = await app.inject({
     method: "POST",
     url: "/v1/orgs",
     headers: admin.headers,
     payload: { name: "Team", slug: `team-${run}-${randomUUID().slice(0, 8)}` },
   });
+
   expect(res.statusCode).toBe(201);
   const org: { id: string } = res.json();
   await pool.query("INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')", [
@@ -87,34 +102,55 @@ async function newOrgWithProject() {
     member.id,
   ]);
   const slug = "web-app";
+
   const project = await app.inject({
     method: "POST",
     url: `/v1/orgs/${org.id}/projects`,
     headers: admin.headers,
     payload: { name: "Web", slug },
   });
+
   expect(project.statusCode).toBe(201);
-  return { org, admin, member, slug, projectId: project.json().id as string };
+
+  return { org, admin, member, slug, projectId: project.json<{ id: string }>().id };
 }
+
 type Ctx = Awaited<ReturnType<typeof newOrgWithProject>>;
 
 const base = (c: Pick<Ctx, "org" | "slug">) => `/v1/orgs/${c.org.id}/projects/${c.slug}/sboms`;
+
+type SbomPayload = {
+  filename?: string;
+  size_bytes?: number | string;
+  org_id?: string;
+  object_key?: string;
+  status?: string;
+  created_by?: string;
+};
+
+type SbomUploadedEvent = { type: string; version: number; importId: string; orgId: string };
+
 const create = (
   c: Ctx,
   headers: Headers,
-  payload: unknown = { filename: "bom.json", size_bytes: 10 },
-) => app.inject({ method: "POST", url: base(c), headers, payload: payload as object });
+  payload: SbomPayload = { filename: "bom.json", size_bytes: 10 },
+) => app.inject({ method: "POST", url: base(c), headers, payload });
+
 const complete = (c: Pick<Ctx, "org" | "slug">, id: string, headers: Headers) =>
   app.inject({ method: "POST", url: `${base(c)}/${id}/complete`, headers });
+
 const get = (url: string, headers: Headers) => app.inject({ method: "GET", url, headers });
+
 const count = async (sql: string, params: unknown[]) =>
-  (await pool.query(sql, params)).rows[0].n as number;
+  (await pool.query<{ n: number }>(sql, params)).rows[0]!.n;
 
 /** The browser's step: POST the signed form fields, then the file last, straight to storage. */
-async function upload(created: Created, body: string | Uint8Array) {
+async function upload(created: Created, body: string) {
   const form = new FormData();
+
   for (const [k, v] of Object.entries(created.upload.fields)) form.append(k, v);
-  form.append("file", new Blob([body as BlobPart]), "bom.json");
+  form.append("file", new Blob([body]), "bom.json");
+
   return fetch(created.upload.url, { method: "POST", body: form });
 }
 
@@ -123,6 +159,7 @@ async function createAndUpload(c: Ctx, headers: Headers, body = '{"bomFormat":"C
   expect(res.statusCode).toBe(201);
   const created: Created = res.json();
   expect((await upload(created, body)).status).toBe(204);
+
   return created;
 }
 
@@ -148,13 +185,16 @@ beforeAll(async () => {
     trustedProxies: false,
     ready: async () => true,
     authenticate: async (request) => {
-      const id = request.headers["x-test-user" as "authorization"];
+      const id = testUserId(request.headers);
+
       if (!id) throw unauthenticated("missing_token");
       const { rows } = await pool.query("SELECT issuer, subject FROM users WHERE id = $1", [id]);
+
       return userStore.resolve(rows[0]);
     },
   });
 });
+
 afterAll(async () => {
   await app.close();
   await pool.end();
@@ -174,14 +214,17 @@ describe("the upload flow", () => {
 
     const row = (await pool.query("SELECT * FROM sbom_imports WHERE id = $1", [created.id]))
       .rows[0];
+
     expect(row).toMatchObject({
       org_id: c.org.id,
       project_id: c.projectId,
       created_by: c.member.id,
     });
+
     const outbox = (
       await pool.query("SELECT * FROM sbom_outbox WHERE import_id = $1", [created.id])
     ).rows;
+
     expect(outbox).toHaveLength(1);
     expect(outbox[0].payload).toMatchObject({
       type: "sbom.uploaded",
@@ -191,9 +234,11 @@ describe("the upload flow", () => {
       projectId: c.projectId,
       artifact: { key: row.object_key, sizeBytes: 25 },
     });
+
     const audit = (
       await pool.query("SELECT * FROM audit_events WHERE target_id = $1", [created.id])
     ).rows;
+
     expect(audit).toHaveLength(1);
     expect(audit[0]).toMatchObject({
       org_id: c.org.id,
@@ -206,6 +251,7 @@ describe("the upload flow", () => {
   it("ignores tenant, key, status and actor fields sent in the body", async () => {
     const c = await newOrgWithProject();
     const other = await newOrgWithProject();
+
     const res = await create(c, c.admin.headers, {
       filename: "bom.json",
       size_bytes: 10,
@@ -214,9 +260,12 @@ describe("the upload flow", () => {
       status: "validated",
       created_by: other.admin.id,
     });
+
     expect(res.statusCode).toBe(201);
+
     const row = (await pool.query("SELECT * FROM sbom_imports WHERE id = $1", [res.json().id]))
       .rows[0];
+
     expect(row).toMatchObject({
       org_id: c.org.id,
       status: "pending_upload",
@@ -258,6 +307,7 @@ describe("the upload flow", () => {
   it("has storage reject a form whose key was changed", async () => {
     const c = await newOrgWithProject();
     const created: Created = (await create(c, c.admin.headers)).json();
+
     const forged = {
       ...created,
       upload: {
@@ -265,6 +315,7 @@ describe("the upload flow", () => {
         fields: { ...created.upload.fields, key: "sbom/other/evil.json" },
       },
     };
+
     expect((await upload(forged, "{}")).status).toBeGreaterThanOrEqual(400);
   });
 
@@ -282,13 +333,16 @@ describe("the upload flow", () => {
   it("completes idempotently: repeats and parallel calls yield one event and one audit row", async () => {
     const c = await newOrgWithProject();
     const created = await createAndUpload(c, c.admin.headers);
+
     const results = await Promise.all(
       Array.from({ length: 6 }, () => complete(c, created.id, c.admin.headers)),
     );
+
     for (const r of results) {
       expect(r.statusCode).toBe(200);
       expect(r.json().status).toBe("uploaded");
     }
+
     expect((await complete(c, created.id, c.admin.headers)).statusCode).toBe(200);
     expect(
       await count("SELECT count(*)::int AS n FROM sbom_outbox WHERE import_id = $1", [created.id]),
@@ -309,12 +363,14 @@ describe("the upload flow", () => {
     await pool.query(
       `CREATE TRIGGER ${fn} BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION ${fn}()`,
     );
+
     try {
       expect((await complete(c, created.id, c.admin.headers)).statusCode).toBe(500);
     } finally {
       await pool.query(`DROP TRIGGER ${fn} ON audit_events`);
       await pool.query(`DROP FUNCTION ${fn}()`);
     }
+
     expect(
       (await pool.query("SELECT status FROM sbom_imports WHERE id = $1", [created.id])).rows[0]
         .status,
@@ -330,11 +386,14 @@ describe("the upload flow", () => {
 describe("abuse limits and expiry", () => {
   it("allows at most the configured number of pending imports per project, even in parallel", async () => {
     const c = await newOrgWithProject();
+
     const results = await Promise.all(
       Array.from({ length: PENDING_CAP + 4 }, () => create(c, c.admin.headers)),
     );
+
     expect(results.filter((r) => r.statusCode === 201)).toHaveLength(PENDING_CAP);
     expect(results.filter((r) => r.statusCode === 429)).toHaveLength(4);
+
     // Another project in the same org has its own allowance.
     const second = await app.inject({
       method: "POST",
@@ -342,6 +401,7 @@ describe("abuse limits and expiry", () => {
       headers: c.admin.headers,
       payload: { name: "Other", slug: "other-app" },
     });
+
     expect(second.statusCode).toBe(201);
     expect((await create({ ...c, slug: "other-app" }, c.admin.headers)).statusCode).toBe(201);
   });
@@ -368,6 +428,7 @@ describe("abuse limits and expiry", () => {
 
   it("does not count expired pending imports against the cap", async () => {
     const c = await newOrgWithProject();
+
     for (let i = 0; i < PENDING_CAP; i++)
       expect((await create(c, c.admin.headers)).statusCode).toBe(201);
     expect((await create(c, c.admin.headers)).statusCode).toBe(429);
@@ -383,14 +444,17 @@ describe("reading imports", () => {
   it("lists newest first with cursor pagination, and gets by id", async () => {
     const c = await newOrgWithProject();
     const ids: string[] = [];
+
     for (let i = 0; i < PENDING_CAP; i++) ids.push((await create(c, c.admin.headers)).json().id);
     const first = await get(`${base(c)}?limit=2`, c.member.headers);
     expect(first.statusCode).toBe(200);
     expect(first.json().items.map((i: { id: string }) => i.id)).toEqual([ids[2], ids[1]]);
+
     const second = await get(
       `${base(c)}?limit=2&cursor=${first.json().nextCursor}`,
       c.member.headers,
     );
+
     expect(second.json().items.map((i: { id: string }) => i.id)).toEqual([ids[0]]);
     expect(second.json().nextCursor).toBeNull();
 
@@ -441,6 +505,7 @@ describe("reprocessing a stored import", () => {
        VALUES ($1, $2, $3, 'pkg:npm/a@1', 'npm', 'a', '1', 'required', 1)`,
       [id, c.org.id, c.projectId],
     );
+
     return { c, id };
   }
 
@@ -454,8 +519,10 @@ describe("reprocessing a stored import", () => {
     expect(
       (await pool.query("SELECT 1 FROM sbom_dependencies WHERE import_id = $1", [id])).rowCount,
     ).toBe(0);
+
     const outbox = (await pool.query("SELECT payload FROM sbom_outbox WHERE import_id = $1", [id]))
       .rows;
+
     expect(outbox).toHaveLength(1);
     expect(outbox[0].payload).toMatchObject({
       type: "sbom.uploaded",
@@ -475,6 +542,7 @@ describe("reprocessing a stored import", () => {
 
     const row = (await pool.query("SELECT status FROM sbom_imports WHERE id = $1", [pending]))
       .rows[0];
+
     expect(row.status).toBe("pending_upload");
     expect(
       (await pool.query("SELECT 1 FROM sbom_outbox WHERE import_id = $1", [pending])).rowCount,
@@ -494,13 +562,16 @@ describe("tenant isolation", () => {
       get(base(a), b.admin.headers),
       get(`${base(a)}/${mine.id}`, b.admin.headers),
     ];
+
     for (const res of await Promise.all(attempts)) {
       expect(res.statusCode).toBe(404);
     }
+
     const missingOrg = await get(
       `/v1/orgs/${randomUUID()}/projects/web-app/sboms`,
       b.admin.headers,
     );
+
     expect((await get(base(a), b.admin.headers)).json().type).toBe(missingOrg.json().type);
     expect(
       await count("SELECT count(*)::int AS n FROM sbom_imports WHERE org_id = $1", [a.org.id]),
@@ -522,6 +593,7 @@ describe("tenant isolation", () => {
     expect(
       (await get(`${base({ org: b.org, slug: a.slug })}/${theirs.id}`, a.admin.headers)).statusCode,
     ).toBe(404);
+
     // An import from one project is not visible under a sibling project of the same org.
     const sibling = await app.inject({
       method: "POST",
@@ -529,6 +601,7 @@ describe("tenant isolation", () => {
       headers: b.admin.headers,
       payload: { name: "Sibling", slug: "sibling" },
     });
+
     expect(sibling.statusCode).toBe(201);
     expect(
       (await get(`${base({ org: b.org, slug: "sibling" })}/${theirs.id}`, b.admin.headers))
@@ -560,15 +633,18 @@ describe("publishing sbom.uploaded", () => {
 
     const topic = `sbom.uploaded.test-${randomUUID().slice(0, 8)}`;
     await ensureDevTopic(kafka, topic);
+
     const producer = new Producer({
       clientId: "sbom-test",
       bootstrapBrokers: kafka,
       serializers: stringSerializers,
     });
+
     const publisher: EventPublisher = {
       publish: async (t, key, value) =>
         void (await producer.send({ messages: [{ topic: t, key, value }] })),
     };
+
     const relay = createSbomRelay(pool, {
       publisher,
       logger,
@@ -576,12 +652,15 @@ describe("publishing sbom.uploaded", () => {
       leaseSeconds: 60,
       backoffBaseSeconds: 1,
     });
+
     try {
       // Other tests' rows share this table; drain until ours is sent.
       while ((await relay.tick()) > 0);
+
       const { rows } = await pool.query("SELECT sent_at FROM sbom_outbox WHERE import_id = $1", [
         created.id,
       ]);
+
       expect(rows[0].sent_at).not.toBeNull();
       expect(await relay.tick()).toBe(0);
 
@@ -591,6 +670,7 @@ describe("publishing sbom.uploaded", () => {
         bootstrapBrokers: kafka,
         deserializers: stringDeserializers,
       });
+
       try {
         const stream = await consumer.consume({
           topics: [topic],
@@ -599,11 +679,15 @@ describe("publishing sbom.uploaded", () => {
           sessionTimeout: 10_000,
           heartbeatInterval: 500,
         });
-        const seen: { key: string; event: Record<string, unknown> }[] = [];
+
+        const seen: { key: string; event: SbomUploadedEvent }[] = [];
+
         for await (const message of stream) {
           seen.push({ key: message.key, event: JSON.parse(message.value) });
+
           if (seen.some((m) => m.key === created.id)) break;
         }
+
         const ours = seen.find((m) => m.key === created.id)!;
         expect(ours.event).toMatchObject({
           type: "sbom.uploaded",
@@ -619,6 +703,7 @@ describe("publishing sbom.uploaded", () => {
         await producer.close(true);
       } finally {
         const admin = new Admin({ clientId: "sbom-test-cleanup", bootstrapBrokers: kafka });
+
         try {
           await admin.deleteTopics({ topics: [topic] });
         } finally {
@@ -639,12 +724,14 @@ describe("publishing sbom.uploaded", () => {
 
     let down = true;
     const published: string[] = [];
+
     const publisher: EventPublisher = {
       publish: async (_topic, key) => {
         if (down) throw new Error("broker unavailable");
         published.push(key);
       },
     };
+
     const relay = createSbomRelay(pool, {
       publisher,
       logger,
@@ -652,9 +739,12 @@ describe("publishing sbom.uploaded", () => {
       leaseSeconds: 60,
       backoffBaseSeconds: 1,
     });
+
     expect(await relay.tick()).toBe(0);
+
     const row = (await pool.query("SELECT * FROM sbom_outbox WHERE import_id = $1", [created.id]))
       .rows[0];
+
     expect(row).toMatchObject({ attempts: 1, sent_at: null });
     expect(row.next_attempt_at.getTime()).toBeGreaterThan(Date.now());
 
@@ -676,12 +766,14 @@ describe("publishing sbom.uploaded", () => {
     );
 
     const published: string[] = [];
+
     const publisher: EventPublisher = {
       publish: async (_t, key) => {
         await new Promise((r) => setTimeout(r, 100));
         published.push(key);
       },
     };
+
     const make = () =>
       createSbomRelay(pool, {
         publisher,
@@ -690,6 +782,7 @@ describe("publishing sbom.uploaded", () => {
         leaseSeconds: 60,
         backoffBaseSeconds: 1,
       });
+
     const sent = await Promise.all([make().tick(), make().tick(), make().tick()]);
     expect(sent.reduce((a, b) => a + b, 0)).toBe(1);
     expect(published).toEqual([created.id]);

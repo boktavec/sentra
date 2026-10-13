@@ -13,6 +13,7 @@ export default async function InvestigationsPage({
 }) {
   const { slug, projectSlug } = await params;
   const org = await fetchOrg(slug);
+
   if (!org.ok)
     return (
       <main>
@@ -20,6 +21,7 @@ export default async function InvestigationsPage({
       </main>
     );
   const project = await fetchProject(org.data.id, projectSlug);
+
   if (!project.ok)
     return (
       <main>
@@ -27,6 +29,7 @@ export default async function InvestigationsPage({
       </main>
     );
   const findings = await listInvestigationFindings(org.data.id, project.data.slug);
+
   return (
     <main>
       <p>

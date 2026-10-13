@@ -48,10 +48,12 @@ export async function inTransaction<T>(
   work: (client: PoolClient) => Promise<T>,
 ): Promise<T> {
   const client = await pool.connect();
+
   try {
     await client.query("BEGIN");
     const result = await work(client);
     await client.query("COMMIT");
+
     return result;
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
@@ -67,6 +69,7 @@ async function insertOrg(client: PoolClient, userId: string, input: NewOrg) {
      ON CONFLICT (slug) DO NOTHING RETURNING id, created_at`,
     [input.name, input.slug, userId],
   );
+
   return rows[0];
 }
 
@@ -78,6 +81,7 @@ async function findRetry(client: PoolClient, userId: string, input: NewOrg) {
      WHERE o.slug = $1 AND o.name = $3`,
     [input.slug, userId, input.name],
   );
+
   return rows[0] ? toOrg(rows[0]) : undefined;
 }
 
@@ -87,6 +91,7 @@ async function enforceCap(client: PoolClient, userId: string, max: number) {
     "SELECT count(*)::int AS n FROM memberships WHERE user_id = $1 AND role = 'admin'",
     [userId],
   );
+
   if (rows[0]!.n > max) {
     throw new AppError("org_limit_reached", 403, "Organization limit reached", { reason: "limit" });
   }
@@ -115,8 +120,10 @@ function createOrg(pool: Pool, maxOrgsPerUser: number) {
       await client.query("SELECT 1 FROM users WHERE id = $1 FOR NO KEY UPDATE", [userId]);
 
       const inserted = await insertOrg(client, userId, input);
+
       if (!inserted) {
         const existing = await findRetry(client, userId, input);
+
         if (existing) return { org: existing, created: false };
         throw new AppError("slug_taken", 409, "Slug already in use", { reason: "slug_taken" });
       }
@@ -124,12 +131,14 @@ function createOrg(pool: Pool, maxOrgsPerUser: number) {
       await addAdmin(client, userId, inserted.id);
       await enforceCap(client, userId, maxOrgsPerUser);
       await recordCreated(client, userId, inserted.id, correlationId);
+
       const org: Org = {
         ...input,
         id: inserted.id,
         role: "admin",
         createdAt: inserted.created_at.toISOString(),
       };
+
       return { org, created: true };
     });
 }
@@ -137,6 +146,7 @@ function createOrg(pool: Pool, maxOrgsPerUser: number) {
 function listOrgs(pool: Pool) {
   return async (userId: string, limit: number, cursor?: string) => {
     const after = cursor ? decodeCursor(cursor) : undefined;
+
     const { rows } = await pool.query<OrgRow & { cursor_ts: string }>(
       `SELECT ${ORG_COLUMNS}, m.created_at::text AS cursor_ts
        FROM memberships m JOIN organizations o ON o.id = m.org_id
@@ -146,8 +156,10 @@ function listOrgs(pool: Pool) {
        LIMIT $4`,
       [userId, after?.createdAt ?? null, after?.orgId ?? null, limit + 1],
     );
+
     const page = rows.slice(0, limit);
     const last = page.at(-1);
+
     return {
       items: page.map(toOrg),
       nextCursor: rows.length > limit && last ? encodeCursor(last.cursor_ts, last.id) : null,
@@ -157,6 +169,7 @@ function listOrgs(pool: Pool) {
 
 function denied(): AppError {
   metrics.inc("tenant_access_denied_total");
+
   return new AppError("not_found", 404, "Not found", { reason: "tenant_access_denied" });
 }
 
@@ -171,14 +184,18 @@ function resolveTenant(pool: Pool) {
   ): Promise<{ tenant: TenantContext; org: Org }> => {
     const [column, value] =
       "orgId" in by ? (["id", by.orgId] as const) : (["slug", by.slug] as const);
+
     if (column === "id" && !isUuid(value)) throw denied();
+
     const { rows } = await pool.query<OrgRow>(
       `SELECT ${ORG_COLUMNS} FROM organizations o
        JOIN memberships m ON m.org_id = o.id AND m.user_id = $2
        WHERE o.${column} = $1`,
       [value, userId],
     );
+
     if (!rows[0]) throw denied();
+
     return { tenant: { orgId: rows[0].id, userId, role: rows[0].role }, org: toOrg(rows[0]) };
   };
 }

@@ -6,6 +6,7 @@ const LOGIN_URL = /localhost:8180\/ui\/v2\/login\/loginname/;
 /** A new browser context, so each person has their own cookies and identity-provider session. */
 async function newPerson(browser: Browser) {
   const context = await browser.newContext();
+
   return { context, page: await context.newPage() };
 }
 
@@ -15,6 +16,7 @@ async function invite(admin: Page, email: string, role: "member" | "admin") {
   await admin.getByRole("button", { name: "Invite" }).click();
   const link = await admin.getByTestId("invite-link").textContent();
   expect(link).toMatch(/\/invitations\/accept\?token=[A-Za-z0-9_-]{43}$/);
+
   return link!;
 }
 
@@ -24,6 +26,7 @@ test("an admin invites someone, who signs in through the link and joins; wrong a
 }) => {
   const run = Date.now().toString(36);
   const slug = `invite-${run}`;
+
   const [adminEmail, inviteeEmail, strangerEmail] = [
     `inv-admin-${run}@example.com`,
     `inv-invitee-${run}@example.com`,
@@ -44,11 +47,13 @@ test("an admin invites someone, who signs in through the link and joins; wrong a
   const link = await invitationLink(inviteeEmail);
   expect(link).toBe(shownLink);
   const mail = await admin.context().newPage();
+
   const found = await (
     await fetch(
       `http://localhost:8025/api/v1/search?query=${encodeURIComponent(`to:${inviteeEmail}`)}`,
     )
   ).json();
+
   await mail.goto(`http://localhost:8025/view/${found.messages[0].ID}`);
   await expect(mail.getByText(`Invite ${run}`).first()).toBeVisible();
   await mail.screenshot({

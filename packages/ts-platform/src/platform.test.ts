@@ -10,14 +10,20 @@ import {
   unauthenticated,
 } from "./index.ts";
 
+interface LogLine {
+  timestamp?: string;
+}
+
 function capture() {
-  const lines: Record<string, unknown>[] = [];
+  const lines: LogLine[] = [];
+
   const destination = new Writable({
     write(chunk, _enc, done) {
       lines.push(JSON.parse(chunk.toString()));
       done();
     },
   });
+
   return { lines, destination };
 }
 
@@ -73,7 +79,7 @@ describe("logger", () => {
       correlationId: "cid-4",
       userId: "u1",
     });
-    expect(typeof line["timestamp"]).toBe("string");
+    expect(line.timestamp).toEqual(expect.any(String));
     expect(JSON.stringify(line)).not.toMatch(/abc\.def\.ghi|"tok"|"pw"|s=1/);
   });
 });

@@ -7,8 +7,10 @@ import { callApi } from "@/lib/auth";
 import { config } from "@/lib/config";
 
 const field = (form: FormData, name: string) => String(form.get(name) ?? "");
+
 const memberPath = (form: FormData) =>
   `/v1/orgs/${encodeURIComponent(field(form, "orgId"))}/members/${encodeURIComponent(field(form, "userId"))}`;
+
 const membersPage = (form: FormData) => `/orgs/${encodeURIComponent(field(form, "slug"))}/members`;
 
 /** The API's status becomes a short code in the URL; the page turns it into a message. */
@@ -32,6 +34,7 @@ export async function removeMember(form: FormData) {
 /** Leaving twice is fine: once the user is out, the API answers 404 and that is still success. */
 export async function leaveOrganization(form: FormData) {
   const result = await callApi((token) => apiDelete(memberPath(form), token));
+
   if (result.ok || result.status === 404) redirect("/");
   finish(form, result);
 }
@@ -41,28 +44,35 @@ export interface InviteState {
   error?: string;
 }
 
-const INVITE_MESSAGES: Record<string, string> = {
-  invalid_input: "Enter a valid email address and a role.",
-  invitation_limit_reached: "This organization has reached its invitation limit. Try again later.",
-  forbidden: "Only admins can invite people.",
-};
+const INVITE_MESSAGES = new Map<string, string>([
+  ["invalid_input", "Enter a valid email address and a role."],
+  [
+    "invitation_limit_reached",
+    "This organization has reached its invitation limit. Try again later.",
+  ],
+  ["forbidden", "Only admins can invite people."],
+]);
 
 export async function createInvitation(_prev: InviteState, form: FormData): Promise<InviteState> {
   const orgId = encodeURIComponent(field(form, "orgId"));
+
   const result = await callApi((token) =>
     apiPost<{ token: string }>(`/v1/orgs/${orgId}/invitations`, token, {
       email: field(form, "email"),
       role: field(form, "role"),
     }),
   );
+
   if (!result.ok) {
     return {
       error:
-        (result.code && INVITE_MESSAGES[result.code]) ||
+        (result.code && INVITE_MESSAGES.get(result.code)) ||
         `The service is temporarily unavailable. Reference: ${result.correlationId}`,
     };
   }
+
   revalidatePath(membersPage(form));
+
   // The token is shown once, here; the API keeps only its hash.
   return {
     link: `${config().webUrl}/invitations/accept?token=${encodeURIComponent(result.data.token)}`,

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { assertSecretLength, parseSigningKeys, signToken, verifyToken } from "./tool-token.ts";
 
 const material = () => randomBytes(32).toString("base64");
+
 const claims = { inv: "inv-1", lease: "lease-1", exp: 2000 };
 
 describe("parseSigningKeys", () => {
@@ -47,13 +48,12 @@ describe("signToken and verifyToken", () => {
   });
 
   it("rejects a changed payload, signature, version, or key id", () => {
-    const [version, kid, payload, signature] = signToken(keys, claims).split(".") as [
-      string,
-      string,
-      string,
-      string,
-    ];
+    const [version = "", kid = "", payload = "", signature = ""] = signToken(keys, claims).split(
+      ".",
+    );
+
     const other = Buffer.from(JSON.stringify({ ...claims, inv: "inv-2" })).toString("base64url");
+
     for (const forged of [
       [version, kid, other, signature],
       [version, kid, payload, signature.slice(0, -2) + "AA"],
@@ -63,16 +63,20 @@ describe("signToken and verifyToken", () => {
     ]) {
       expect(verifyToken(keys, forged.join("."), 1)).toBeNull();
     }
+
     expect(verifyToken(keys, "a.b.c", 1)).toBeNull();
     expect(verifyToken(keys, "", 1)).toBeNull();
   });
 
   it("rejects a correctly signed token whose claims are malformed", () => {
-    const [{ key, kid }] = keys as [(typeof keys)[number]];
+    const { key, kid } = keys[0]!;
+
     const forge = (payload: string) => {
       const signed = `v1.${kid}.${Buffer.from(payload).toString("base64url")}`;
+
       return `${signed}.${createMac(key, signed)}`;
     };
+
     expect(verifyToken(keys, forge("not json"), 1)).toBeNull();
     expect(verifyToken(keys, forge('{"inv":1,"lease":"l","exp":9}'), 1)).toBeNull();
     expect(verifyToken(keys, forge('{"inv":"i","lease":"l"}'), 1)).toBeNull();
@@ -80,5 +84,6 @@ describe("signToken and verifyToken", () => {
 });
 
 import { createHmac } from "node:crypto";
+
 const createMac = (key: Buffer, signed: string) =>
   createHmac("sha256", key).update(signed).digest("base64url");

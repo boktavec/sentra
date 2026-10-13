@@ -14,6 +14,7 @@ export function proxy(request: NextRequest) {
     path: "/",
     maxAge: 600,
   });
+
   return response;
 }
 

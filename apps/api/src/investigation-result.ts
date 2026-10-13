@@ -3,17 +3,21 @@
 // ledger, so a model cannot supply or contradict it. Pure functions: the caller loads the ledger.
 import { readFileSync } from "node:fs";
 import { Ajv, type ValidateFunction } from "ajv";
+import { isJsonObject, type Json } from "./json.ts";
 import { jsonBytes } from "./tool-bounds.ts";
 import type { ToolName } from "./tool-contracts.ts";
 
 export const RESULT_SCHEMA_VERSION = 1;
+
 // The table caps the result at 32 KiB of jsonb text, which spaces out keys and commas; stay clearly under it.
 const MAX_STORED_RESULT_BYTES = 28 * 1024;
+
 // API-assembled parts are bounded by construction: at most this many evidence targets across all entries
 // (each purl is capped by the tool contract), and the assembled part is trimmed to the byte budget below.
 // Worst case at the tool caps is about 14 KB (facts ~4 KB, 10 targets ~7.5 KB, 8 advisory entries ~2.5 KB),
 // so the budget is not reached in practice; it leaves 12 KiB of the 28 KiB total for the model's text.
 const MAX_EVIDENCE_TARGETS = 10;
+
 const MAX_ASSEMBLED_BYTES = 16 * 1024;
 
 export type ViolationCode =
@@ -35,6 +39,7 @@ const GAP_CODES = [
   "related_findings_not_checked",
   "occurrences_not_checked",
 ] as const;
+
 export type GapCode = (typeof GAP_CODES)[number];
 
 interface ModelResult {
@@ -54,7 +59,7 @@ export interface LedgerCall {
   outcome: string;
   truncated: boolean;
   /** The tool's result body; null for a call that did not succeed. */
-  result: unknown;
+  result: ToolResult | null;
 }
 
 /** The snapshot captured when the investigation was created; used only when get_finding_risk was not called. */
@@ -84,26 +89,40 @@ export interface RunFacts {
 }
 
 export interface ResultContract {
-  validate: ValidateFunction;
+  validate: ValidateFunction<ModelResult>;
   apiWrittenFields: ReadonlySet<string>;
 }
+
+interface ResultFile {
+  model: object;
+  apiWrittenFields: string[];
+}
+
+const isResultFile = new Ajv({ strict: true }).compile<ResultFile>({
+  type: "object",
+  required: ["model", "apiWrittenFields"],
+  properties: {
+    model: { type: "object" },
+    apiWrittenFields: { type: "array", items: { type: "string" } },
+  },
+});
 
 export function loadResultContract(
   dir = new URL("../../../packages/contracts/ai-tools/", import.meta.url),
 ): ResultContract {
-  const contract = JSON.parse(
+  const contract: Json = JSON.parse(
     readFileSync(new URL("investigation-result.v1.json", dir), "utf8"),
-  ) as { model: object; apiWrittenFields: string[] };
+  );
+
+  if (!isResultFile(contract)) throw new Error("investigation-result.v1.json is malformed");
+
   return {
-    validate: new Ajv({ strict: true }).compile(contract.model),
+    validate: new Ajv({ strict: true }).compile<ModelResult>(contract.model),
     apiWrittenFields: new Set(contract.apiWrittenFields),
   };
 }
 
 type Outcome<T> = { ok: true; value: T } | { ok: false; violations: ViolationCode[] };
-
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const callNumber = (ref: string) => Number(ref.slice("call:".length));
 
@@ -114,21 +133,26 @@ const callNumber = (ref: string) => Number(ref.slice("call:".length));
  */
 function validateModelResult(
   contract: ResultContract,
-  input: unknown,
+  answer: Json,
   calls: LedgerCall[],
   attempt: number,
 ): Outcome<ModelResult> {
   const forbidden =
-    isObject(input) && Object.keys(input).some((k) => contract.apiWrittenFields.has(k));
+    isJsonObject(answer) && Object.keys(answer).some((k) => contract.apiWrittenFields.has(k));
+
   if (forbidden) return { ok: false, violations: ["forbidden_field"] };
-  if (!contract.validate(input)) return { ok: false, violations: ["schema_invalid"] };
-  const model = input as ModelResult;
+
+  if (!contract.validate(answer)) return { ok: false, violations: ["schema_invalid"] };
+  const model = answer;
 
   const violations = new Set<ViolationCode>();
+
   if (model.uncertainties.length === 0 && model.noUncertaintyReason === undefined) {
     violations.add("missing_uncertainty_reason");
   }
+
   for (const code of citationViolations(model.claims, calls, attempt)) violations.add(code);
+
   return violations.size > 0
     ? { ok: false, violations: [...violations] }
     : { ok: true, value: model };
@@ -142,7 +166,9 @@ function refViolation(
 ): ViolationCode | undefined {
   const number = callNumber(ref);
   const call = current.get(number);
+
   if (!call) return earlier.has(number) ? "cross_attempt_ref" : "unknown_evidence_ref";
+
   return call.outcome === "ok" ? undefined : "evidence_not_ok";
 }
 
@@ -151,8 +177,14 @@ function citationViolations(
   calls: LedgerCall[],
   attempt: number,
 ): ViolationCode[] {
-  const current = new Map(calls.filter((c) => c.attempt === attempt).map((c) => [c.callNo, c]));
-  const earlier = new Set(calls.filter((c) => c.attempt !== attempt).map((c) => c.callNo));
+  const current = new Map<number, LedgerCall>();
+  const earlier = new Set<number>();
+
+  for (const call of calls) {
+    if (call.attempt === attempt) current.set(call.callNo, call);
+    else earlier.add(call.callNo);
+  }
+
   return claims.flatMap((claim) => [
     ...(claim.evidence.length === 0 ? (["uncited_claim"] as const) : []),
     ...claim.evidence.flatMap((ref) => refViolation(ref, current, earlier) ?? []),
@@ -182,17 +214,45 @@ interface RiskResult {
     cvssVersion: string | null;
   };
 }
+
 interface RelatedResult {
   items: { findingId: string; purl: string; version: string }[];
 }
+
 interface OccurrencesResult {
   occurrences: { purl: string; version: string }[];
 }
+
 interface AdvisoryResult {
   advisory: { sourceId: string };
 }
 
+/** What a tool's stored result holds; the four contracts have disjoint top-level keys. */
+export type ToolResult = RiskResult | RelatedResult | OccurrencesResult | AdvisoryResult;
+
+const isRisk = (result: ToolResult): result is RiskResult => "finding" in result;
+
+const isRelated = (result: ToolResult): result is RelatedResult => "items" in result;
+
+const isOccurrences = (result: ToolResult): result is OccurrencesResult => "occurrences" in result;
+
+const isAdvisory = (result: ToolResult): result is AdvisoryResult =>
+  "advisory" in result && !isRisk(result);
+
+/** The ledger stores each result only after the tool contract accepted it, so another kind of body is a bug. */
+function storedResult<R extends ToolResult>(
+  call: LedgerCall,
+  isExpected: (result: ToolResult) => result is R,
+): R {
+  if (call.result === null || !isExpected(call.result)) {
+    throw new Error(`Call ${call.callNo} of ${call.tool} has no stored result of that kind`);
+  }
+
+  return call.result;
+}
+
 type Target = { findingId?: string; purl: string; version: string };
+
 type EvidenceEntry = {
   ref: string;
   tool: ToolName;
@@ -207,22 +267,27 @@ const okCalls = (calls: LedgerCall[], tool: ToolName) =>
 /** `budget.left` is the number of evidence targets still available to this result as a whole. */
 function resolveEvidence(call: LedgerCall, budget: { left: number }): EvidenceEntry {
   const base = { ref: `call:${call.callNo}`, tool: call.tool };
+
   const cap = <T>(items: T[]) => {
     const kept = items.slice(0, Math.max(0, budget.left));
     budget.left -= kept.length;
+
     return kept;
   };
+
   switch (call.tool) {
     case "get_finding_risk": {
-      const { finding } = call.result as RiskResult;
+      const { finding } = storedResult(call, isRisk);
       const target = { findingId: finding.id, purl: finding.purl, version: finding.version };
+
       return { ...base, kind: "finding", targets: cap([target]) };
     }
+
     case "list_related_findings":
       return {
         ...base,
         kind: "related_finding",
-        targets: cap((call.result as RelatedResult).items).map(({ findingId, purl, version }) => ({
+        targets: cap(storedResult(call, isRelated).items).map(({ findingId, purl, version }) => ({
           findingId,
           purl,
           version,
@@ -232,7 +297,7 @@ function resolveEvidence(call: LedgerCall, budget: { left: number }): EvidenceEn
       return {
         ...base,
         kind: "dependency_occurrence",
-        targets: cap((call.result as OccurrencesResult).occurrences).map(({ purl, version }) => ({
+        targets: cap(storedResult(call, isOccurrences).occurrences).map(({ purl, version }) => ({
           purl,
           version,
         })),
@@ -241,16 +306,19 @@ function resolveEvidence(call: LedgerCall, budget: { left: number }): EvidenceEn
       return {
         ...base,
         kind: "advisory",
-        advisoryId: (call.result as AdvisoryResult).advisory.sourceId,
+        advisoryId: storedResult(call, isAdvisory).advisory.sourceId,
       };
   }
 }
 
 /** Retrieved facts: from this attempt's get_finding_risk result, else from the creation-time snapshot. */
 function assembleFacts(calls: LedgerCall[], run: RunFacts) {
-  const risk = okCalls(calls, "get_finding_risk")[0]?.result as RiskResult | undefined;
+  const stored = okCalls(calls, "get_finding_risk")[0]?.result;
+  const risk = stored && isRisk(stored) ? stored : undefined;
+
   if (risk) {
     const { finding, advisory } = risk;
+
     return {
       source: "get_finding_risk",
       findingId: finding.id,
@@ -265,10 +333,13 @@ function assembleFacts(calls: LedgerCall[], run: RunFacts) {
       priority: risk.priority,
     };
   }
+
   const { finding, advisory } = run.snapshot;
+
   const scored = run.snapshot.linkedAdvisories?.find(
     (a) => a.source === advisory.source && a.sourceId === advisory.sourceId,
   );
+
   return {
     source: "snapshot",
     findingId: run.findingId,
@@ -296,6 +367,7 @@ type Facts = ReturnType<typeof assembleFacts>;
 export function deriveGaps(calls: LedgerCall[], facts: Facts): GapCode[] {
   // A call that failed did not check anything, so only successful calls count.
   const called = (tool: ToolName) => calls.some((c) => c.tool === tool && c.outcome === "ok");
+
   const present: Record<GapCode, boolean> = {
     advisory_not_found: calls.some(
       (c) => c.tool === "lookup_advisory" && c.outcome === "not_found",
@@ -308,6 +380,7 @@ export function deriveGaps(calls: LedgerCall[], facts: Facts): GapCode[] {
     related_findings_not_checked: !called("list_related_findings"),
     occurrences_not_checked: !called("get_dependency_occurrences"),
   };
+
   return GAP_CODES.filter((code) => present[code]);
 }
 
@@ -315,6 +388,7 @@ export function deriveGaps(calls: LedgerCall[], facts: Facts): GapCode[] {
 function trimEvidenceToBudget(assembled: { evidence: EvidenceEntry[] }) {
   while (jsonBytes(assembled) > MAX_ASSEMBLED_BYTES) {
     const last = assembled.evidence.findLast((e) => e.targets && e.targets.length > 0);
+
     if (!last) return;
     last.targets!.pop();
   }
@@ -323,24 +397,28 @@ function trimEvidenceToBudget(assembled: { evidence: EvidenceEntry[] }) {
 /** Validates the model's answer and, when it holds, returns the result to store. `calls` is the whole investigation. */
 export function buildResult(
   contract: ResultContract,
-  input: unknown,
+  answer: Json,
   calls: LedgerCall[],
   run: RunFacts,
   now: Date,
 ): Outcome<object> {
-  const checked = validateModelResult(contract, input, calls, run.attempt);
+  const checked = validateModelResult(contract, answer, calls, run.attempt);
+
   if (!checked.ok) return checked;
   const model = checked.value;
   const attempt = calls.filter((c) => c.attempt === run.attempt);
   const facts = assembleFacts(attempt, run);
   const cited = new Set(model.claims.flatMap((c) => c.evidence.map(callNumber)));
   const budget = { left: MAX_EVIDENCE_TARGETS };
+
   const assembled = {
     facts,
-    evidence: attempt.filter((c) => cited.has(c.callNo)).map((c) => resolveEvidence(c, budget)),
+    evidence: attempt.flatMap((c) => (cited.has(c.callNo) ? [resolveEvidence(c, budget)] : [])),
     gaps: deriveGaps(attempt, facts),
   };
+
   trimEvidenceToBudget(assembled);
+
   const result = {
     ...model,
     claims: model.claims.map((c) => ({ ...c, evidence: [...new Set(c.evidence)] })),
@@ -349,9 +427,11 @@ export function buildResult(
     promptVersion: run.promptVersion,
     generatedAt: now.toISOString(),
   };
+
   // With the assembled parts bounded above, only the model's own text can get here (pathological multi-byte
   // text); the repair turn lets it shorten that.
   if (jsonBytes(result) > MAX_STORED_RESULT_BYTES)
     return { ok: false, violations: ["schema_invalid"] };
+
   return { ok: true, value: result };
 }

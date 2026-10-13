@@ -14,22 +14,31 @@ import { migrate } from "./migrate.ts";
 import { createOrgStore } from "./orgs.ts";
 import { createProjectStore } from "./projects.ts";
 import { createUserStore } from "./users.ts";
+import { testUserId } from "./test-support.ts";
 
 const url = process.env["DATABASE_URL"];
+
 if (!url) throw new Error("DATABASE_URL is required for investigations.integration.test.ts");
+
 const pool = new Pool({ connectionString: url });
+
 const logger = createLogger("investigation-test", {
   level: "debug",
   destination: new Writable({ write: (_chunk, _enc, done) => done() }),
 });
+
 const users = createUserStore(pool);
+
 const store = createInvestigationStore(pool, { modelId: "test-local-model", maxPendingPerOrg: 2 });
+
 const app = buildApp({
   logger,
   authenticate: async (request) => {
-    const id = request.headers["x-test-user" as "authorization"];
+    const id = testUserId(request.headers);
+
     if (!id) throw unauthenticated("missing_token");
     const { rows } = await pool.query("SELECT issuer, subject FROM users WHERE id = $1", [id]);
+
     return users.resolve(rows[0]);
   },
   orgs: createOrgStore(pool, { maxOrgsPerUser: 100 }),
@@ -47,14 +56,23 @@ const app = buildApp({
 });
 
 let owner: string;
+
 let member: string;
+
 let orgId: string;
+
 let projectId: string;
+
 let findingId: string;
+
 let resolvedId: string;
+
 let groupId: string;
+
 const slug = `inv-${randomUUID().slice(0, 8)}`;
+
 const base = () => `/v1/orgs/${orgId}/projects/${slug}/findings/${findingId}/investigations`;
+
 const call = (id: string, method: "GET" | "POST", path: string) =>
   app.inject({ method, url: path, headers: { "x-test-user": id } });
 
@@ -62,11 +80,13 @@ beforeAll(async () => {
   await migrate(pool);
   owner = (await users.resolve({ issuer: "http://investigation.test", subject: randomUUID() })).id;
   member = (await users.resolve({ issuer: "http://investigation.test", subject: randomUUID() })).id;
+
   const org = await createOrgStore(pool, { maxOrgsPerUser: 100 }).create(
     owner,
     { name: "Investigations", slug },
     randomUUID(),
   );
+
   orgId = org.org.id;
   await pool.query("INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')", [
     orgId,
@@ -78,6 +98,7 @@ beforeAll(async () => {
       [orgId, slug, owner],
     )
   ).rows[0]!.id;
+
   const importId = (
     await pool.query<{ id: string }>(
       `INSERT INTO sbom_imports (org_id, project_id, created_by, filename, object_key, expires_at)
@@ -85,6 +106,7 @@ beforeAll(async () => {
       [orgId, projectId, owner, `investigations/${randomUUID()}`],
     )
   ).rows[0]!.id;
+
   const vulnId = (
     await pool.query<{ id: string }>(
       `INSERT INTO vulnerabilities (source, source_id, modified_at, source_artifact_sha256, source_entry,
@@ -93,6 +115,7 @@ beforeAll(async () => {
       [`INV-${slug}`, "b".repeat(64)],
     )
   ).rows[0]!.id;
+
   const relatedId = (
     await pool.query<{ id: string }>(
       `INSERT INTO vulnerabilities (source, source_id, modified_at, source_artifact_sha256, source_entry,
@@ -101,6 +124,7 @@ beforeAll(async () => {
       [`INV-RELATED-${slug}`, "c".repeat(64)],
     )
   ).rows[0]!.id;
+
   groupId = randomUUID();
   await pool.query(
     "INSERT INTO vulnerability_groups (id, canonical_vulnerability_id) VALUES ($1, $2)",
@@ -110,6 +134,7 @@ beforeAll(async () => {
     "INSERT INTO vulnerability_group_members (vulnerability_id, group_id) VALUES ($1, $3), ($2, $3)",
     [vulnId, relatedId, groupId],
   );
+
   const rows = await pool.query<{ id: string; status: string }>(
     `INSERT INTO findings (org_id, project_id, vulnerability_id, purl, version, ecosystem, scope, import_id,
        match_quality, match_reason, matcher_version, evidence, status, resolved_reason, resolved_at)
@@ -117,7 +142,9 @@ beforeAll(async () => {
        '{"rule":"no_version_data"}', $6, $7, $8) RETURNING id, status`,
     [orgId, projectId, vulnId, `pkg:pypi/${slug}@1.0`, importId, "open", null, null],
   );
+
   findingId = rows.rows[0]!.id;
+
   const resolved = await pool.query<{ id: string }>(
     `INSERT INTO findings (org_id, project_id, vulnerability_id, purl, version, ecosystem, scope, import_id,
        match_quality, matcher_version, evidence, status, resolved_reason, resolved_at)
@@ -125,9 +152,11 @@ beforeAll(async () => {
        '{"rule":"explicit_version"}', 'resolved', 'version_changed', now()) RETURNING id`,
     [orgId, projectId, vulnId, `pkg:pypi/${slug}@2.0`, importId],
   );
+
   resolvedId = resolved.rows[0]!.id;
   await app.ready();
 });
+
 afterAll(async () => {
   await app.close();
   await pool.end();
@@ -138,7 +167,8 @@ describe("investigation lifecycle API", () => {
     const [a, b] = await Promise.all([call(owner, "POST", base()), call(owner, "POST", base())]);
     expect([a.statusCode, b.statusCode].sort()).toEqual([200, 201]);
     expect(a.json().id).toBe(b.json().id);
-    const id = a.json().id as string;
+    const id = a.json<{ id: string }>().id;
+
     const db = await pool.query(
       `SELECT i.org_id, i.project_id, i.finding_id, i.created_by, i.context_snapshot,
               i.draft, i.prompt_version, o.payload, a.action
@@ -146,6 +176,7 @@ describe("investigation lifecycle API", () => {
        JOIN audit_events a ON a.target_id = i.id WHERE i.id = $1`,
       [id],
     );
+
     expect(db.rows).toHaveLength(1);
     expect(db.rows[0]).toMatchObject({
       org_id: orgId,
@@ -175,7 +206,7 @@ describe("investigation lifecycle API", () => {
   });
 
   it("shares history with a member, permits a new run after completion, and keeps drafts private", async () => {
-    const first = (await call(owner, "POST", base())).json().id as string;
+    const first = (await call(owner, "POST", base())).json<{ id: string }>().id;
     await pool.query(
       "UPDATE investigations SET status = 'completed', draft = 'private model text', completed_at = now() WHERE id = $1",
       [first],
@@ -186,11 +217,13 @@ describe("investigation lifecycle API", () => {
     expect(history.statusCode).toBe(200);
     expect(history.json().items).toHaveLength(1);
     expect(history.json().nextCursor).toBeTruthy();
+
     const next = await call(
       member,
       "GET",
       `${base()}?limit=1&cursor=${encodeURIComponent(history.json().nextCursor)}`,
     );
+
     expect(next.json().items[0].id).toBe(first);
     const status = await call(member, "GET", `${base()}/${first}`);
     expect(status.json().status).toBe("completed");
@@ -201,10 +234,12 @@ describe("investigation lifecycle API", () => {
     const extra = (
       await users.resolve({ issuer: "http://investigation.test", subject: randomUUID() })
     ).id;
+
     await pool.query("INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')", [
       orgId,
       extra,
     ]);
+
     const run = (
       await pool.query<{ id: string }>(
         `INSERT INTO investigations (org_id, project_id, finding_id, created_by, context_snapshot, model_id,
@@ -213,6 +248,7 @@ describe("investigation lifecycle API", () => {
         [orgId, projectId, findingId, extra],
       )
     ).rows[0]!.id;
+
     await pool.query(
       `INSERT INTO investigation_results (investigation_id, org_id, project_id, attempt, schema_version, result)
        VALUES ($1, $2, $3, 1, 1, '{"summary":"stored explanation"}')`,
@@ -242,13 +278,16 @@ describe("investigation lifecycle API", () => {
     const before = (
       await pool.query("SELECT count(*)::int AS n FROM investigations WHERE org_id = $1", [orgId])
     ).rows[0].n;
+
     expect((await call(owner, "POST", base().replace(findingId, resolvedId))).statusCode).toBe(409);
     expect((await call(owner, "POST", base().replace(findingId, randomUUID()))).statusCode).toBe(
       404,
     );
+
     const after = (
       await pool.query("SELECT count(*)::int AS n FROM investigations WHERE org_id = $1", [orgId])
     ).rows[0].n;
+
     expect(after).toBe(before);
   });
 
@@ -261,6 +300,7 @@ describe("investigation lifecycle API", () => {
        FROM findings WHERE id = $1 RETURNING id`,
       [findingId, randomUUID()],
     );
+
     const other = await pool.query<{ id: string }>(
       `INSERT INTO findings (org_id, project_id, vulnerability_id, purl, version, ecosystem, scope,
          import_id, match_quality, match_reason, matcher_version, evidence, status)
@@ -269,6 +309,7 @@ describe("investigation lifecycle API", () => {
        FROM findings WHERE id = $1 RETURNING id`,
       [findingId, randomUUID()],
     );
+
     const first = await call(owner, "POST", base().replace(findingId, cloned.rows[0]!.id));
     expect(first.statusCode).toBe(201);
     const rejected = await call(owner, "POST", base().replace(findingId, other.rows[0]!.id));
@@ -282,6 +323,7 @@ describe("investigation lifecycle API", () => {
   it("retries an unsent outbox row after publisher failure", async () => {
     let fail = true;
     const published: string[] = [];
+
     const relay = createInvestigationRelay(pool, {
       publisher: {
         async publish(_topic, _key, value) {
@@ -293,19 +335,24 @@ describe("investigation lifecycle API", () => {
       leaseSeconds: 1,
       backoffBaseSeconds: 1,
     });
+
     await relay.tick();
+
     const pending = await pool.query<{ n: number }>(
       "SELECT count(*)::int AS n FROM investigation_outbox WHERE sent_at IS NULL AND attempts > 0",
     );
+
     expect(pending.rows[0]!.n).toBeGreaterThan(0);
     fail = false;
     await pool.query(
       "UPDATE investigation_outbox SET next_attempt_at = now() WHERE sent_at IS NULL",
     );
     await relay.tick();
+
     const remaining = await pool.query<{ n: number }>(
       "SELECT count(*)::int AS n FROM investigation_outbox WHERE sent_at IS NULL",
     );
+
     expect(remaining.rows[0]!.n).toBe(0);
     expect(published.some((value) => JSON.parse(value).type === "investigation.requested")).toBe(
       true,

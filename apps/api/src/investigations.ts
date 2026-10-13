@@ -72,6 +72,7 @@ export function createInvestigationStore(
 ) {
   async function scoped(tenant: TenantContext, slug: string, findingId: string) {
     if (!isUuid(findingId)) throw missing();
+
     return { projectId: await findProject(pool, tenant, slug), findingId };
   }
 
@@ -84,20 +85,25 @@ export function createInvestigationStore(
     query: string,
   ): Promise<T> {
     const { projectId } = await scoped(tenant, slug, findingId);
+
     if (!isUuid(id)) throw missing();
     const { rows } = await pool.query<T>(query, [id, tenant.orgId, projectId, findingId]);
+
     if (!rows[0]) throw missing();
+
     return rows[0];
   }
 
   return {
     async start(tenant: TenantContext, slug: string, findingId: string, correlationId: string) {
       const { projectId } = await scoped(tenant, slug, findingId);
+
       return inTransaction(pool, async (db) => {
         // Serializes the pending cap and active-run check for this org across API replicas.
         await db.query("SELECT 1 FROM organizations WHERE id = $1 FOR NO KEY UPDATE", [
           tenant.orgId,
         ]);
+
         const { rows: findings } = await db.query<FindingContext>(
           `SELECT f.id, f.org_id, f.project_id, f.purl, f.version, f.ecosystem, f.scope,
                   f.status, f.match_quality, f.match_reason, f.evidence,
@@ -122,27 +128,35 @@ export function createInvestigationStore(
            FOR SHARE OF f`,
           [findingId, tenant.orgId, projectId],
         );
+
         const finding = findings[0];
+
         if (!finding) throw missing();
+
         if (finding.status !== "open") {
           throw new AppError("finding_resolved", 409, "Finding is resolved", {
             reason: "finding_resolved",
           });
         }
+
         const active = await db.query<RunRow>(
           `SELECT ${FIELDS} FROM investigations WHERE finding_id = $1 AND status IN ('queued', 'running')`,
           [findingId],
         );
+
         if (active.rows[0]) return { run: toRun(active.rows[0]), created: false };
+
         const pending = await db.query<{ n: number }>(
           "SELECT count(*)::int AS n FROM investigations WHERE org_id = $1 AND status IN ('queued', 'running')",
           [tenant.orgId],
         );
+
         if (pending.rows[0]!.n >= options.maxPendingPerOrg) {
           throw new AppError("investigation_limit", 429, "Too many investigations in progress", {
             reason: "investigation_limit",
           });
         }
+
         const snapshot = {
           version: 1,
           finding: {
@@ -164,13 +178,16 @@ export function createInvestigationStore(
           groupId: finding.group_id,
           linkedAdvisories: finding.linked_advisories,
         };
+
         if (Buffer.byteLength(JSON.stringify(snapshot)) > 64 * 1024) {
           throw new AppError("context_too_large", 422, "Finding context is too large", {
             reason: "context_too_large",
           });
         }
+
         const id = randomUUID();
         const eventId = randomUUID();
+
         const { rows } = await db.query<RunRow>(
           `INSERT INTO investigations (id, org_id, project_id, finding_id, created_by, context_snapshot, model_id, prompt_version)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING ${FIELDS}`,
@@ -185,6 +202,7 @@ export function createInvestigationStore(
             PROMPT_VERSION,
           ],
         );
+
         await db.query(
           "INSERT INTO investigation_outbox (event_id, investigation_id, payload) VALUES ($1, $2, $3)",
           [
@@ -211,6 +229,7 @@ export function createInvestigationStore(
           correlationId,
           metadata: { findingId },
         });
+
         return { run: toRun(rows[0]!), created: true };
       });
     },
@@ -223,12 +242,15 @@ export function createInvestigationStore(
       cursor?: string,
     ) {
       const { projectId } = await scoped(tenant, slug, findingId);
+
       const finding = await pool.query(
         "SELECT 1 FROM findings WHERE id = $1 AND org_id = $2 AND project_id = $3",
         [findingId, tenant.orgId, projectId],
       );
+
       if (!finding.rowCount) throw missing();
       const after = cursor ? decodeCursor(cursor) : undefined;
+
       const { rows } = await pool.query<RunRow>(
         `SELECT ${FIELDS} FROM investigations WHERE org_id = $1 AND project_id = $2 AND finding_id = $3
          AND ($4::timestamptz IS NULL OR (created_at, id) < ($4::timestamptz, $5::uuid))
@@ -242,6 +264,7 @@ export function createInvestigationStore(
           limit + 1,
         ],
       );
+
       return toPage(rows, limit, toRun);
     },
 
@@ -270,6 +293,7 @@ export function createInvestigationStore(
          JOIN investigations i ON i.id = r.investigation_id AND i.org_id = r.org_id AND i.project_id = r.project_id
          WHERE r.investigation_id = $1 AND r.org_id = $2 AND r.project_id = $3 AND i.finding_id = $4`,
       );
+
       return {
         investigationId: id,
         schemaVersion: row.schema_version,

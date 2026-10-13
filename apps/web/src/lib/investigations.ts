@@ -1,6 +1,7 @@
 import { apiGet } from "./api.ts";
 import { callApi } from "./auth.ts";
 import type { Finding } from "./findings.ts";
+
 export type { Finding } from "./findings.ts";
 
 export interface Investigation {

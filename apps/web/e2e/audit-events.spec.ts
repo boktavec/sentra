@@ -4,7 +4,9 @@ import { expect, test } from "@playwright/test";
 import { createOrg, signUp, screenshotPath } from "./helpers";
 
 const { Pool } = createRequire(new URL("../../api/package.json", import.meta.url))("pg");
+
 const UNAVAILABLE_PORT = 3001;
+
 const UNAVAILABLE_URL = `http://localhost:${UNAVAILABLE_PORT}`;
 
 const stopServer = (server: ChildProcess) => process.kill(-server.pid!);
@@ -19,6 +21,7 @@ async function startWebWithoutApi() {
     stdio: "ignore",
     detached: true,
   });
+
   for (let i = 0; i < 60; i++) {
     if (
       await fetch(`${UNAVAILABLE_URL}/auth/login`, { redirect: "manual" }).then(
@@ -29,20 +32,25 @@ async function startWebWithoutApi() {
       return server;
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
+
   stopServer(server);
   throw new Error("The web app without an API did not start");
 }
 
 async function addPageOfAuditEvents(slug: string) {
   const databaseUrl = process.env["DATABASE_URL"];
+
   if (!databaseUrl) throw new Error("DATABASE_URL is required for the audit history browser test");
   const pool = new Pool({ connectionString: databaseUrl });
+
   try {
     const { rows } = await pool.query(
       `SELECT o.id AS org_id, o.created_by AS user_id FROM organizations o WHERE o.slug = $1`,
       [slug],
     );
-    const org = rows[0] as { org_id: string; user_id: string } | undefined;
+
+    const org: { org_id: string; user_id: string } | undefined = rows[0];
+
     if (!org) throw new Error("Organization was not created");
     await pool.query(
       `INSERT INTO audit_events (org_id, actor_user_id, action, target_type, target_id)
@@ -98,6 +106,7 @@ test("an admin sees the unavailable state when the API cannot be reached", async
   await signUp(page, `audit-unavailable-${run}@example.com`);
   await createOrg(page, `Audit unavailable ${run}`, slug);
   const unavailable = await startWebWithoutApi();
+
   try {
     await page.goto(`${UNAVAILABLE_URL}/orgs/${slug}/audit-events`);
     await expect(page.getByTestId("api-unavailable")).toContainText("Reference:");

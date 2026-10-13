@@ -14,11 +14,14 @@ import { createOrgStore } from "./orgs.ts";
 import { createFindingStore } from "./findings.ts";
 import { createProjectStore } from "./projects.ts";
 import { createUserStore } from "./users.ts";
+import { type LogLine, testUserId } from "./test-support.ts";
 
 const databaseUrl = process.env["DATABASE_URL"];
+
 if (!databaseUrl) throw new Error("DATABASE_URL is required (see `task api:test:integration`)");
 
-const logLines: Record<string, unknown>[] = [];
+const logLines: LogLine[] = [];
+
 const logger = createLogger("api-test", {
   level: "debug",
   destination: new Writable({
@@ -30,16 +33,29 @@ const logger = createLogger("api-test", {
 });
 
 let pool: Pool;
+
 let app: ReturnType<typeof buildApp>;
+
 const run = randomUUID().slice(0, 8);
 
 type Headers = Record<string, string>;
+
+type ProjectPayload = {
+  name?: string | number;
+  slug?: string;
+  orgId?: string;
+  org_id?: string;
+  createdBy?: string;
+};
+
+type ProblemBody = { status?: number; title?: string; type?: string };
 
 async function newUser() {
   const user = await createUserStore(pool).resolve({
     issuer: "http://projects.test",
     subject: randomUUID(),
   });
+
   return { id: user.id, headers: { "x-test-user": user.id } };
 }
 
@@ -47,31 +63,36 @@ async function newUser() {
 async function newOrg() {
   const admin = await newUser();
   const member = await newUser();
+
   const res = await app.inject({
     method: "POST",
     url: "/v1/orgs",
     headers: admin.headers,
     payload: { name: "Team", slug: `team-${run}-${randomUUID().slice(0, 8)}` },
   });
+
   expect(res.statusCode).toBe(201);
   const org: { id: string } = res.json();
   await pool.query("INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')", [
     org.id,
     member.id,
   ]);
+
   return { org, admin, member };
 }
 
-const createIn = (orgId: string, headers: Headers, payload: unknown) =>
+const createIn = (orgId: string, headers: Headers, payload: ProjectPayload) =>
   app.inject({
     method: "POST",
     url: `/v1/orgs/${orgId}/projects`,
     headers,
-    payload: payload as object,
+    payload,
   });
+
 const getUrl = (url: string, headers: Headers) => app.inject({ method: "GET", url, headers });
+
 const count = async (sql: string, params: unknown[]) =>
-  (await pool.query(sql, params)).rows[0].n as number;
+  (await pool.query<{ n: number }>(sql, params)).rows[0]!.n;
 
 beforeAll(async () => {
   pool = new Pool({ connectionString: databaseUrl, max: 20 });
@@ -91,13 +112,16 @@ beforeAll(async () => {
     trustedProxies: false,
     ready: async () => true,
     authenticate: async (request) => {
-      const id = request.headers["x-test-user" as "authorization"];
+      const id = testUserId(request.headers);
+
       if (!id) throw unauthenticated("missing_token");
       const { rows } = await pool.query("SELECT issuer, subject FROM users WHERE id = $1", [id]);
+
       return userStore.resolve(rows[0]);
     },
   });
 });
+
 afterAll(async () => {
   await app.close();
   await pool.end();
@@ -106,6 +130,7 @@ afterAll(async () => {
 describe("creating a project", () => {
   it("lets an admin and a plain member create; writes one audit event each", async () => {
     const { org, admin, member } = await newOrg();
+
     for (const [user, slug] of [
       [admin, "web-app"],
       [member, "mobile-app"],
@@ -119,9 +144,11 @@ describe("creating a project", () => {
       const row = (await pool.query("SELECT * FROM projects WHERE id = $1", [project.id])).rows[0];
       expect(row).toMatchObject({ org_id: org.id, created_by: user.id });
       expect(row.updated_at).toBeInstanceOf(Date);
+
       const audit = (
         await pool.query("SELECT * FROM audit_events WHERE target_id = $1", [project.id])
       ).rows;
+
       expect(audit).toHaveLength(1);
       expect(audit[0]).toMatchObject({
         org_id: org.id,
@@ -132,6 +159,7 @@ describe("creating a project", () => {
         metadata: { slug },
       });
     }
+
     expect(logLines.some((l) => l["message"] === "project_created" && l["orgId"] === org.id)).toBe(
       true,
     );
@@ -178,11 +206,13 @@ describe("creating a project", () => {
 
   it("creates exactly one project when the same request races", async () => {
     const { org, admin, member } = await newOrg();
+
     const results = await Promise.all(
       Array.from({ length: 8 }, (_, i) =>
         createIn(org.id, (i % 2 ? admin : member).headers, { name: "Race", slug: "race" }),
       ),
     );
+
     expect(results.filter((r) => r.statusCode === 201)).toHaveLength(1);
     expect(results.every((r) => r.statusCode === 201 || r.statusCode === 200)).toBe(true);
     expect(await count("SELECT count(*)::int AS n FROM projects WHERE org_id = $1", [org.id])).toBe(
@@ -198,15 +228,18 @@ describe("creating a project", () => {
 
   it("returns 409 to the loser when two different names race for one slug", async () => {
     const { org, admin, member } = await newOrg();
+
     const results = await Promise.all([
       createIn(org.id, admin.headers, { name: "Alpha", slug: "dup" }),
       createIn(org.id, member.headers, { name: "Beta", slug: "dup" }),
     ]);
+
     expect(results.map((r) => r.statusCode).sort()).toEqual([201, 409]);
   });
 
   it("rejects invalid input with 400 and writes nothing", async () => {
     const { org, admin } = await newOrg();
+
     for (const payload of [
       {},
       { name: "", slug: "valid-slug" },
@@ -220,6 +253,7 @@ describe("creating a project", () => {
     ]) {
       expect((await createIn(org.id, admin.headers, payload)).statusCode).toBe(400);
     }
+
     expect(await count("SELECT count(*)::int AS n FROM projects WHERE org_id = $1", [org.id])).toBe(
       0,
     );
@@ -228,6 +262,7 @@ describe("creating a project", () => {
   it("ignores tenant and actor fields in the body", async () => {
     const a = await newOrg();
     const b = await newOrg();
+
     const res = await createIn(a.org.id, a.admin.headers, {
       name: "Mine",
       slug: "mine",
@@ -235,10 +270,13 @@ describe("creating a project", () => {
       org_id: b.org.id,
       createdBy: b.admin.id,
     });
+
     expect(res.statusCode).toBe(201);
+
     const row = (
       await pool.query("SELECT org_id, created_by FROM projects WHERE id = $1", [res.json().id])
     ).rows[0];
+
     expect(row).toEqual({ org_id: a.org.id, created_by: a.admin.id });
   });
 
@@ -252,6 +290,7 @@ describe("creating a project", () => {
     await pool.query(
       `CREATE TRIGGER ${fn} BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION ${fn}()`,
     );
+
     try {
       const res = await createIn(org.id, admin.headers, { name: "Doomed", slug: "doomed" });
       expect(res.statusCode).toBe(500);
@@ -277,14 +316,17 @@ describe("tenant isolation", () => {
       await getUrl(`/v1/orgs/${orgId}/projects`, headers),
       await getUrl(`/v1/orgs/${orgId}/projects/by-slug/secret`, headers),
     ];
+
     const denied = await probe(org.id, outsider.headers);
     const absent = await probe(missing, outsider.headers);
+
     for (const [i, res] of denied.entries()) {
       expect(res.statusCode).toBe(404);
       // Everything but the per-request correlation ID must be identical.
-      const body = ({ status, title, type }: Record<string, unknown>) => ({ status, title, type });
+      const body = ({ status, title, type }: ProblemBody) => ({ status, title, type });
       expect(body(res.json())).toEqual(body(absent[i]!.json()));
     }
+
     expect(await count("SELECT count(*)::int AS n FROM projects WHERE slug = 'intruder'", [])).toBe(
       0,
     );
@@ -324,11 +366,13 @@ describe("reading projects", () => {
   it("pages through projects in creation order without gaps or repeats", async () => {
     const { org, admin } = await newOrg();
     const slugs = Array.from({ length: 7 }, (_, i) => `proj-${i}`);
+
     for (const slug of slugs) await createIn(org.id, admin.headers, { name: slug, slug });
 
     const seen: string[] = [];
     let cursor: string | null = null;
     let pages = 0;
+
     do {
       const url: string = `/v1/orgs/${org.id}/projects?limit=3${cursor ? `&cursor=${cursor}` : ""}`;
       const page = (await getUrl(url, admin.headers)).json();
@@ -336,12 +380,14 @@ describe("reading projects", () => {
       cursor = page.nextCursor;
       pages++;
     } while (cursor);
+
     expect(seen).toEqual(slugs);
     expect(pages).toBe(3);
   });
 
   it("rejects a bad limit or a tampered cursor with 400", async () => {
     const { org, admin } = await newOrg();
+
     for (const query of ["limit=0", "limit=101", "limit=abc", "cursor=garbage"]) {
       expect((await getUrl(`/v1/orgs/${org.id}/projects?${query}`, admin.headers)).statusCode).toBe(
         400,

@@ -46,6 +46,7 @@ export function DataTable<T>({
   testId?: string;
 }) {
   if (rows.length === 0 && empty) return empty;
+
   return (
     <>
       <Table data-testid={testId}>
@@ -61,6 +62,7 @@ export function DataTable<T>({
         <TableBody>
           {rows.map((row) => {
             const accent = rowAccent?.(row);
+
             return (
               <TableRow key={rowKey(row)} className="h-9">
                 {columns.map((column, index) => (

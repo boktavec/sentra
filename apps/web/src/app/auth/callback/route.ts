@@ -22,9 +22,11 @@ interface LoginState {
 /** The `state` the provider echoed must match the one bound to this browser by cookie. */
 function boundState(request: NextRequest): string {
   const state = request.nextUrl.searchParams.get("state");
+
   if (!state || state !== request.cookies.get(LOGIN_COOKIE)?.value) {
     throw unauthenticated("state_mismatch");
   }
+
   return state;
 }
 
@@ -32,7 +34,10 @@ function boundState(request: NextRequest): string {
 async function takeLoginState(request: NextRequest): Promise<LoginState> {
   const state = boundState(request);
   const stored = await redis().getdel(`login:${state}`);
+
   if (!stored) throw unauthenticated("login_expired");
+
+  // SAFETY: only /auth/login writes this key, as JSON with exactly these fields.
   return { state, ...(JSON.parse(stored) as { verifier: string; nonce: string }) };
 }
 
@@ -40,6 +45,7 @@ async function exchangeCode(request: NextRequest, login: LoginState) {
   // Use the configured public URL, not the request's, so proxies/hosts can't alter the redirect URI.
   const callbackUrl = new URL(config().redirectUri);
   callbackUrl.search = request.nextUrl.search;
+
   try {
     return await client.authorizationCodeGrant(await oidcConfig(), callbackUrl, {
       pkceCodeVerifier: login.verifier,
@@ -51,29 +57,36 @@ async function exchangeCode(request: NextRequest, login: LoginState) {
   }
 }
 
-function failure(err: unknown, correlationId: string) {
+function failure(err: Error, correlationId: string) {
   const reason = err instanceof AppError ? err.reason : "error";
-  const detail = err instanceof Error ? String(err.cause ?? err) : String(err);
+  const detail = String(err.cause ?? err);
   logger.warn({ correlationId, reason, err: detail }, "login_failed");
   const { status, headers, body } = toErrorResponse(err, correlationId);
   const response = NextResponse.json(body, { status, headers });
   response.cookies.delete(LOGIN_COOKIE);
+
+  return response;
+}
+
+async function completeLogin(request: NextRequest, correlationId: string) {
+  const tokens = await exchangeCode(request, await takeLoginState(request));
+  const sessionId = await createSession(sessionFromTokens(tokens));
+  logger.info({ correlationId, subject: tokens.claims()?.sub }, "login_succeeded");
+  const returnTo = safeReturnPath(request.cookies.get(RETURN_COOKIE)?.value);
+  const response = NextResponse.redirect(new URL(returnTo, config().webUrl));
+  response.cookies.set(SESSION_COOKIE, sessionId, cookieOptions());
+  response.cookies.delete(LOGIN_COOKIE);
+  response.cookies.delete(RETURN_COOKIE);
+
   return response;
 }
 
 export async function GET(request: NextRequest) {
   const correlationId = crypto.randomUUID();
+
   try {
-    const tokens = await exchangeCode(request, await takeLoginState(request));
-    const sessionId = await createSession(sessionFromTokens(tokens));
-    logger.info({ correlationId, subject: tokens.claims()?.sub }, "login_succeeded");
-    const returnTo = safeReturnPath(request.cookies.get(RETURN_COOKIE)?.value);
-    const response = NextResponse.redirect(new URL(returnTo, config().webUrl));
-    response.cookies.set(SESSION_COOKIE, sessionId, cookieOptions());
-    response.cookies.delete(LOGIN_COOKIE);
-    response.cookies.delete(RETURN_COOKIE);
-    return response;
+    return await completeLogin(request, correlationId);
   } catch (err) {
-    return failure(err, correlationId);
+    return failure(err instanceof Error ? err : new Error(String(err)), correlationId);
   }
 }

@@ -1,4 +1,4 @@
-import { rateLimited, unauthenticated, type AppError, type Logger } from "@sentra/ts-platform";
+import { AppError, rateLimited, unauthenticated, type Logger } from "@sentra/ts-platform";
 import type { FailureLimiter } from "./limiter.ts";
 import * as metrics from "./metrics.ts";
 import type { AuthUser } from "./users.ts";
@@ -13,7 +13,9 @@ interface Deps {
 /** Strict `Bearer <token>` parsing; anything else counts as a missing token. */
 function bearerToken(header: string | undefined): string {
   const match = /^Bearer ([A-Za-z0-9._~+/=-]+)$/.exec(header ?? "");
+
   if (!match) throw unauthenticated("missing_token");
+
   return match[1]!;
 }
 
@@ -26,11 +28,12 @@ export function createAuthenticator({ verify, resolveUser, limiter }: Deps) {
       const user = await resolveUser(await verify(bearerToken(request.headers.authorization)));
       metrics.inc("auth_outcomes_total", { outcome: "success" });
       log.info({ userId: user.id }, "auth_success");
+
       return user;
     } catch (err) {
-      const reason = (err as AppError).reason ?? "error";
       // Only 401s are client failures worth throttling; dependency outages are not the caller's fault.
-      if ((err as AppError).status !== 401) throw err;
+      if (!(err instanceof AppError) || err.status !== 401) throw err;
+      const reason = err.reason ?? "error";
       const { limited, retryAfterSeconds } = await limiter.recordFailure(request.ip);
       metrics.inc("auth_outcomes_total", { outcome: limited ? "rate_limited" : reason });
       log.warn({ reason, ip: request.ip, limited }, "auth_failure");

@@ -12,6 +12,7 @@ describe("Bounds", () => {
 
   it("measures the budget as JSON-escaped size, so control characters and quotes cannot overflow it", () => {
     const bounds = new Bounds();
+
     for (const text of [
       "\u0001".repeat(1024),
       '"'.repeat(1024),
@@ -22,6 +23,7 @@ describe("Bounds", () => {
       expect(jsonBytes(cut) - 2).toBeLessThanOrEqual(1024);
       expect(cut.length).toBeGreaterThan(0);
     }
+
     expect(bounds.truncated).toBe(true);
   });
 
@@ -77,10 +79,12 @@ describe("fitItems", () => {
 describe("fitOptional", () => {
   it("drops the optional bulk when the full result is too big, and flags it", () => {
     const bounds = new Bounds();
+
     const built = fitOptional(
       (full) => ({ core: "x", bulk: full ? "y".repeat(MAX_RESULT_BYTES) : null }),
       bounds,
     );
+
     expect(built.bulk).toBeNull();
     expect(bounds.truncated).toBe(true);
   });

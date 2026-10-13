@@ -6,6 +6,7 @@ import { useTransition } from "react";
 export function RefreshButton() {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+
   return (
     <button
       type="button"

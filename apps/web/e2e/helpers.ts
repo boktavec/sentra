@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { expect, type Page } from "@playwright/test";
 
 const MAILPIT = "http://localhost:8025";
+
 export const PASSWORD = "Sentra-Test-1234!";
 
 /** Polls Mailpit for a message matching `query` until `extract` finds something in its text. */
@@ -14,14 +15,19 @@ async function waitForMail(
     const found = await (
       await fetch(`${MAILPIT}/api/v1/search?query=${encodeURIComponent(query)}`)
     ).json();
+
     const id = found.messages?.[0]?.ID;
+
     if (id) {
       const message = await (await fetch(`${MAILPIT}/api/v1/message/${id}`)).json();
       const value = extract(message.Text);
+
       if (value) return value;
     }
+
     await new Promise((r) => setTimeout(r, 500));
   }
+
   throw new Error(`No email matching ${query}`);
 }
 
@@ -87,6 +93,7 @@ export async function startWebWithoutApi(distDir: string) {
     stdio: "ignore",
     detached: true,
   });
+
   for (let i = 0; i < 60; i++) {
     if (
       await fetch(`${UNAVAILABLE_URL}/auth/login`, { redirect: "manual" }).then(
@@ -97,6 +104,7 @@ export async function startWebWithoutApi(distDir: string) {
       return server;
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
+
   stopServer(server);
   throw new Error("The web app without an API did not start");
 }

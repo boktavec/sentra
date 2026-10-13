@@ -27,6 +27,7 @@ export function NewOrgForm() {
           autoComplete="organization"
           onChange={(e) => {
             setName(e.target.value);
+
             if (!slugEdited) setSlug(slugify(e.target.value));
           }}
         />

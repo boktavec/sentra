@@ -32,6 +32,7 @@ export async function startUpload(
       size_bytes: sizeBytes,
     }),
   );
+
   return r.ok ? { ok: true, data: r.data } : fail(r);
 }
 
@@ -48,6 +49,7 @@ export async function completeUpload(
       undefined,
     ),
   );
+
   return r.ok ? { ok: true, data: r.data } : fail(r);
 }
 
@@ -59,5 +61,6 @@ export async function refreshImports(
   const r = await callApi((token) =>
     apiGet<SbomPage>(`${sbomsPath(orgId, projectSlug)}?limit=20`, token),
   );
+
   return r.ok ? { ok: true, data: r.data.items } : fail(r);
 }

@@ -1,12 +1,13 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { exportJWK, generateKeyPair, SignJWT, type JWK } from "jose";
+import { exportJWK, generateKeyPair, SignJWT, type JWK, type JWTPayload } from "jose";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AppError } from "@sentra/ts-platform";
 import { JwksCache } from "./jwks.ts";
 import { createVerifier } from "./verifier.ts";
 
 const ISSUER = "http://issuer.test";
+
 const AUDIENCE = "client-1";
 
 interface Signer {
@@ -17,6 +18,7 @@ interface Signer {
 
 async function makeSigner(kid: string): Promise<Signer> {
   const { publicKey, privateKey } = await generateKeyPair("RS256");
+
   return {
     kid,
     privateKey,
@@ -26,7 +28,7 @@ async function makeSigner(kid: string): Promise<Signer> {
 
 const sign = (
   signer: Signer,
-  claims: Record<string, unknown> = {},
+  claims: JWTPayload = {},
   opts: { issuer?: string; audience?: string; expiresIn?: string } = {},
 ) =>
   new SignJWT(claims)
@@ -42,14 +44,17 @@ const sign = (
 function jwksServer() {
   let keys: JWK[] = [];
   let hits = 0;
+
   const server: Server = createServer((_req, res) => {
     hits++;
     res.setHeader("content-type", "application/json").end(JSON.stringify({ keys }));
   });
+
   return {
     start: () =>
       new Promise<string>((resolve) =>
         server.listen(0, "127.0.0.1", () =>
+          // SAFETY: listen(0, host) binds a TCP socket, so address() is an AddressInfo, never a pipe path.
           resolve(`http://127.0.0.1:${(server.address() as AddressInfo).port}/keys`),
         ),
       ),
@@ -66,12 +71,15 @@ function jwksServer() {
 }
 
 async function reasonOf(promise: Promise<unknown>): Promise<string | undefined> {
-  const err = await promise.then(
-    () => undefined,
-    (e: unknown) => e,
-  );
-  expect(err).toBeInstanceOf(AppError);
-  return (err as AppError).reason;
+  try {
+    await promise;
+  } catch (err) {
+    expect(err).toBeInstanceOf(AppError);
+
+    return err instanceof AppError ? err.reason : undefined;
+  }
+
+  return expect.unreachable("expected the promise to reject");
 }
 
 describe("token verification against a JWKS endpoint", () => {
@@ -130,23 +138,28 @@ describe("token verification against a JWKS endpoint", () => {
 
   it("rejects a tampered payload", async () => {
     const [h, , s] = (await sign(key1)).split(".");
+
     const forged = Buffer.from(
       JSON.stringify({ sub: "admin", iss: ISSUER, aud: AUDIENCE, exp: 9999999999 }),
     ).toString("base64url");
+
     expect(await reasonOf(verify(`${h}.${forged}.${s}`))).toBe("invalid_signature");
   });
 
   it("rejects alg=none and non-RS256 tokens", async () => {
     const header = Buffer.from(JSON.stringify({ alg: "none", kid: "k1" })).toString("base64url");
+
     const payload = Buffer.from(
       JSON.stringify({ sub: "u", iss: ISSUER, aud: AUDIENCE, exp: 9999999999 }),
     ).toString("base64url");
+
     expect(await reasonOf(verify(`${header}.${payload}.`))).toBe("invalid_token");
     expect(await reasonOf(verify("not-a-jwt"))).toBe("invalid_token");
   });
 
   it("verifies known keys without any network call", async () => {
     const before = server.hits();
+
     for (let i = 0; i < 5; i++) await verify(await sign(key1));
     expect(server.hits()).toBe(before);
   });
@@ -160,6 +173,7 @@ describe("token verification against a JWKS endpoint", () => {
     expect(server.hits()).toBe(before + 1);
 
     const attacker = await makeSigner("random-kid");
+
     for (let i = 0; i < 10; i++)
       expect(await reasonOf(verify(await sign(attacker)))).toBe("unknown_key");
     expect(server.hits()).toBe(before + 1); // all throttled inside the cooldown
@@ -183,16 +197,17 @@ describe("token verification against a JWKS endpoint", () => {
 describe("cold start without reachable signing keys", () => {
   it("reports not ready and answers 503 rather than 401", async () => {
     const errors: unknown[] = [];
+
     const jwks = new JwksCache({
       url: "http://127.0.0.1:1/keys",
       onRefreshError: (e) => errors.push(e),
     });
+
     await jwks.warm();
     expect(jwks.ready).toBe(false);
     expect(errors).toHaveLength(1);
     const verify = createVerifier({ issuer: ISSUER, audiences: [AUDIENCE], jwks });
     const key = await makeSigner("k1");
-    const err = await verify(await sign(key)).catch((e: unknown) => e);
-    expect((err as AppError).status).toBe(503);
+    await expect(verify(await sign(key))).rejects.toMatchObject({ status: 503 });
   });
 });

@@ -5,6 +5,7 @@ import { createInvitation, type InviteState } from "./actions";
 
 export function InviteForm({ orgId, slug }: { orgId: string; slug: string }) {
   const [state, action, pending] = useActionState<InviteState, FormData>(createInvitation, {});
+
   return (
     <form action={action}>
       <input type="hidden" name="orgId" value={orgId} />

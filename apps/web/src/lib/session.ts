@@ -5,8 +5,11 @@ import { config } from "./config.ts";
 import { redis } from "./redis.ts";
 
 export const SESSION_COOKIE = "sentra_session";
+
 export const LOGIN_COOKIE = "sentra_login";
+
 const REFRESH_SKEW_SECONDS = 30;
+
 const DEFAULT_TOKEN_LIFETIME_SECONDS = 300;
 
 export interface Session {
@@ -17,17 +20,21 @@ export interface Session {
 }
 
 const key = (id: string) => `session:${id}`;
+
 const nowSeconds = () => Math.floor(Date.now() / 1000);
+
 const isFresh = (session: Session) => session.accessExpiresAt - nowSeconds() > REFRESH_SKEW_SECONDS;
 
-export const cookieOptions = (maxAge?: number) =>
-  ({
+export const cookieOptions = (maxAge?: number) => {
+  const options = {
     httpOnly: true,
     sameSite: "lax",
     secure: config().secureCookies,
     path: "/",
-    ...(maxAge ? { maxAge } : {}),
-  }) as const;
+  } as const;
+
+  return maxAge ? { ...options, maxAge } : options;
+};
 
 const withoutUndefined = (values: Record<string, string | undefined>) =>
   Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined));
@@ -55,12 +62,15 @@ const saveSession = (id: string, session: Session) =>
 export async function createSession(session: Session): Promise<string> {
   const id = randomBytes(32).toString("base64url");
   await saveSession(id, session);
+
   return id;
 }
 
 export async function loadSession(id: string): Promise<Session | null> {
   // GETEX slides the idle timeout on use.
   const raw = await redis().getex(key(id), "EX", config().sessionIdleSeconds);
+
+  // SAFETY: only saveSession writes this key, and it stores a JSON-serialized Session.
   return raw ? (JSON.parse(raw) as Session) : null;
 }
 
@@ -80,9 +90,11 @@ async function refresh(
     const tokens = await client.refreshTokenGrant(await oidcConfig(), refreshToken);
     const renewed = sessionFromTokens(tokens, session);
     await saveSession(id, renewed);
+
     return renewed;
   } catch {
     await destroySession(id);
+
     return null;
   }
 }
@@ -92,9 +104,12 @@ async function waitForRefresh(id: string): Promise<string | null> {
   for (let attempt = 0; attempt < 20; attempt++) {
     await new Promise((resolve) => setTimeout(resolve, 100));
     const latest = await loadSession(id);
+
     if (!latest) return null;
+
     if (isFresh(latest)) return latest.accessToken;
   }
+
   return null;
 }
 
@@ -105,7 +120,9 @@ async function refreshExclusively(
   refreshToken: string,
 ): Promise<string | null> {
   const lock = `${key(id)}:refresh`;
+
   if (!(await redis().set(lock, "1", "EX", 10, "NX"))) return waitForRefresh(id);
+
   try {
     return (await refresh(id, session, refreshToken))?.accessToken ?? null;
   } finally {
@@ -119,8 +136,12 @@ async function refreshExclusively(
  */
 export async function accessTokenFor(id: string): Promise<string | null> {
   const session = await loadSession(id);
+
   if (!session) return null;
+
   if (isFresh(session)) return session.accessToken;
+
   if (!session.refreshToken) return null;
+
   return refreshExclusively(id, session, session.refreshToken);
 }

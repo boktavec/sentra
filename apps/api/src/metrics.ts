@@ -1,5 +1,6 @@
 // ponytail: in-process counters in Prometheus text format; SENTRA-23 replaces this with the real metrics stack.
 const counters = new Map<string, number>();
+
 const gauges = new Map<string, number>();
 
 const labelled = (name: string, labels: Record<string, string>) =>

@@ -30,6 +30,7 @@ async function newSession(browser: Browser, email: string) {
   const context = await browser.newContext();
   const page = await context.newPage();
   await signUp(page, email);
+
   return { context, page };
 }
 

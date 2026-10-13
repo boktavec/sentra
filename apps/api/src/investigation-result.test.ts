@@ -9,7 +9,9 @@ import {
 } from "./investigation-result.ts";
 
 const contract = loadResultContract();
+
 const NOW = new Date("2026-10-09T12:00:00Z");
+
 const ATTEMPT = 2;
 
 const risk = (over: { status?: string; cvss?: number | null; match?: string } = {}) => ({
@@ -46,6 +48,7 @@ const risk = (over: { status?: string; cvss?: number | null; match?: string } = 
 });
 
 let n = 0;
+
 const call = (tool: LedgerCall["tool"], over: Partial<LedgerCall> = {}): LedgerCall => ({
   callNo: ++n,
   attempt: ATTEMPT,
@@ -59,6 +62,7 @@ const call = (tool: LedgerCall["tool"], over: Partial<LedgerCall> = {}): LedgerC
 /** The ledger of a thorough attempt: calls 1 to 4, all ok. */
 function fullLedger(riskOver: Parameters<typeof risk>[0] = {}): LedgerCall[] {
   n = 0;
+
   return [
     call("get_finding_risk", { result: risk(riskOver) }),
     call("list_related_findings", {
@@ -88,7 +92,46 @@ const run: RunFacts = {
   attempt: ATTEMPT,
 };
 
-const answer = (over: Record<string, unknown> = {}) => ({
+type ModelAnswer = {
+  summary: string;
+  tenantImpact: string;
+  nextSteps: string[];
+  claims: { text: string; evidence: string[] }[];
+  uncertainties: string[];
+  noUncertaintyReason?: string;
+  // Fields the model must not supply; the violation tests set them on purpose.
+  extra?: number;
+  facts?: { priority: string };
+  gaps?: string[];
+  modelId?: string;
+  evidence?: string[];
+};
+
+/** The part of a stored result the tests read. */
+type StoredResult = {
+  evidence: {
+    ref: string;
+    kind: string;
+    targets?: { findingId: string; purl: string; version: string }[];
+  }[];
+  claims: { evidence: string[] }[];
+  facts: { advisory: { cvssScore: number | null }; kevStatus: string | null };
+  gaps: string[];
+};
+
+type BuildOutcome = ReturnType<typeof buildResult>;
+
+type ModelInput = Parameters<typeof buildResult>[1];
+
+/** buildResult returns its stored value as `object`; this is the one place it is read as a StoredResult. */
+function storedResult(out: BuildOutcome): StoredResult {
+  if (!out.ok) throw new Error(`expected a stored result, got ${out.violations.join(", ")}`);
+
+  // SAFETY: buildResult returns ok only after the assembled result passes the result schema, which fixes these fields.
+  return out.value as StoredResult;
+}
+
+const answer = (over: Partial<ModelAnswer> = {}): ModelAnswer => ({
   summary: "Django is vulnerable to SQL injection.",
   tenantImpact: "Your app uses Django 3.0 in production.",
   nextSteps: ["Upgrade Django."],
@@ -97,12 +140,14 @@ const answer = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-const build = (input: unknown, ledger = fullLedger()) =>
+const build = (input: ModelInput, ledger = fullLedger()) =>
   buildResult(contract, input, ledger, run, NOW);
 
-function violationsOf(input: unknown, ledger?: LedgerCall[]): ViolationCode[] {
+function violationsOf(input: ModelInput, ledger?: LedgerCall[]): ViolationCode[] {
   const out = build(input, ledger);
+
   if (out.ok) throw new Error("expected a rejection");
+
   return out.violations;
 }
 
@@ -110,7 +155,7 @@ describe("buildResult", () => {
   it("stores the model's explanation next to API-written facts, evidence and gaps", () => {
     const out = build(answer());
     expect(out.ok).toBe(true);
-    const result = (out as { value: { evidence: unknown } }).value;
+    const result = storedResult(out);
     expect(result).toMatchObject({
       summary: "Django is vulnerable to SQL injection.",
       modelId: "test-model",
@@ -138,43 +183,47 @@ describe("buildResult", () => {
   });
 
   it("resolves related findings and occurrences, only for the calls that were cited", () => {
-    const out = build(
-      answer({ claims: [{ text: "x", evidence: ["call:2", "call:3", "call:3"] }] }),
-    ) as { value: { evidence: { kind: string }[]; claims: { evidence: string[] }[] } };
-    expect(out.value.evidence.map((e) => e.kind)).toEqual([
-      "related_finding",
-      "dependency_occurrence",
-    ]);
-    expect(out.value.claims[0]!.evidence).toEqual(["call:2", "call:3"]);
+    const out = storedResult(
+      build(answer({ claims: [{ text: "x", evidence: ["call:2", "call:3", "call:3"] }] })),
+    );
+
+    expect(out.evidence.map((e) => e.kind)).toEqual(["related_finding", "dependency_occurrence"]);
+    expect(out.claims[0]!.evidence).toEqual(["call:2", "call:3"]);
   });
 
   it("takes facts from the ledger, never from the model's prose", () => {
-    const out = build(
-      answer({ summary: "This is KEV listed with CVSS 10 and priority P1." }),
-      fullLedger({ cvss: 4.3 }),
-    ) as { value: { facts: { advisory: { cvssScore: number }; kevStatus: string } } };
-    expect(out.value.facts.advisory.cvssScore).toBe(4.3);
-    expect(out.value.facts.kevStatus).toBe("listed");
+    const out = storedResult(
+      build(
+        answer({ summary: "This is KEV listed with CVSS 10 and priority P1." }),
+        fullLedger({ cvss: 4.3 }),
+      ),
+    );
+
+    expect(out.facts.advisory.cvssScore).toBe(4.3);
+    expect(out.facts.kevStatus).toBe("listed");
   });
 
   it("falls back to the snapshot, and says so, when get_finding_risk was not called", () => {
     n = 0;
     const ledger = [call("lookup_advisory", { result: { advisory: { sourceId: "GHSA-aaaa" } } })];
-    const out = build(answer({ claims: [{ text: "x", evidence: ["call:1"] }] }), ledger) as {
-      value: { facts: Record<string, unknown>; gaps: string[] };
-    };
-    expect(out.value.facts).toMatchObject({
+
+    const out = storedResult(
+      build(answer({ claims: [{ text: "x", evidence: ["call:1"] }] }), ledger),
+    );
+
+    expect(out.facts).toMatchObject({
       source: "snapshot",
       status: null,
       priority: null,
       kevStatus: null,
     });
-    expect(out.value.gaps).toContain("no_cvss");
+    expect(out.gaps).toContain("no_cvss");
   });
 
   it("takes CVSS from the snapshot's linked advisory when get_finding_risk was not called", () => {
     n = 0;
     const ledger = [call("lookup_advisory", { result: { advisory: { sourceId: "GHSA-aaaa" } } })];
+
     const withScore = {
       ...run,
       snapshot: {
@@ -185,17 +234,19 @@ describe("buildResult", () => {
         ],
       },
     };
-    const out = buildResult(
-      contract,
-      answer({ claims: [{ text: "x", evidence: ["call:1"] }] }),
-      ledger,
-      withScore,
-      NOW,
-    ) as {
-      value: { facts: { advisory: { cvssScore: number } }; gaps: string[] };
-    };
-    expect(out.value.facts.advisory.cvssScore).toBe(8.1);
-    expect(out.value.gaps).not.toContain("no_cvss");
+
+    const out = storedResult(
+      buildResult(
+        contract,
+        answer({ claims: [{ text: "x", evidence: ["call:1"] }] }),
+        ledger,
+        withScore,
+        NOW,
+      ),
+    );
+
+    expect(out.facts.advisory.cvssScore).toBe(8.1);
+    expect(out.gaps).not.toContain("no_cvss");
   });
 
   it("assembles with every field at its tool cap and stays under the table CHECK", () => {
@@ -209,6 +260,7 @@ describe("buildResult", () => {
       aliases,
       summary: "m".repeat(1024),
     });
+
     const ledger: LedgerCall[] = [
       call("get_finding_risk", { result: fullRisk }),
       call("list_related_findings", {
@@ -224,8 +276,10 @@ describe("buildResult", () => {
         call("lookup_advisory", { result: { advisory: { sourceId: "a".repeat(256) } } }),
       ),
     ];
+
     const refs = ledger.map((c) => `call:${c.callNo}`);
     const text = "😀";
+
     const model = answer({
       summary: text.repeat(1200),
       tenantImpact: text.repeat(1200),
@@ -234,36 +288,38 @@ describe("buildResult", () => {
         evidence: refs.slice(0, 4),
       })),
     });
+
     // Cite everything through several claims so every entry is assembled.
-    (model["claims"] as { evidence: string[] }[])[1]!.evidence = refs.slice(4);
-    const out = build(model, ledger) as { ok: boolean; value: { evidence: unknown[] } };
+    model.claims[1]!.evidence = refs.slice(4);
+    const out = build(model, ledger);
     expect(out.ok).toBe(true);
-    expect(out.value.evidence).toHaveLength(7);
-    const lean = out;
+    const stored = storedResult(out);
+    expect(stored.evidence).toHaveLength(7);
     // jsonb text spaces out keys and commas; the stored form must stay under the 32 KiB CHECK.
-    const spaced = JSON.stringify(lean.value).replace(/([,:])/g, "$1 ");
+    const spaced = JSON.stringify(stored).replace(/([,:])/g, "$1 ");
     expect(Buffer.byteLength(spaced)).toBeLessThan(32 * 1024);
   });
 
   it("caps evidence targets across all cited calls, so assembled parts stay bounded", () => {
     n = 0;
+
     const many = (prefix: string) =>
       Array.from({ length: 10 }, (_, i) => ({
         findingId: `${prefix}${i}`,
         purl: `pkg:pypi/${prefix}${i}@1`,
         version: "1",
       }));
+
     const ledger = [
       call("list_related_findings", { result: { items: many("a") } }),
       call("list_related_findings", { result: { items: many("b") } }),
     ];
-    const out = build(
-      answer({ claims: [{ text: "x", evidence: ["call:1", "call:2"] }] }),
-      ledger,
-    ) as {
-      value: { evidence: { targets: unknown[] }[] };
-    };
-    expect(out.value.evidence.map((e) => e.targets.length)).toEqual([10, 0]);
+
+    const out = storedResult(
+      build(answer({ claims: [{ text: "x", evidence: ["call:1", "call:2"] }] }), ledger),
+    );
+
+    expect(out.evidence.map((e) => e.targets?.length)).toEqual([10, 0]);
   });
 
   it("rejects a result that outgrows the stored size", () => {
@@ -271,13 +327,14 @@ describe("buildResult", () => {
       text: "😀".repeat(400),
       evidence: ["call:1"],
     }));
+
     const big = answer({ summary: "😀".repeat(1200), tenantImpact: "😀".repeat(1200), claims });
     expect(violationsOf(big)).toEqual(["schema_invalid"]);
   });
 });
 
 describe("violations", () => {
-  const cases: [string, unknown, ViolationCode[]][] = [
+  const cases: [string, ModelInput, ViolationCode[]][] = [
     ["a non-object", "not json", ["schema_invalid"]],
     ["an array", [], ["schema_invalid"]],
     [
@@ -320,6 +377,7 @@ describe("violations", () => {
       ["missing_uncertainty_reason"],
     ],
   ];
+
   it.each(cases)("rejects %s", (_name, input, expected) => {
     expect(violationsOf(input)).toEqual(expected);
   });
@@ -358,6 +416,7 @@ describe("violations", () => {
         { text: "y", evidence: [] },
       ],
     });
+
     expect(violationsOf(input)).toEqual([
       "missing_uncertainty_reason",
       "unknown_evidence_ref",
@@ -375,11 +434,14 @@ describe("gap rules", () => {
       run,
       NOW,
     );
-    return (out as { value: { gaps: string[] } }).value.gaps;
+
+    return storedResult(out).gaps;
   };
+
   const replace = (index: number, over: Partial<LedgerCall>) => {
     const ledger = fullLedger();
     ledger[index] = { ...ledger[index]!, ...over };
+
     return ledger;
   };
 
@@ -413,16 +475,33 @@ describe("gap rules", () => {
       ["occurrences_not_checked"],
     ],
   ];
+
   it.each(cases)("derives %s", (_code, ledger, expected) => {
     expect(gapsFor(ledger)).toEqual(expected);
   });
 
   it("derives no_tool_evidence when no call succeeded", () => {
-    const facts = {
-      advisory: { cvssScore: 5 },
+    const facts: Parameters<typeof deriveGaps>[1] = {
+      source: "snapshot",
+      findingId: "f-1",
+      purl: "pkg:pypi/django@3.0",
+      version: "3.0",
+      ecosystem: "PyPI",
+      scope: "required",
+      status: null,
       matchQuality: "confirmed",
-      status: "open",
-    } as never;
+      advisory: {
+        source: "osv",
+        sourceId: "GHSA-aaaa",
+        aliases: [],
+        summary: null,
+        cvssScore: 5,
+        cvssVersion: "3.1",
+      },
+      kevStatus: null,
+      priority: null,
+    };
+
     const failed: LedgerCall[] = [call("get_finding_risk", { outcome: "error" })];
     expect(deriveGaps(failed, facts)).toEqual([
       "no_tool_evidence",
@@ -438,6 +517,7 @@ describe("gap rules", () => {
         .slice(0, 1)
         .map((c) => ({ ...c, callNo: 1 })),
     ];
+
     expect(gapsFor(ledger)).toEqual(["related_findings_not_checked", "occurrences_not_checked"]);
   });
 });

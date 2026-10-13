@@ -15,7 +15,9 @@ export interface Named {
 export function switcherItems<T extends Named>(list: T[] | null, current: T): T[] {
   if (list === null) return [current];
   const capped = list.slice(0, SWITCHER_LIMIT);
+
   if (capped.some((item) => item.slug === current.slug)) return capped;
+
   return [...capped.slice(0, SWITCHER_LIMIT - 1), current];
 }
 
@@ -28,6 +30,7 @@ export interface NavItem {
 
 export function orgNav(orgSlug: string, role: "admin" | "member"): NavItem[] {
   const base = `/orgs/${encodeURIComponent(orgSlug)}`;
+
   return [
     { label: "Projects", href: base, exact: true },
     { label: "Members", href: `${base}/members` },
@@ -37,6 +40,7 @@ export function orgNav(orgSlug: string, role: "admin" | "member"): NavItem[] {
 
 export function projectNav(orgSlug: string, projectSlug: string): NavItem[] {
   const base = `/orgs/${encodeURIComponent(orgSlug)}/projects/${encodeURIComponent(projectSlug)}`;
+
   return [
     { label: "Overview", href: base, exact: true },
     { label: "Findings", href: `${base}/findings` },
@@ -55,12 +59,16 @@ export interface Crumb {
 }
 
 // Org-level sections under /orgs/<slug>/.
-const ORG_SECTIONS: Record<string, string> = { members: "Members", "audit-events": "Audit events" };
+const ORG_SECTIONS = new Map<string, string>([
+  ["members", "Members"],
+  ["audit-events", "Audit events"],
+]);
+
 // Project-level sections under /orgs/<slug>/projects/<project>/.
-const PROJECT_SECTIONS: Record<string, string> = {
-  findings: "Findings",
-  investigations: "Investigations",
-};
+const PROJECT_SECTIONS = new Map<string, string>([
+  ["findings", "Findings"],
+  ["investigations", "Investigations"],
+]);
 
 /**
  * Breadcrumb trail for a path. Names come only from the org and project the API returned; the
@@ -69,6 +77,7 @@ const PROJECT_SECTIONS: Record<string, string> = {
  */
 export function buildBreadcrumbs(pathname: string, org: Named | null, project?: Named): Crumb[] {
   const root: Crumb = { label: "Organizations", href: "/" };
+
   if (!org) return [{ label: root.label }];
   const orgHref = `/orgs/${encodeURIComponent(org.slug)}`;
   const rest = pathname.split("/").filter(Boolean).slice(2);
@@ -78,16 +87,22 @@ export function buildBreadcrumbs(pathname: string, org: Named | null, project?: 
   if (project) {
     const projectHref = `${orgHref}/projects/${encodeURIComponent(project.slug)}`;
     crumbs.push({ label: project.name, href: projectHref });
-    const section = PROJECT_SECTIONS[rest[2] ?? ""];
+    const section = PROJECT_SECTIONS.get(rest[2] ?? "");
+
     if (section) {
       crumbs.push({ label: section, href: `${projectHref}/${rest[2]}` });
+
       if (rest[2] === "findings" && rest[3]) last("Finding");
     }
   } else {
-    const section = ORG_SECTIONS[rest[0] ?? ""];
+    const section = ORG_SECTIONS.get(rest[0] ?? "");
+
     if (section) crumbs.push({ label: section, href: `${orgHref}/${rest[0]}` });
   }
+
   const tail = crumbs[crumbs.length - 1]!;
+
   if (tail.href) crumbs[crumbs.length - 1] = { label: tail.label };
+
   return crumbs;
 }

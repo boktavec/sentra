@@ -5,17 +5,13 @@ import { callApi } from "@/lib/auth";
 import {
   investigationsPath,
   listInvestigationFindings,
-  type Finding,
   type Investigation,
   type InvestigationResult,
   type Page,
 } from "@/lib/investigations";
 
 export async function moreFindings(orgId: string, slug: string, cursor: string) {
-  return listInvestigationFindings(orgId, slug, cursor) as Promise<
-    | { ok: true; data: Page<Finding>; status: number }
-    | { ok: false; status: number; correlationId: string; code?: string }
-  >;
+  return listInvestigationFindings(orgId, slug, cursor);
 }
 
 export async function runsForFinding(

@@ -1,4 +1,5 @@
 import { unavailable } from "@sentra/ts-platform";
+import { isString } from "./json.ts";
 
 export interface Profile {
   email?: string;
@@ -9,7 +10,12 @@ export interface Profile {
 /** Looks up the signed-in user's profile with their own access token. */
 export type ProfileFetcher = (accessToken: string) => Promise<Profile>;
 
-const str = (value: unknown) => (typeof value === "string" && value ? value : undefined);
+/** The OIDC userinfo claims this API reads; the endpoint is trusted for identity but not for field types. */
+interface Userinfo {
+  email?: unknown;
+  email_verified?: unknown;
+  name?: unknown;
+}
 
 /**
  * Zitadel access tokens carry no email or name, so the verified email comes from the OIDC userinfo
@@ -22,12 +28,16 @@ export function createProfileFetcher(issuer: string): ProfileFetcher {
         headers: { authorization: `Bearer ${accessToken}` },
         signal: AbortSignal.timeout(3000),
       });
+
       if (!res.ok) throw new Error(`userinfo returned ${res.status}`);
-      const body = (await res.json()) as Record<string, unknown>;
+      const body: Userinfo = await res.json();
+
+      const { email, name } = body;
+
       return {
-        email: str(body["email"])?.toLowerCase(),
-        emailVerified: body["email_verified"] === true,
-        name: str(body["name"]),
+        email: isString(email) && email ? email.toLowerCase() : undefined,
+        emailVerified: body.email_verified === true,
+        name: isString(name) && name ? name : undefined,
       };
     } catch (err) {
       throw unavailable("profile_fetch_failed", err);

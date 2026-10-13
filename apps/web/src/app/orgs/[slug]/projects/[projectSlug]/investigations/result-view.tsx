@@ -9,11 +9,13 @@ import {
 
 function SeverityValue({ advisory }: { advisory: ResultFacts["advisory"] }) {
   if (advisory.cvssScore === null) return "Severity unavailable";
+
   return `CVSS ${advisory.cvssScore.toFixed(1)}${advisory.cvssVersion ? ` (v${advisory.cvssVersion})` : ""}`;
 }
 
 function PriorityValue({ priority }: { priority: ResultFacts["priority"] }) {
   if (!priority) return "Not checked";
+
   return (
     <>
       <strong>{priorityLabel(priority)}</strong>
@@ -28,6 +30,7 @@ function PriorityValue({ priority }: { priority: ResultFacts["priority"] }) {
 
 function Facts({ facts }: { facts: ResultFacts }) {
   const { advisory } = facts;
+
   return (
     <section aria-labelledby="result-facts" data-testid="result-facts">
       <h3 id="result-facts">From your project and security data</h3>
@@ -143,6 +146,7 @@ export function ResultView({
   findingBase: string;
 }) {
   const { result } = data;
+
   return (
     <article data-testid="investigation-result">
       <Facts facts={result.facts} />

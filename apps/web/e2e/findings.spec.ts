@@ -7,8 +7,10 @@ const { Pool } = createRequire(new URL("../../api/package.json", import.meta.url
 
 async function seed(orgSlug: string, projectSlug: string) {
   const databaseUrl = process.env["DATABASE_URL"];
+
   if (!databaseUrl) throw new Error("DATABASE_URL is required for the findings browser test");
   const pool = new Pool({ connectionString: databaseUrl });
+
   try {
     const { rows } = await pool.query(
       `SELECT o.id AS org_id, p.id AS project_id, p.created_by
@@ -16,14 +18,18 @@ async function seed(orgSlug: string, projectSlug: string) {
        WHERE o.slug = $1 AND p.slug = $2`,
       [orgSlug, projectSlug],
     );
+
     const { org_id: orgId, project_id: projectId, created_by: userId } = rows[0];
+
     const imported = await pool.query(
       `INSERT INTO sbom_imports (org_id, project_id, created_by, filename, status, object_key, expires_at)
        VALUES ($1, $2, $3, 'findings.json', 'parsed', $4, now()) RETURNING id`,
       [orgId, projectId, userId, `findings-${randomUUID()}`],
     );
+
     const importId = imported.rows[0].id;
     const cve = `CVE-2026-${parseInt(randomUUID().replaceAll("-", "").slice(0, 8), 16)}`;
+
     const advisory = async (label: string, score: number | null, aliases: string[]) => {
       const result = await pool.query(
         `INSERT INTO vulnerabilities (source, source_id, aliases, summary, severity, cvss_score,
@@ -39,11 +45,14 @@ async function seed(orgSlug: string, projectSlug: string) {
           "a".repeat(64),
         ],
       );
-      return result.rows[0].id as string;
+
+      return result.rows[0].id;
     };
+
     const high = await advisory("Critical", 9.8, [cve]);
     const unknown = await advisory("Unknown", null, []);
     const resolved = await advisory("Resolved", 3.1, []);
+
     for (const [id, purl, status] of [
       [high, "pkg:pypi/critical@1.0", "open"],
       [unknown, "pkg:pypi/unknown@1.0", "open"],
@@ -58,6 +67,7 @@ async function seed(orgSlug: string, projectSlug: string) {
         [orgId, projectId, id, purl, importId, status],
       );
     }
+
     await pool.query(
       `INSERT INTO normalization_runs (artifact_sha256, source, ecosystem, adapter_version, status, correlation_id)
        VALUES ($1, 'cisa-kev', 'none', 1, 'published', $2)`,

@@ -1,11 +1,57 @@
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance } from "fastify";
 import { parseLimit, scopeTo, type Deps } from "./org-routes.ts";
 import type { FindingStore } from "./findings.ts";
 import { AppError } from "@sentra/ts-platform";
 import type { FindingQuery } from "./findings.ts";
 
-type Params = { orgId: string; slug: string };
-const params = (request: FastifyRequest) => request.params as Params;
+interface Params {
+  orgId: string;
+  slug: string;
+}
+
+interface FindingParams extends Params {
+  findingId: string;
+}
+
+interface ListQuery {
+  limit?: string;
+  cursor?: string;
+  status?: string;
+  severity?: string;
+  sort?: string;
+  priority?: string;
+}
+
+const STATUSES = ["open", "resolved", "all"] as const satisfies readonly FindingQuery["status"][];
+
+const SEVERITIES = [
+  "critical",
+  "high",
+  "medium",
+  "low",
+  "none",
+  "unavailable",
+  "all",
+] as const satisfies readonly FindingQuery["severity"][];
+
+const SORTS = ["priority", "severity", "newest"] as const satisfies readonly FindingQuery["sort"][];
+
+const PRIORITIES = [
+  "all",
+  "p1",
+  "p2",
+  "p3",
+  "p4",
+] as const satisfies readonly FindingQuery["priority"][];
+
+/** The allowed value equal to `value`, or an invalid_input error naming the query parameter. */
+function oneOf<T extends string>(allowed: readonly T[], value: string, reason: string): T {
+  const match = allowed.find((candidate) => candidate === value);
+
+  if (match === undefined) throw new AppError("invalid_input", 400, "Invalid input", { reason });
+
+  return match;
+}
 
 /**
  * Registers the findings list on an already-authenticated scope. Any org member may read it. Findings are
@@ -17,40 +63,33 @@ export function registerFindingsRoutes(
 ) {
   const scope = scopeTo(deps);
 
-  routes.get("/v1/orgs/:orgId/projects/:slug/findings", async (request) => {
-    await scope(request, { orgId: params(request).orgId });
-    const { limit, cursor, status, severity, sort, priority } = request.query as Record<
-      string,
-      string | undefined
-    >;
-    const statusValue = status ?? "open";
-    const severityValue = severity ?? "all";
-    const sortValue = sort ?? "priority";
-    const priorityValue = priority ?? "all";
-    if (!["open", "resolved", "all"].includes(statusValue))
-      throw new AppError("invalid_input", 400, "Invalid input", { reason: "status" });
-    if (
-      !["critical", "high", "medium", "low", "none", "unavailable", "all"].includes(severityValue)
-    )
-      throw new AppError("invalid_input", 400, "Invalid input", { reason: "severity" });
-    if (!["priority", "severity", "newest"].includes(sortValue))
-      throw new AppError("invalid_input", 400, "Invalid input", { reason: "sort" });
-    if (!["all", "p1", "p2", "p3", "p4"].includes(priorityValue))
-      throw new AppError("invalid_input", 400, "Invalid input", { reason: "priority" });
-    const query: FindingQuery = {
-      limit: parseLimit(limit),
-      cursor,
-      status: statusValue as FindingQuery["status"],
-      severity: severityValue as FindingQuery["severity"],
-      priority: priorityValue as FindingQuery["priority"],
-      sort: sortValue as FindingQuery["sort"],
-    };
-    return deps.findings.list(request.tenant!, params(request).slug, query);
-  });
+  routes.get<{ Params: Params; Querystring: ListQuery }>(
+    "/v1/orgs/:orgId/projects/:slug/findings",
+    async (request) => {
+      await scope(request, { orgId: request.params.orgId });
 
-  routes.get("/v1/orgs/:orgId/projects/:slug/findings/:findingId", async (request) => {
-    const { orgId, slug, findingId } = request.params as Params & { findingId: string };
-    await scope(request, { orgId });
-    return deps.findings.get(request.tenant!, slug, findingId);
-  });
+      const { limit, cursor, status, severity, sort, priority } = request.query;
+
+      const query: FindingQuery = {
+        status: oneOf(STATUSES, status ?? "open", "status"),
+        severity: oneOf(SEVERITIES, severity ?? "all", "severity"),
+        sort: oneOf(SORTS, sort ?? "priority", "sort"),
+        priority: oneOf(PRIORITIES, priority ?? "all", "priority"),
+        limit: parseLimit(limit),
+        cursor,
+      };
+
+      return deps.findings.list(request.tenant!, request.params.slug, query);
+    },
+  );
+
+  routes.get<{ Params: FindingParams }>(
+    "/v1/orgs/:orgId/projects/:slug/findings/:findingId",
+    async (request) => {
+      const { orgId, slug, findingId } = request.params;
+      await scope(request, { orgId });
+
+      return deps.findings.get(request.tenant!, slug, findingId);
+    },
+  );
 }

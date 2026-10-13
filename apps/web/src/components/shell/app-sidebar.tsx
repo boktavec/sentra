@@ -23,6 +23,7 @@ function NavList({ items, pathname }: { items: NavItem[]; pathname: string }) {
     <SidebarMenu>
       {items.map((item) => {
         const active = isActive(pathname, item);
+
         return (
           <SidebarMenuItem key={item.href}>
             <SidebarMenuButton asChild isActive={active}>
@@ -54,6 +55,7 @@ export function AppSidebar({
   const { setOpenMobile } = useSidebar();
   // The provider lives in the persistent layout, so the sheet would stay open across navigation.
   useEffect(() => setOpenMobile(false), [pathname, setOpenMobile]);
+
   return (
     <Sidebar>
       <SidebarHeader className="gap-1 p-3">

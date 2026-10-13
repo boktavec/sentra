@@ -1,11 +1,18 @@
+import type { SentMessageInfo } from "nodemailer";
 import type { Pool } from "pg";
 import type { Logger } from "@sentra/ts-platform";
+import { isJsonObject } from "./json.ts";
 import * as metrics from "./metrics.ts";
 import { createPoller } from "./poller.ts";
 
 /** What nodemailer's transporter offers; tests pass a real transporter pointed at Mailpit. */
 export interface MailTransport {
-  sendMail(mail: { from: string; to: string; subject: string; text: string }): Promise<unknown>;
+  sendMail(mail: {
+    from: string;
+    to: string;
+    subject: string;
+    text: string;
+  }): Promise<SentMessageInfo>;
 }
 
 export interface EmailSenderOptions {
@@ -30,13 +37,13 @@ interface Claimed {
 }
 
 const MAX_BACKOFF_SECONDS = 3600;
+
 const MAX_PER_TICK = 100;
 
 /** Only the error code: SMTP error text can contain the recipient's address. */
-const describeError = (err: unknown) => {
-  const { code, responseCode } = err as { code?: string; responseCode?: number };
-  return [code, responseCode].filter(Boolean).join(" ") || "send_failed";
-};
+const describeError = (cause: unknown) =>
+  (isJsonObject(cause) && [cause.code, cause.responseCode].filter(Boolean).join(" ")) ||
+  "send_failed";
 
 /**
  * Claims one due email without holding a lock while it is sent: a single UPDATE moves its
@@ -58,6 +65,7 @@ async function claim(pool: Pool, leaseSeconds: number) {
         WHERE id = e.invitation_id) AS deliverable`,
     [leaseSeconds],
   );
+
   return rows[0];
 }
 
@@ -66,12 +74,14 @@ async function refreshQueueGauges(pool: Pool) {
     `SELECT count(*)::int AS depth, extract(epoch FROM now() - min(created_at))::float AS oldest
      FROM invitation_emails WHERE status = 'pending'`,
   );
+
   metrics.setGauge("email_queue_depth", rows[0]!.depth);
   metrics.setGauge("email_oldest_pending_age_seconds", rows[0]!.oldest ?? 0);
 }
 
 export function createEmailSender(pool: Pool, options: EmailSenderOptions) {
   const { logger } = options;
+
   const finish = (id: string, status: "sent" | "cancelled" | "failed", error?: string) =>
     pool.query(
       `UPDATE invitation_emails
@@ -82,19 +92,23 @@ export function createEmailSender(pool: Pool, options: EmailSenderOptions) {
     );
 
   /** Sending was refused or failed: retry later with exponential backoff, or give up. */
-  async function failed(mail: Claimed, err: unknown) {
-    const reason = describeError(err);
+  async function failed(mail: Claimed, cause: unknown) {
+    const reason = describeError(cause);
     const ids = { emailId: mail.id, invitationId: mail.invitation_id, orgId: mail.org_id };
+
     if (mail.attempts >= options.maxAttempts) {
       await finish(mail.id, "failed", reason);
       metrics.inc("email_failed_total", { reason });
       logger.error({ ...ids, reason, attempts: mail.attempts }, "email_failed");
+
       return;
     }
+
     const delay = Math.min(
       options.backoffBaseSeconds * 2 ** (mail.attempts - 1),
       MAX_BACKOFF_SECONDS,
     );
+
     await pool.query(
       `UPDATE invitation_emails SET last_error = $2, next_attempt_at = now() + make_interval(secs => $3)
        WHERE id = $1`,
@@ -110,8 +124,10 @@ export function createEmailSender(pool: Pool, options: EmailSenderOptions) {
       await finish(mail.id, "cancelled");
       metrics.inc("email_cancelled_total");
       logger.info({ emailId: mail.id, invitationId: mail.invitation_id }, "email_cancelled");
+
       return;
     }
+
     try {
       await options.transport.sendMail({
         from: options.from,
@@ -121,8 +137,10 @@ export function createEmailSender(pool: Pool, options: EmailSenderOptions) {
       });
     } catch (err) {
       await failed(mail, err);
+
       return;
     }
+
     // If this update fails after the send, the lease expires and the email is sent again:
     // delivery is at-least-once, and a duplicate invitation email is harmless.
     await finish(mail.id, "sent");
@@ -136,19 +154,23 @@ export function createEmailSender(pool: Pool, options: EmailSenderOptions) {
   /** Delivers every due email (up to a cap) and returns how many it handled. */
   async function tick(): Promise<number> {
     let handled = 0;
+
     try {
       while (handled < MAX_PER_TICK) {
         const mail = await claim(pool, options.leaseSeconds);
+
         if (!mail) break;
         await deliver(mail);
         handled++;
       }
+
       await refreshQueueGauges(pool);
     } catch (err) {
       // The database was unreachable; the next tick tries again.
       metrics.inc("email_sender_errors_total");
       logger.error({ err: String(err) }, "email_sender_error");
     }
+
     return handled;
   }
 

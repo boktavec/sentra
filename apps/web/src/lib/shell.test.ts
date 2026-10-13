@@ -9,6 +9,7 @@ import {
 } from "./shell.ts";
 
 const item = (n: number) => ({ name: `Item ${n}`, slug: `item-${n}` });
+
 const many = Array.from({ length: 25 }, (_, i) => item(i));
 
 describe("switcherItems", () => {

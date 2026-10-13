@@ -13,6 +13,7 @@ export default async function ProjectPage({
 }) {
   const { slug, projectSlug } = await params;
   const org = await fetchOrg(slug);
+
   if (!org.ok) {
     return (
       <main>
@@ -22,7 +23,9 @@ export default async function ProjectPage({
       </main>
     );
   }
+
   const project = await fetchProject(org.data.id, projectSlug);
+
   if (!project.ok) {
     return (
       <main>

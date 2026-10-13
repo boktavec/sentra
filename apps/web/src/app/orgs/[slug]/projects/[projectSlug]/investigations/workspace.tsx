@@ -13,6 +13,7 @@ type Summary =
   | { runId: string; state: "ready"; data: InvestigationResult };
 
 const active = (run: Investigation) => run.status === "queued" || run.status === "running";
+
 const failureText = (code: string | null) =>
   ({
     provider_unavailable: "The local model was unavailable.",
@@ -122,6 +123,7 @@ function StartControl({
   start: () => void;
 }) {
   const disabled = finding.status !== "open" || busy || activeRun;
+
   return (
     <button type="button" disabled={disabled} onClick={start}>
       {busy ? "Starting…" : "Start investigation"}
@@ -131,9 +133,12 @@ function StartControl({
 
 function SummaryPanel({ summary, findingBase }: { summary: Summary; findingBase: string }) {
   if (summary.state === "loading") return <p>Loading summary…</p>;
+
   if (summary.state === "missing") return <p>No structured summary for this run.</p>;
+
   if (summary.state === "error")
     return <p role="alert">Could not load the summary. Reference: {summary.correlationId}</p>;
+
   return <ResultView data={summary.data} findingBase={findingBase} />;
 }
 
@@ -196,11 +201,14 @@ export function InvestigationWorkspace({
   const refresh = useCallback(
     async (findingId: string, initial = false) => {
       const result = await runsForFinding(orgId, projectSlug, findingId);
+
       if (result.ok) {
         setRuns((previous) => {
           const ids = new Set(result.data.items.map((r) => r.id));
+
           return [...result.data.items, ...previous.filter((r) => !ids.has(r.id))];
         });
+
         if (initial) setRunCursor(result.data.nextCursor);
       } else setError(`Could not load investigations. Reference: ${result.correlationId}`);
     },
@@ -210,6 +218,7 @@ export function InvestigationWorkspace({
   useEffect(() => {
     if (!selected || !runs.some(active)) return;
     const timer = setInterval(() => void refresh(selected.id), 3000);
+
     return () => clearInterval(timer);
   }, [selected, runs, refresh]);
 
@@ -227,6 +236,7 @@ export function InvestigationWorkspace({
     wantedRun.current = run.id;
     setSummary({ runId: run.id, state: "loading" });
     const result = await resultForRun(orgId, projectSlug, run.findingId, run.id);
+
     if (wantedRun.current !== run.id) return;
     setSummary(
       result.ok
@@ -241,16 +251,20 @@ export function InvestigationWorkspace({
     if (!selected) return;
     setBusy(true);
     setError(null);
+
     try {
       const result = await startInvestigation(orgId, projectSlug, selected.id);
+
       if (!result.ok) {
         setError(
           result.status === 429
             ? "This organization has too many investigations in progress."
             : `Could not start the investigation. Reference: ${result.correlationId}`,
         );
+
         return;
       }
+
       await refresh(selected.id);
     } finally {
       setBusy(false);
@@ -260,6 +274,7 @@ export function InvestigationWorkspace({
   async function loadMoreFindings() {
     if (!findingCursor) return;
     const result = await moreFindings(orgId, projectSlug, findingCursor);
+
     if (result.ok) {
       setFindings((items) => [...items, ...result.data.items]);
       setFindingCursor(result.data.nextCursor);
@@ -269,6 +284,7 @@ export function InvestigationWorkspace({
   async function loadMoreRuns() {
     if (!selected || !runCursor) return;
     const result = await runsForFinding(orgId, projectSlug, selected.id, runCursor);
+
     if (result.ok) {
       setRuns((items) => [...items, ...result.data.items]);
       setRunCursor(result.data.nextCursor);

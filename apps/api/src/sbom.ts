@@ -75,7 +75,9 @@ async function findImport(
     `SELECT ${COLUMNS} FROM sbom_imports WHERE id = $1 AND org_id = $2 AND project_id = $3`,
     [id, tenant.orgId, projectId],
   );
+
   if (!rows[0]) throw notFound("import_not_found");
+
   return rows[0];
 }
 
@@ -100,19 +102,24 @@ export function createSbomStore(
       input: { filename: string; sizeBytes: number },
     ) {
       const projectId = await findProject(pool, tenant, slug);
+
       const row = await inTransaction(pool, async (client) => {
         await client.query("SELECT 1 FROM projects WHERE id = $1 FOR NO KEY UPDATE", [projectId]);
+
         const pending = await client.query<{ n: number }>(
           `SELECT count(*)::int AS n FROM sbom_imports
            WHERE project_id = $1 AND status = 'pending_upload' AND expires_at > now()`,
           [projectId],
         );
+
         if (pending.rows[0]!.n >= limits.maxPendingPerProject) {
           throw new AppError("too_many_pending", 429, "Too many uploads in progress", {
             reason: "too_many_pending",
           });
         }
+
         const id = randomUUID();
+
         const { rows } = await client.query<ImportRow>(
           `INSERT INTO sbom_imports (id, org_id, project_id, created_by, filename, object_key, expires_at)
            VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(secs => $7))
@@ -127,14 +134,18 @@ export function createSbomStore(
             limits.uploadTtlSeconds,
           ],
         );
+
         return rows[0]!;
       });
+
       transition("pending_upload");
+
       const upload = await storage.signUpload(
         row.object_key,
         limits.maxBytes,
         limits.uploadTtlSeconds,
       );
+
       return { ...toImport(row), expiresAt: row.expires_at.toISOString(), upload };
     },
 
@@ -145,18 +156,23 @@ export function createSbomStore(
     async complete(tenant: TenantContext, slug: string, id: string, correlationId: string) {
       const projectId = await findProject(pool, tenant, slug);
       const current = await findImport(pool, tenant, projectId, id);
+
       if (current.status === "expired") {
         throw new AppError("expired", 409, "Upload expired", { reason: "expired" });
       }
+
       if (current.status !== "pending_upload") return toImport(current);
+
       if (current.expires_at.getTime() <= Date.now()) {
         throw new AppError("expired", 409, "Upload expired", { reason: "expired" });
       }
 
       const size = await storage.size(current.object_key);
+
       if (size === undefined) {
         throw new AppError("upload_missing", 409, "Upload not found", { reason: "upload_missing" });
       }
+
       if (size < 1 || size > limits.maxBytes) {
         await pool.query(
           `UPDATE sbom_imports SET status = 'rejected', reason_code = 'size', size_bytes = NULLIF($2, 0), updated_at = now()
@@ -174,6 +190,7 @@ export function createSbomStore(
            RETURNING ${COLUMNS}`,
           [id, size, tenant.orgId],
         );
+
         // Lost a race with a parallel complete: it did the work, so just report the state.
         if (!rows[0]) return undefined;
         await queueUploaded(client, tenant, rows[0], size, correlationId);
@@ -185,10 +202,13 @@ export function createSbomStore(
           targetType: "sbom_import",
           targetId: id,
         });
+
         return rows[0];
       });
+
       if (!row) return toImport(await findImport(pool, tenant, projectId, id));
       transition("uploaded");
+
       return toImport(row);
     },
 
@@ -201,11 +221,13 @@ export function createSbomStore(
          LIMIT $5`,
         await projectPageParams(pool, tenant, slug, limit, cursor),
       );
+
       return toPage(rows, limit, toImport);
     },
 
     async get(tenant: TenantContext, slug: string, id: string) {
       const projectId = await findProject(pool, tenant, slug);
+
       return toImport(await findImport(pool, tenant, projectId, id));
     },
 
@@ -220,18 +242,24 @@ export function createSbomStore(
          ORDER BY expires_at LIMIT $1`,
         [batch],
       );
+
       const done: string[] = [];
+
       for (const row of rows) {
         await storage.remove(row.object_key);
         done.push(row.id);
       }
+
       if (done.length === 0) return 0;
+
       const expired = await pool.query(
         `UPDATE sbom_imports SET status = 'expired', updated_at = now()
          WHERE id = ANY($1::uuid[]) AND status = 'pending_upload' AND expires_at <= now()`,
         [done],
       );
+
       for (let i = 0; i < (expired.rowCount ?? 0); i++) transition("expired");
+
       return expired.rowCount ?? 0;
     },
   };
@@ -245,6 +273,7 @@ export function createSbomStore(
     correlationId: string,
   ) {
     const eventId = randomUUID();
+
     const event = {
       eventId,
       type: "sbom.uploaded",
@@ -256,6 +285,7 @@ export function createSbomStore(
       projectId: row.project_id,
       artifact: { bucket: storage.bucket, key: row.object_key, sizeBytes: size },
     };
+
     return client.query(
       "INSERT INTO sbom_outbox (event_id, import_id, payload) VALUES ($1, $2, $3)",
       [eventId, row.id, event],

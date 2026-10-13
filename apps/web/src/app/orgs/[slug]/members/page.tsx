@@ -24,31 +24,37 @@ interface Invitation {
 
 type MemberPage = { items: Member[]; nextCursor: string | null };
 
-const MESSAGES: Record<string, string> = {
-  forbidden: "Only admins can do that.",
-  not_found: "That member no longer exists in this organization.",
-  last_admin: "An organization needs at least one admin.",
-  unavailable: "The service is temporarily unavailable. Try again.",
-};
+const MESSAGES = new Map<string, string>([
+  ["forbidden", "Only admins can do that."],
+  ["not_found", "That member no longer exists in this organization."],
+  ["last_admin", "An organization needs at least one admin."],
+  ["unavailable", "The service is temporarily unavailable. Try again."],
+]);
 
 const failure = (result: { correlationId: string }) => ({ failedWith: result.correlationId });
 
 async function loadMembers(orgId: string, cursor?: string) {
   const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+
   const [me, page] = await Promise.all([
     callApi((token) => apiGet<{ id: string }>("/v1/me", token)),
     callApi((token) => apiGet<MemberPage>(`/v1/orgs/${orgId}/members${query}`, token)),
   ]);
+
   return { me, page };
 }
 
 /** Loads what the page needs, or the correlation ID of the call that failed. */
 async function load(slug: string, cursor?: string) {
   const org = await fetchOrg(slug);
+
   if (!org.ok) return failure(org);
   const { me, page } = await loadMembers(org.data.id, cursor);
+
   if (!me.ok) return failure(me);
+
   if (!page.ok) return failure(page);
+
   return { org: org.data, youId: me.data.id, page: page.data };
 }
 
@@ -104,6 +110,7 @@ function LeaveForm({ org, member }: { org: Org; member: Member }) {
 /** Admins manage everyone (and can leave); members can only leave. The API enforces the same. */
 function Actions({ org, member, you }: { org: Org; member: Member; you: boolean }) {
   if (org.role !== "admin") return you ? <LeaveForm org={org} member={member} /> : null;
+
   return (
     <>
       <RoleForm org={org} member={member} />
@@ -114,6 +121,7 @@ function Actions({ org, member, you }: { org: Org; member: Member; you: boolean 
 
 function MemberRow({ org, member, youId }: { org: Org; member: Member; youId: string }) {
   const you = member.userId === youId;
+
   return (
     <tr data-testid="member-row" data-user-id={member.userId}>
       <td>
@@ -169,10 +177,13 @@ function PendingRow({ org, invitation }: { org: Org; invitation: Invitation }) {
 /** Admins only: invite someone and see (and revoke) pending invitations. */
 async function Invitations({ org }: { org: Org }) {
   if (org.role !== "admin") return null;
+
   const pending = await callApi((token) =>
     apiGet<{ items: Invitation[] }>(`/v1/orgs/${org.id}/invitations`, token),
   );
+
   const items = pending.ok ? pending.data.items : [];
+
   return (
     <section>
       <h2>Invite someone</h2>
@@ -200,9 +211,10 @@ async function Invitations({ org }: { org: Org }) {
 
 function ErrorNotice({ code }: { code?: string }) {
   if (!code) return null;
+
   return (
     <p role="alert" data-testid="members-error">
-      {MESSAGES[code] ?? MESSAGES["unavailable"]}
+      {MESSAGES.get(code) ?? MESSAGES.get("unavailable")}
     </p>
   );
 }
@@ -216,6 +228,7 @@ export default async function MembersPage({
 }) {
   const [{ slug }, { cursor, error }] = await Promise.all([params, searchParams]);
   const view = await load(slug, cursor);
+
   if ("failedWith" in view) {
     return (
       <main>

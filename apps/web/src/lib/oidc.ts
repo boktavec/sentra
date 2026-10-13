@@ -17,5 +17,6 @@ export function oidcConfig(): Promise<client.Configuration> {
       discovered = undefined;
       throw err;
     });
+
   return discovered;
 }

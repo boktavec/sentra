@@ -12,7 +12,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import {
   SEVERITY_LEVELS,
-  STATUS_LABELS,
+  STATUS_NAMES,
   type SeverityLevel,
   type StatusName,
 } from "@/lib/badge-status";
@@ -89,6 +89,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 export default function DevUiPage() {
   if (process.env.NODE_ENV === "production") notFound();
+
   return (
     <div className="mx-auto max-w-5xl p-6">
       <PageHeader
@@ -112,7 +113,7 @@ export default function DevUiPage() {
 
       <Section title="Status badges">
         <div className="flex flex-wrap gap-2">
-          {(Object.keys(STATUS_LABELS) as StatusName[]).map((status) => (
+          {STATUS_NAMES.map((status) => (
             <StatusBadge key={status} status={status} />
           ))}
         </div>

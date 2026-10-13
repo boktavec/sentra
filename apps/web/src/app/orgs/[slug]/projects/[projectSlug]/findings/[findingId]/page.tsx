@@ -22,6 +22,7 @@ export default async function FindingDetailPage({
 }) {
   const { slug, projectSlug, findingId } = await params;
   const scope = await fetchProjectScope(slug, projectSlug);
+
   if (!scope.ok)
     return (
       <main role="alert">
@@ -29,6 +30,7 @@ export default async function FindingDetailPage({
       </main>
     );
   const finding = await getFinding(scope.org.id, projectSlug, findingId);
+
   // Unknown, malformed and other-tenant IDs are the same 404, so they render the same page.
   if (!finding.ok)
     return finding.status === 404 ? (
@@ -37,5 +39,6 @@ export default async function FindingDetailPage({
       <FindingUnavailable correlationId={finding.correlationId} />
     );
   const base = `/orgs/${encodeURIComponent(slug)}/projects/${encodeURIComponent(projectSlug)}`;
+
   return <FindingDetailView finding={finding.data} base={base} projectName={scope.project.name} />;
 }

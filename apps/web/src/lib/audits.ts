@@ -2,6 +2,7 @@ import { apiGet } from "./api.ts";
 import { callApi } from "./auth.ts";
 
 export type AuditResult = "success" | "failed";
+
 interface AuditEvent {
   id: string;
   orgId: string;
@@ -14,7 +15,9 @@ interface AuditEvent {
   failureCode: string | null;
   correlationId: string | null;
 }
+
 type AuditPage = { items: AuditEvent[]; nextCursor: string | null };
+
 export type AuditFilters = Partial<{
   from: string;
   to: string;
@@ -25,13 +28,17 @@ export type AuditFilters = Partial<{
 
 export function auditEventsQuery(filters: AuditFilters, cursor?: string) {
   const params = new URLSearchParams();
+
   for (const [key, value] of Object.entries(filters)) if (value) params.set(key, value);
+
   if (cursor) params.set("cursor", cursor);
+
   return params.toString();
 }
 
 export function listAuditEvents(orgId: string, filters: AuditFilters, cursor?: string) {
   const query = auditEventsQuery(filters, cursor);
+
   return callApi((token) =>
     apiGet<AuditPage>(`/v1/orgs/${orgId}/audit-events${query ? `?${query}` : ""}`, token),
   );

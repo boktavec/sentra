@@ -14,17 +14,25 @@ import { createProjectStore } from "../src/projects.ts";
 import { createUserStore } from "../src/users.ts";
 
 const adminUrl = process.env["DATABASE_URL"];
+
 if (!adminUrl) throw new Error("DATABASE_URL is required");
+
 const scratch = `sentra15_bench_${randomUUID().replaceAll("-", "").slice(0, 8)}`;
+
 const url = new URL(adminUrl);
+
 url.pathname = `/${scratch}`;
+
 const admin = new Pool({ connectionString: adminUrl });
+
 let pool: Pool | undefined;
+
 let app: ReturnType<typeof buildApp> | undefined;
 
 interface ListBody {
   items: unknown[];
 }
+
 interface DetailBody {
   members: unknown[];
   membersTruncated: boolean;
@@ -40,22 +48,26 @@ try {
   await migrate(pool);
   const userStore = createUserStore(pool);
   const user = await userStore.resolve({ issuer: "bench", subject: "owner" });
+
   const org = (
     await pool.query<{ id: string }>(
       "INSERT INTO organizations (name, slug, created_by) VALUES ('Bench', 'bench', $1) RETURNING id",
       [user.id],
     )
   ).rows[0]!.id;
+
   await pool.query("INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'admin')", [
     org,
     user.id,
   ]);
+
   const project = (
     await pool.query<{ id: string }>(
       "INSERT INTO projects (org_id, name, slug, created_by) VALUES ($1, 'Bench', 'bench', $2) RETURNING id",
       [org, user.id],
     )
   ).rows[0]!.id;
+
   const importId = (
     await pool.query<{ id: string }>(
       `INSERT INTO sbom_imports (org_id, project_id, created_by, filename, status, object_key, expires_at)
@@ -63,6 +75,7 @@ try {
       [org, project, user.id],
     )
   ).rows[0]!.id;
+
   // A representative global corpus: findings use 5,000 advisories in two-member groups, a 100,000-row
   // filler of unrelated advisories sits beside them, and the KEV catalog lists 1,000 CVEs. A per-item
   // sequential scan of `vulnerabilities` would show up here; five advisories would hide it.
@@ -146,26 +159,32 @@ try {
     trustedProxies: false,
     authenticate: async (request) => {
       if (request.headers["x-test-user"] !== user.id) throw unauthenticated("missing_token");
+
       return user;
     },
   });
   const path = `/v1/orgs/${org}/projects/bench/findings`;
+
   const timeRequest = async (
     name: string,
     url: string,
     valid: (body: ListBody & DetailBody) => boolean,
   ) => {
     const start = performance.now();
+
     const response = await app!.inject({
       method: "GET",
       url,
       headers: { "x-test-user": user.id },
     });
+
     if (response.statusCode !== 200 || !valid(response.json())) {
       throw new Error(`${name} request failed: ${response.statusCode}`);
     }
+
     return performance.now() - start;
   };
+
   const measure = async (
     name: string,
     count: number,
@@ -173,10 +192,13 @@ try {
     valid: (body: ListBody & DetailBody) => boolean,
   ) => {
     const timings: number[] = [];
+
     for (let i = 0; i < 110; i++) {
       const elapsed = await timeRequest(name, url, valid);
+
       if (i >= 10) timings.push(elapsed);
     }
+
     timings.sort((a, b) => a - b);
     console.log(
       JSON.stringify({
@@ -190,6 +212,7 @@ try {
       }),
     );
   };
+
   // SENTRA-14: a fifth of the findings are KEV-listed and scopes are mixed, so every tier is populated.
   await measure("list sort=priority (default)", 25000, path, (body) => body.items.length === 50);
   await measure(
@@ -204,6 +227,7 @@ try {
     `${path}?sort=severity`,
     (body) => body.items.length === 50,
   );
+
   if (process.env["BENCH_EXPLAIN"]) {
     const { rows } = await pool.query<{ "QUERY PLAN": string }>(
       `EXPLAIN (ANALYZE, BUFFERS) ${findingSql({
@@ -214,6 +238,7 @@ try {
       })}`,
       [org, project],
     );
+
     console.log(rows.map((r) => r["QUERY PLAN"]).join("\n"));
   }
 
@@ -225,6 +250,7 @@ try {
      VALUES ($1, $2, $3, $4, 'pypi', 'bench-detail', '1.0', 'PyPI', 'required', 1)`,
     [importId, org, project, detailPurl],
   );
+
   const { rows: bigAdvisories } = await pool.query<{ id: string }>(
     `INSERT INTO vulnerabilities (source, source_id, aliases, modified_at, severity, details, refs,
        cvss_score, cvss_version, cvss_calculated_at, source_artifact_sha256, source_entry, schema_version, adapter_version)
@@ -236,6 +262,7 @@ try {
      FROM generate_series(1, 52) n RETURNING id`,
     ["a".repeat(64)],
   );
+
   const groupId = randomUUID();
   await pool.query(
     "INSERT INTO vulnerability_groups (id, canonical_vulnerability_id) VALUES ($1, $2)",
@@ -247,6 +274,7 @@ try {
      SELECT unnest($1::uuid[]), $2`,
     [ids, groupId],
   );
+
   const { rows: bigFindings } = await pool.query<{ id: string }>(
     `INSERT INTO findings (org_id, project_id, vulnerability_id, purl, version, ecosystem, scope,
        import_id, match_quality, matcher_version, evidence, first_seen_at)
@@ -256,6 +284,7 @@ try {
      FROM unnest($5::uuid[]) WITH ORDINALITY AS t(v, ord) RETURNING id`,
     [org, project, detailPurl, importId, ids],
   );
+
   await pool.query(
     `INSERT INTO vulnerability_affected (id, vulnerability_id, ecosystem, package_name, versions)
      SELECT gen_random_uuid(), v, 'PyPI', 'Bench_Detail',

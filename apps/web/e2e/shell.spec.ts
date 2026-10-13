@@ -103,11 +103,14 @@ test("a collapsed sidebar is out of the tab order", async ({ page, context }) =>
   ]);
   await page.reload();
   await expect(page.locator('[data-slot="sidebar-container"]')).toHaveAttribute("inert", "");
+
   for (let i = 0; i < 12; i++) {
     await page.keyboard.press("Tab");
+
     const insideNav = await page.evaluate(
       () => document.activeElement?.closest('[data-slot="sidebar-container"]') !== null,
     );
+
     expect(insideNav).toBe(false);
   }
 });
@@ -118,6 +121,7 @@ test("the shell degrades to a minimal frame when the API is unavailable", async 
   await signUp(page, `shell-down-${run}@example.com`);
   await createOrg(page, orgName, orgSlug);
   const unavailable = await startWebWithoutApi("node_modules/.cache/next-shell-api-down");
+
   try {
     for (const path of [`/orgs/${orgSlug}`, `/orgs/${orgSlug}/projects/web-app`]) {
       await page.goto(`${UNAVAILABLE_URL}${path}`);
