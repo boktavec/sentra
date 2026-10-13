@@ -3,7 +3,7 @@ import { callApi } from "./auth.ts";
 
 export type AuditResult = "success" | "failed";
 
-interface AuditEvent {
+export interface AuditEvent {
   id: string;
   orgId: string;
   actorUserId: string;
@@ -43,3 +43,15 @@ export function listAuditEvents(orgId: string, filters: AuditFilters, cursor?: s
     apiGet<AuditPage>(`/v1/orgs/${orgId}/audit-events${query ? `?${query}` : ""}`, token),
   );
 }
+
+const SHORT_ID_LENGTH = 8;
+
+export const shortId = (id: string) => id.slice(0, SHORT_ID_LENGTH);
+
+/** "You" for the signed-in user, else the short ID; `youId` is undefined when `/v1/me` failed. */
+export const actorLabel = (actorUserId: string, youId?: string) =>
+  actorUserId === youId ? "You" : shortId(actorUserId);
+
+/** The API rejected the filters (a bad cursor, for example): user input, not an outage. */
+export const isRejectedFilters = (result: { ok: boolean; status: number; code?: string }) =>
+  !result.ok && result.status === 400 && result.code === "invalid_input";

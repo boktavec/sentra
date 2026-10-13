@@ -1,5 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { expect, type Page } from "@playwright/test";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { expect, type Browser, type Page } from "@playwright/test";
 
 const MAILPIT = "http://localhost:8025";
 
@@ -118,3 +118,26 @@ export const screenshotPath = (feature: string, name: string) =>
   process.env["SENTRA_E2E_DOC_SCREENSHOTS"] === "1"
     ? `../../docs/features/${feature}/screenshots/${name}`
     : `test-results/screenshots/${feature}/${name}`;
+
+const PG_CONTAINER = process.env["SENTRA_PG_CONTAINER"] ?? "sentra-sentra-postgres-1";
+
+export function psql(sql: string) {
+  execFileSync("docker", ["exec", PG_CONTAINER, "psql", "-U", "sentra", "-d", "sentra", "-c", sql]);
+}
+
+/** Invitations are a later story, so the second user is added to the org with SQL. */
+export const seedMember = (slug: string, userId: string) =>
+  psql(`INSERT INTO memberships (org_id, user_id, role)
+    SELECT id, '${userId}', 'member' FROM organizations WHERE slug = '${slug}'
+    ON CONFLICT DO NOTHING`);
+
+export const signedInUserId = async (page: Page) =>
+  (await page.getByTestId("user-id").textContent())!;
+
+export async function newSession(browser: Browser, email: string) {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await signUp(page, email);
+
+  return { context, page };
+}

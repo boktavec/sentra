@@ -1,4 +1,5 @@
 import { DataTable, type Column } from "@/components/data-table";
+import { LocalTime } from "@/components/local-time";
 import { ErrorState } from "@/components/error-state";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -7,6 +8,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { Button } from "@/components/ui/button";
 import { apiGet } from "@/lib/api";
 import { callApi } from "@/lib/auth";
+import { fetchMe } from "@/lib/me";
 import { fetchOrg, type Org } from "@/lib/orgs";
 import { changeRole, leaveOrganization, removeMember, revokeInvitation } from "./actions";
 import { InviteDialog } from "./invite-dialog";
@@ -43,7 +45,7 @@ async function loadMembers(orgId: string, cursor?: string) {
   const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
 
   const [me, page] = await Promise.all([
-    callApi((token) => apiGet<{ id: string }>("/v1/me", token)),
+    fetchMe(),
     callApi((token) => apiGet<MemberPage>(`/v1/orgs/${orgId}/members${query}`, token)),
   ]);
 
@@ -202,9 +204,6 @@ function memberColumns(org: Org, youId: string): Column<Member>[] {
   ];
 }
 
-/** The Invitations section has no LocalTime yet (SENTRA-36 PR3); a fixed UTC format is hydration-safe. */
-const utcDateTime = (iso: string) => `${iso.slice(0, 16).replace("T", " ")} UTC`;
-
 function RevokeForm({ org, invitation }: { org: Org; invitation: Invitation }) {
   return (
     <ActionForm org={org} hidden={{ invitationId: invitation.id }} action={revokeInvitation}>
@@ -240,12 +239,10 @@ function invitationColumns(org: Org): Column<Invitation>[] {
       header: "Expires",
       className: "max-sm:order-3 max-sm:text-muted-foreground",
       cell: (invitation) => (
-        <time
-          dateTime={invitation.expiresAt}
+        <LocalTime
+          iso={invitation.expiresAt}
           className="whitespace-nowrap tabular-nums max-sm:whitespace-normal"
-        >
-          {utcDateTime(invitation.expiresAt)}
-        </time>
+        />
       ),
     },
     {

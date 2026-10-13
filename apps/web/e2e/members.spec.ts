@@ -1,12 +1,13 @@
-import { execFileSync } from "node:child_process";
-import { expect, test, type Browser, type Page } from "@playwright/test";
-import { createOrg, signUp, screenshotPath } from "./helpers";
-
-const PG_CONTAINER = process.env["SENTRA_PG_CONTAINER"] ?? "sentra-sentra-postgres-1";
-
-function psql(sql: string) {
-  execFileSync("docker", ["exec", PG_CONTAINER, "psql", "-U", "sentra", "-d", "sentra", "-c", sql]);
-}
+import { expect, test, type Page } from "@playwright/test";
+import {
+  createOrg,
+  newSession,
+  psql,
+  screenshotPath,
+  seedMember,
+  signUp,
+  signedInUserId,
+} from "./helpers";
 
 /**
  * Zitadel access tokens carry no email or name today, so the API stores neither; give the user a
@@ -14,14 +15,6 @@ function psql(sql: string) {
  */
 const setProfile = (userId: string, email: string, name: string) =>
   psql(`UPDATE users SET email = '${email}', name = '${name}' WHERE id = '${userId}'`);
-
-/** Invitations are a later story, so the second user is added to the org with SQL. */
-const seedMember = (slug: string, userId: string) =>
-  psql(`INSERT INTO memberships (org_id, user_id, role)
-    SELECT id, '${userId}', 'member' FROM organizations WHERE slug = '${slug}'
-    ON CONFLICT DO NOTHING`);
-
-const signedInUserId = async (page: Page) => (await page.getByTestId("user-id").textContent())!;
 
 const row = (page: Page, email: string) =>
   page.getByTestId("member-row").filter({ hasText: email });
@@ -31,14 +24,6 @@ const confirmDialog = (page: Page) => page.getByRole("alertdialog");
 /** The row button and the dialog's confirm share a name, so the confirm is scoped to the dialog. */
 async function confirm(page: Page, name: "Remove" | "Leave") {
   await confirmDialog(page).getByRole("button", { name, exact: true }).click();
-}
-
-async function newSession(browser: Browser, email: string) {
-  const context = await browser.newContext();
-  const page = await context.newPage();
-  await signUp(page, email);
-
-  return { context, page };
 }
 
 test("admin manages members; a member sees less and can leave; the last admin is protected", async ({

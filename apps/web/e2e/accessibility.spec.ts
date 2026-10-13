@@ -138,4 +138,26 @@ test.describe("accessibility (WCAG 2 A/AA)", () => {
       await expectNoViolationsOnceSettled(page, confirmation);
     });
   }
+
+  // Audit events: the populated table, the filter form, and the validation alert.
+  for (const theme of ["light", "dark"] as const) {
+    test(`the audit events page has no violations in ${theme} theme`, async ({ page, context }) => {
+      const run = Date.now().toString(36);
+      const slug = `axe-audit-${theme}-${run}`;
+      await signUp(page, `axe-audit-${theme}-${run}@example.com`);
+      await createOrg(page, `Axe Audit ${run}`, slug);
+      await context.addCookies([
+        { name: "sentra-theme", value: theme, url: "http://localhost:3000" },
+      ]);
+      await page.goto(`/orgs/${slug}/audit-events?result=success`);
+      await expect(page.getByTestId("audit-events")).toBeVisible();
+      await expect(page.locator("html")).toHaveClass(new RegExp(theme));
+      await expectNoViolations(page);
+
+      await page.setViewportSize({ width: 320, height: 700 });
+      await page.goto(`/orgs/${slug}/audit-events?from=nope&actorId=x`);
+      await expect(page.getByTestId("audit-filter-error")).toBeVisible();
+      await expectNoViolations(page);
+    });
+  }
 });
