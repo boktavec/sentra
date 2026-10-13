@@ -26,6 +26,13 @@ const signedInUserId = async (page: Page) => (await page.getByTestId("user-id").
 const row = (page: Page, email: string) =>
   page.getByTestId("member-row").filter({ hasText: email });
 
+const confirmDialog = (page: Page) => page.getByRole("alertdialog");
+
+/** The row button and the dialog's confirm share a name, so the confirm is scoped to the dialog. */
+async function confirm(page: Page, name: "Remove" | "Leave") {
+  await confirmDialog(page).getByRole("button", { name, exact: true }).click();
+}
+
 async function newSession(browser: Browser, email: string) {
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -89,8 +96,17 @@ test("admin manages members; a member sees less and can leave; the last admin is
     path: screenshotPath("SENTRA-3-roles-and-membership", "3-member-view.png"),
   });
 
+  // Cancelling Leave submits nothing and returns focus to the row button.
+  await member.getByRole("button", { name: "Leave" }).click();
+  await expect(confirmDialog(member)).toContainText(`Leave Team ${run}?`);
+  await confirmDialog(member).getByRole("button", { name: "Cancel" }).click();
+  await expect(confirmDialog(member)).toHaveCount(0);
+  await expect(member.getByRole("button", { name: "Leave" })).toBeFocused();
+  await expect(member.getByTestId("member-row")).toHaveCount(2);
+
   // The member leaves and is back on a home page with no organizations.
   await member.getByRole("button", { name: "Leave" }).click();
+  await confirm(member, "Leave");
   await expect(member).toHaveURL("http://localhost:3000/");
   await expect(member.getByTestId("no-orgs")).toBeVisible();
   await admin.reload();
@@ -98,8 +114,20 @@ test("admin manages members; a member sees less and can leave; the last admin is
 
   // Re-added, then removed by the admin: the member loses access immediately.
   seedMember(slug, memberId);
-  await admin.reload();
+  // Back to the bare URL: the failed demotion left `?error=` behind, and its banner would show.
+  await admin.goto(`/orgs/${slug}/members`);
   await row(admin, memberEmail).getByRole("button", { name: "Remove" }).click();
+  await expect(confirmDialog(admin)).toContainText("Mel Member");
+  await confirmDialog(admin).evaluate((el) =>
+    Promise.all(el.getAnimations().map((a) => a.finished)),
+  );
+  await admin.screenshot({
+    path: screenshotPath("SENTRA-36-ui-org-pages", "members-confirm-remove.png"),
+  });
+  await confirmDialog(admin).getByRole("button", { name: "Cancel" }).click();
+  await expect(admin.getByTestId("member-row")).toHaveCount(2);
+  await row(admin, memberEmail).getByRole("button", { name: "Remove" }).click();
+  await confirm(admin, "Remove");
   await expect(admin.getByTestId("member-row")).toHaveCount(1);
   const gone = await member.goto(`/orgs/${slug}/members`);
   expect(gone?.status()).toBe(404);
@@ -108,4 +136,38 @@ test("admin manages members; a member sees less and can leave; the last admin is
   });
 
   await memberContext.close();
+});
+
+test("without JavaScript, Remove submits directly with no confirmation", async ({
+  page: admin,
+  browser,
+}) => {
+  const run = Date.now().toString(36);
+  const slug = `nojs-${run}`;
+  const [adminEmail, memberEmail] = [
+    `nojs-admin-${run}@example.com`,
+    `nojs-user-${run}@example.com`,
+  ];
+
+  await signUp(admin, adminEmail);
+  await createOrg(admin, `NoJS ${run}`, slug);
+  const { context: memberContext, page: member } = await newSession(browser, memberEmail);
+  const memberId = await signedInUserId(member);
+  setProfile(memberId, memberEmail, "Nora NoJs");
+  seedMember(slug, memberId);
+  await memberContext.close();
+
+  // The same session, with JavaScript off: nothing hydrates, so the button is a plain submit.
+  const noJs = await browser.newContext({
+    javaScriptEnabled: false,
+    storageState: await admin.context().storageState(),
+  });
+
+  const page = await noJs.newPage();
+  await page.goto(`/orgs/${slug}/members`);
+  await expect(page.getByTestId("member-row")).toHaveCount(2);
+  await row(page, memberEmail).getByRole("button", { name: "Remove" }).click();
+  await expect(page.getByTestId("member-row")).toHaveCount(1);
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await noJs.close();
 });

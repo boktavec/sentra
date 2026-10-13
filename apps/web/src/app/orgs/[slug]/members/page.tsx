@@ -1,10 +1,15 @@
-import Link from "next/link";
-import { LegacyPage } from "@/components/shell/legacy-page";
+import { DataTable, type Column } from "@/components/data-table";
+import { ErrorState } from "@/components/error-state";
+import { PageHeader } from "@/components/page-header";
+import { Badge } from "@/components/ui/badge";
+import { ConfirmSubmit } from "@/components/confirm-submit";
+import { NativeSelect } from "@/components/ui/native-select";
+import { Button } from "@/components/ui/button";
 import { apiGet } from "@/lib/api";
 import { callApi } from "@/lib/auth";
 import { fetchOrg, type Org } from "@/lib/orgs";
 import { changeRole, leaveOrganization, removeMember, revokeInvitation } from "./actions";
-import { InviteForm } from "./invite-form";
+import { InviteDialog } from "./invite-dialog";
 
 export const dynamic = "force-dynamic";
 
@@ -59,51 +64,78 @@ async function load(slug: string, cursor?: string) {
   return { org: org.data, youId: me.data.id, page: page.data };
 }
 
-/** The form fields every member action needs. The server re-checks everything. */
-function ActionForm(props: {
+/** The form fields every row action needs. The server re-checks everything. */
+function ActionForm({
+  org,
+  hidden,
+  action,
+  className,
+  children,
+}: {
   org: Org;
-  member: Member;
+  hidden: Record<string, string>;
   action: (form: FormData) => Promise<void>;
+  className?: string;
   children: React.ReactNode;
 }) {
   return (
-    <form action={props.action}>
-      <input type="hidden" name="orgId" value={props.org.id} />
-      <input type="hidden" name="slug" value={props.org.slug} />
-      <input type="hidden" name="userId" value={props.member.userId} />
-      {props.children}
+    <form action={action} className={className}>
+      <input type="hidden" name="orgId" value={org.id} />
+      <input type="hidden" name="slug" value={org.slug} />
+      {Object.entries(hidden).map(([name, value]) => (
+        <input key={name} type="hidden" name={name} value={value} />
+      ))}
+      {children}
     </form>
   );
 }
 
 function RoleForm({ org, member }: { org: Org; member: Member }) {
   return (
-    <ActionForm org={org} member={member} action={changeRole}>
-      <select
+    <ActionForm
+      org={org}
+      hidden={{ userId: member.userId }}
+      action={changeRole}
+      className="flex items-center gap-2"
+    >
+      <NativeSelect
         name="role"
         defaultValue={member.role}
         aria-label={`Role for ${member.name ?? "member"}`}
+        className="h-8"
       >
         <option value="admin">admin</option>
         <option value="member">member</option>
-      </select>{" "}
-      <button type="submit">Change role</button>
+      </NativeSelect>
+      <Button type="submit" variant="outline" size="sm">
+        Change role
+      </Button>
     </ActionForm>
   );
 }
 
 function RemoveForm({ org, member }: { org: Org; member: Member }) {
+  const who = member.name ?? member.email ?? "this member";
+
   return (
-    <ActionForm org={org} member={member} action={removeMember}>
-      <button type="submit">Remove</button>
+    <ActionForm org={org} hidden={{ userId: member.userId }} action={removeMember}>
+      <ConfirmSubmit
+        label="Remove"
+        title={`Remove ${who}?`}
+        description={`They will lose access to ${org.name} immediately. You can invite them again.`}
+      />
     </ActionForm>
   );
 }
 
 function LeaveForm({ org, member }: { org: Org; member: Member }) {
   return (
-    <ActionForm org={org} member={member} action={leaveOrganization}>
-      <button type="submit">Leave</button>
+    <ActionForm org={org} hidden={{ userId: member.userId }} action={leaveOrganization}>
+      <ConfirmSubmit
+        label="Leave"
+        title={`Leave ${org.name}?`}
+        description="You will lose access immediately and need a new invitation to return."
+      />
     </ActionForm>
   );
 }
@@ -113,69 +145,123 @@ function Actions({ org, member, you }: { org: Org; member: Member; you: boolean 
   if (org.role !== "admin") return you ? <LeaveForm org={org} member={member} /> : null;
 
   return (
-    <>
+    <div className="flex items-center justify-end gap-2 max-sm:flex-wrap max-sm:justify-start">
       <RoleForm org={org} member={member} />
       {you ? <LeaveForm org={org} member={member} /> : <RemoveForm org={org} member={member} />}
-    </>
+    </div>
   );
 }
 
-function MemberRow({ org, member, youId }: { org: Org; member: Member; youId: string }) {
-  const you = member.userId === youId;
+function memberColumns(org: Org, youId: string): Column<Member>[] {
+  const isAdmin = org.role === "admin";
 
+  return [
+    {
+      key: "name",
+      header: "Name",
+      className: "max-sm:order-1 max-sm:col-span-2",
+      cell: (member) => (
+        <span className="flex items-baseline gap-1.5">
+          <span className="max-w-[28ch] truncate" title={member.name ?? undefined}>
+            {member.name ?? "(no name)"}
+          </span>
+          {member.userId === youId && <span className="text-muted-foreground">(you)</span>}
+        </span>
+      ),
+    },
+    ...(isAdmin
+      ? [
+          {
+            key: "email",
+            header: "Email",
+            className: "max-sm:order-3 max-sm:col-span-3 max-sm:text-muted-foreground",
+            cell: (member: Member) => (
+              <span className="block max-w-[28ch] truncate" title={member.email ?? undefined}>
+                {member.email}
+              </span>
+            ),
+          },
+        ]
+      : []),
+    {
+      key: "role",
+      header: "Role",
+      className: "max-sm:order-2 max-sm:justify-self-end",
+      cell: (member) => (
+        <Badge variant="outline" data-testid="member-role">
+          {member.role}
+        </Badge>
+      ),
+    },
+    {
+      key: "actions",
+      header: <span className="sr-only">Actions</span>,
+      className: "max-sm:order-4 max-sm:col-span-3",
+      cell: (member) => <Actions org={org} member={member} you={member.userId === youId} />,
+    },
+  ];
+}
+
+/** The Invitations section has no LocalTime yet (SENTRA-36 PR3); a fixed UTC format is hydration-safe. */
+const utcDateTime = (iso: string) => `${iso.slice(0, 16).replace("T", " ")} UTC`;
+
+function RevokeForm({ org, invitation }: { org: Org; invitation: Invitation }) {
   return (
-    <tr data-testid="member-row" data-user-id={member.userId}>
-      <td>
-        {member.name ?? "(no name)"} {you && <em>(you)</em>}
-      </td>
-      {org.role === "admin" && <td>{member.email}</td>}
-      <td data-testid="member-role">{member.role}</td>
-      <td>
-        <Actions org={org} member={member} you={you} />
-      </td>
-    </tr>
+    <ActionForm org={org} hidden={{ invitationId: invitation.id }} action={revokeInvitation}>
+      <ConfirmSubmit
+        label="Revoke"
+        title={`Revoke invitation for ${invitation.email}?`}
+        description="The invitation link stops working. You can send a new invitation."
+      />
+    </ActionForm>
   );
 }
 
-function MembersTable({ org, page, youId }: { org: Org; page: MemberPage; youId: string }) {
-  return (
-    <table data-testid="members">
-      <thead>
-        <tr>
-          <th>Name</th>
-          {org.role === "admin" && <th>Email</th>}
-          <th>Role</th>
-          <th />
-        </tr>
-      </thead>
-      <tbody>
-        {page.items.map((member) => (
-          <MemberRow key={member.userId} org={org} member={member} youId={youId} />
-        ))}
-      </tbody>
-    </table>
-  );
+function invitationColumns(org: Org): Column<Invitation>[] {
+  return [
+    {
+      key: "email",
+      header: "Email",
+      className: "max-sm:order-1 max-sm:col-span-3",
+      cell: (invitation) => (
+        <span className="block max-w-[28ch] truncate" title={invitation.email}>
+          {invitation.email}
+        </span>
+      ),
+    },
+    {
+      key: "role",
+      header: "Role",
+      className: "max-sm:order-2",
+      cell: (invitation) => <Badge variant="outline">{invitation.role}</Badge>,
+    },
+    {
+      key: "expires",
+      header: "Expires",
+      className: "max-sm:order-3 max-sm:text-muted-foreground",
+      cell: (invitation) => (
+        <time
+          dateTime={invitation.expiresAt}
+          className="whitespace-nowrap tabular-nums max-sm:whitespace-normal"
+        >
+          {utcDateTime(invitation.expiresAt)}
+        </time>
+      ),
+    },
+    {
+      key: "actions",
+      header: <span className="sr-only">Actions</span>,
+      className: "max-sm:order-4",
+      cell: (invitation) => (
+        <div className="flex justify-end">
+          <RevokeForm org={org} invitation={invitation} />
+        </div>
+      ),
+    },
+  ];
 }
 
-function PendingRow({ org, invitation }: { org: Org; invitation: Invitation }) {
-  return (
-    <tr data-testid="invitation-row">
-      <td>{invitation.email}</td>
-      <td>{invitation.role}</td>
-      <td>{new Date(invitation.expiresAt).toLocaleDateString("en-US")}</td>
-      <td>
-        <form action={revokeInvitation}>
-          <input type="hidden" name="orgId" value={org.id} />
-          <input type="hidden" name="slug" value={org.slug} />
-          <input type="hidden" name="invitationId" value={invitation.id} />
-          <button type="submit">Revoke</button>
-        </form>
-      </td>
-    </tr>
-  );
-}
-
-/** Admins only: invite someone and see (and revoke) pending invitations. */
+/** Admins only: pending invitations, hidden when there are none. */
 async function Invitations({ org }: { org: Org }) {
   if (org.role !== "admin") return null;
 
@@ -183,40 +269,46 @@ async function Invitations({ org }: { org: Org }) {
     apiGet<{ items: Invitation[] }>(`/v1/orgs/${org.id}/invitations`, token),
   );
 
-  const items = pending.ok ? pending.data.items : [];
+  if (!pending.ok)
+    return (
+      <section className="mt-8">
+        <ErrorState
+          testId="invitations-error"
+          title="Could not load pending invitations"
+          message="Members are unaffected. Try again shortly."
+          correlationId={pending.correlationId}
+        />
+      </section>
+    );
+
+  if (pending.data.items.length === 0) return null;
 
   return (
-    <section>
-      <h2>Invite someone</h2>
-      <InviteForm orgId={org.id} slug={org.slug} />
-      {items.length > 0 && (
-        <table data-testid="invitations">
-          <thead>
-            <tr>
-              <th>Pending invitation</th>
-              <th>Role</th>
-              <th>Expires</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((invitation) => (
-              <PendingRow key={invitation.id} org={org} invitation={invitation} />
-            ))}
-          </tbody>
-        </table>
-      )}
+    <section className="mt-8">
+      <h2 className="mb-3 text-base font-semibold">Pending invitations</h2>
+      <DataTable
+        testId="invitations"
+        rows={pending.data.items}
+        rowKey={(invitation) => invitation.id}
+        rowProps={() => ({ "data-testid": "invitation-row" })}
+        columns={invitationColumns(org)}
+        stackedRow="max-sm:grid-cols-[auto_1fr_auto]"
+      />
     </section>
   );
 }
 
-function ErrorNotice({ code }: { code?: string }) {
+function ActionError({ code }: { code?: string }) {
   if (!code) return null;
 
   return (
-    <p role="alert" data-testid="members-error">
-      {MESSAGES.get(code) ?? MESSAGES.get("unavailable")}
-    </p>
+    <div className="mb-4">
+      <ErrorState
+        testId="members-error"
+        title="That did not work"
+        message={MESSAGES.get(code) ?? MESSAGES.get("unavailable")!}
+      />
+    </div>
   );
 }
 
@@ -230,30 +322,36 @@ export default async function MembersPage({
   const [{ slug }, { cursor, error }] = await Promise.all([params, searchParams]);
   const view = await load(slug, cursor);
 
-  if ("failedWith" in view) {
+  if ("failedWith" in view)
     return (
-      <LegacyPage>
-        <p data-testid="api-unavailable">
-          The service is temporarily unavailable. Reference: {view.failedWith}
-        </p>
-      </LegacyPage>
+      <ErrorState
+        testId="api-unavailable"
+        title="The service is temporarily unavailable"
+        message="Try again shortly."
+        correlationId={view.failedWith}
+      />
     );
-  }
+
+  const { org, page, youId } = view;
 
   return (
-    <LegacyPage>
-      <p>
-        <Link href={`/orgs/${view.org.slug}`}>{view.org.name}</Link>
-      </p>
-      <h1>Members</h1>
-      <ErrorNotice code={error} />
-      <MembersTable org={view.org} page={view.page} youId={view.youId} />
-      <Invitations org={view.org} />
-      {view.page.nextCursor && (
-        <p>
-          <Link href={`?cursor=${encodeURIComponent(view.page.nextCursor)}`}>More members</Link>
-        </p>
-      )}
-    </LegacyPage>
+    <>
+      <PageHeader
+        title="Members"
+        actions={org.role === "admin" && <InviteDialog orgId={org.id} slug={org.slug} />}
+      />
+      <ActionError code={error} />
+      <DataTable
+        testId="members"
+        rows={page.items}
+        rowKey={(member) => member.userId}
+        rowProps={(member) => ({ "data-testid": "member-row", "data-user-id": member.userId })}
+        columns={memberColumns(org, youId)}
+        stackedRow="max-sm:grid-cols-[1fr_auto_auto]"
+        loadMoreLabel="More members"
+        loadMoreHref={page.nextCursor ? `?cursor=${encodeURIComponent(page.nextCursor)}` : null}
+      />
+      <Invitations org={org} />
+    </>
   );
 }

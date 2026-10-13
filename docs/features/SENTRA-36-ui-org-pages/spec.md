@@ -143,7 +143,7 @@ Done means:
 | Hydration | `LocalTime` server and first client render are identical (UTC text); local text applied in an effect | No hydration warnings in the browser console (manual); Playwright console check |
 | No-JS project creation / invitations | Dialog cannot open; the triggers do nothing | Known limitation, documented |
 | No-JS Remove/Leave/Revoke | Submits directly without confirmation (same as today) | Manual check in a JS-disabled context |
-| Narrow viewport | Header actions wrap; Sign out is icon-only below `sm` with the name "Sign out"; tables scroll horizontally; dialogs fit the viewport | Manual + mobile screenshot |
+| Narrow viewport | Header actions wrap; Sign out is icon-only below `sm` with the name "Sign out"; members and invitations tables stack rows below `sm` (no horizontal scroll); dialogs fit the viewport | Manual + mobile screenshot |
 | Very long names/emails | Truncate with `title` in tables and headers; dialogs wrap | Manual |
 
 ## Security, observability, and rollout
@@ -172,7 +172,7 @@ PR2 (members):
 - [ ] Members render in a `DataTable` with the existing test IDs, "(you)" marker, admin-only Email column and role controls.
 - [ ] Remove, Leave and Revoke open an `AlertDialog` naming the target and consequence; Cancel submits nothing and returns focus; without JS they submit directly.
 - [ ] Admins see "Invite member", which opens a dialog (Email, Invitation role, Invite); errors show `invite-error`; success shows `invite-link-box`/`invite-link`, "Copy link" with an announced status, "Shown only once" and "Done"; Esc and outside-click do not close it while the link is shown.
-- [ ] Pending invitations show in `invitations`/`invitation-row` with local-time expiry; a load failure shows an inline `ErrorState` with a reference while the members table still works.
+- [ ] Pending invitations show in `invitations`/`invitation-row` with expiry (fixed UTC text in PR2; local time via `LocalTime` in PR3); a load failure shows an inline `ErrorState` with a reference while the members table still works.
 - [ ] Non-admins see no Email column, no admin actions, no "Invite member", and one "Leave".
 
 PR3 (audit events):
@@ -316,3 +316,23 @@ Sources: Refero (invite dialogs, remove confirms, audit logs, members tables), t
 - Other e2e specs that created a project through the org page gained one "New project" click.
 - Duplicate-slug error: the dialog stays open with values kept; `aria-invalid` on the slug input was not added (the action returns one error string, not a field).
 - The root breadcrumb ("Organizations") is hidden below `sm` on trails with more than 2 crumbs, so org and project names stay legible (UX agent change, not previously in the spec).
+
+## PR2 implementation notes (2026-10-12)
+
+- **Verified:** `shadcn add alert-dialog` again adds a bogus `cn` dependency and imports from it, and also stops on an overwrite prompt for `button.tsx` (answer no). Reverted `package.json`/lockfile, imported `cn` from `@/lib/utils`, and pruned the file to the pieces used (Root, Content with overlay and portal, Header, Footer, Title, Description, Action, Cancel).
+- **Verified (Chromium e2e and a JS-disabled context):** `ConfirmSubmit` works as assumed. A plain `type="submit"` button whose `onClick` calls `preventDefault()` and opens a controlled `AlertDialog`; the confirm calls `button.form.requestSubmit()` (the button's own form, so no `formRef` or `form=` id is needed). Focus returns to the row button through `onCloseAutoFocus` (asserted after Cancel). With JavaScript disabled the Remove button submits the server-action form directly and no dialog appears (`members.spec.ts`, no-JS case, using the signed-in `storageState`).
+- **Verified:** Radix `Dialog` blocks dismissal through `onEscapeKeyDown`, `onPointerDownOutside` and `onInteractOutside` calling `preventDefault()`; with `showCloseButton={false}` while the link shows, Esc and a click outside leave it open (`invitations.spec.ts`). Closing unmounts the dialog content, so the one-time link is dropped from React state on Done; focus returns to "Invite member".
+- `InviteState` gained `email` so the success heading can read "Invitation sent to <email>" (return shape only; the API call is unchanged). The heading is the `DialogTitle` itself, focused on mount, rather than a separate `role="status"` wrapper; the Copy link status is its own `aria-live="polite"` region, always rendered.
+- Pending-invitation expiry renders a fixed `YYYY-MM-DD HH:mm UTC` text in a `<time dateTime>`; `LocalTime` and its helpers were deferred to PR3 as agreed (not introduced in PR2, so step 8's Vitest for time helpers moves to PR3).
+- New shared pieces: `ui/native-select.tsx` (styled native select, reused by the audit Result filter in PR3), `dialog-form-footer.tsx` (Cancel plus a pending-aware submit, now also used by the project dialog to remove a fallow duplicate), `copy-button.tsx`, `confirm-submit.tsx`. `DataTable` gained `rowProps` (extra `data-*` attributes per row, for `member-row`/`data-user-id`) and a small `DataRow` extraction.
+- `members-error` is the shared `ErrorState` (`role="alert"`) with the title "That did not work" and the unchanged messages. A pending-invitations load failure renders `ErrorState` (`invitations-error`, with the reference) and leaves the members table intact.
+- axe (light and dark): the invite form dialog, the success dialog, the populated page and the Revoke confirm dialog at 320px, each scanned after the dialog animation finishes.
+- Not verified here: `e2e/sbom-upload.spec.ts` fails in this environment (SBOM stays "Processing", the data pipeline consumer is not running); it does not touch the members code. The pending-invitations `ErrorState` is not exercised by e2e (the API cannot be failed selectively), and the Clipboard failure status is untested.
+
+### PR2 UX verification changes (2026-10-12)
+
+- **Verified (Chromium, 320/390/desktop, light/dark):** below `sm` the members and pending-invitations tables were 948px wide inside a scroll container, so Role and the row actions were off-screen. `DataTable` gained an opt-in `stackedRow` layout (each row becomes a small grid, header kept for screen readers only); members and invitations use it. Tradeoff: `display: grid` on rows can drop table semantics in some screen readers below `sm`.
+- **Verified:** dialog content overflowed horizontally at 320px with a long email (success heading, link, Done). Dialog and AlertDialog content now use `grid-cols-[minmax(0,1fr)]`, and long titles wrap anywhere.
+- **Verified:** destructive confirm contrast (white text) is 6.64:1 light and 6.43:1 dark (sampled from screenshots). The stale `?error=` banner behind the Remove-confirm screenshot came from the e2e reloading after the last-admin attempt; it now opens the bare URL.
+- The pending-invitations `ErrorState` was verified visually by renaming the `invitations` table for a moment (members still render, no overflow); it is still not covered by e2e.
+- UX agent changes (mobile polish): `DataTable` gained an optional `stackedRow` prop (grid template classes) that turns each row into a small grid below `sm` with a screen-reader-only header, used by the members and invitations tables; `Dialog`/`AlertDialog` content got `grid-cols-[minmax(0,1fr)]` so long emails and links wrap instead of widening the dialog; pending-invitation expiry wraps. To keep fallow green `DataTable` was split into `HeaderRow`, `DataRow` and `LoadMore` (no behavior or test-ID change).

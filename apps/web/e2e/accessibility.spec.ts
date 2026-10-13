@@ -1,5 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { createOrg, signUp } from "./helpers";
 
 const WCAG_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"];
@@ -7,6 +7,12 @@ const WCAG_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"];
 async function expectNoViolations(page: Page) {
   const results = await new AxeBuilder({ page }).withTags(WCAG_TAGS).analyze();
   expect(results.violations).toEqual([]);
+}
+
+/** axe reads colors mid fade-in as near-transparent text; wait for the animation to finish. */
+async function expectNoViolationsOnceSettled(page: Page, dialog: Locator) {
+  await dialog.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)));
+  await expectNoViolations(page);
 }
 
 test.describe("accessibility (WCAG 2 A/AA)", () => {
@@ -90,9 +96,46 @@ test.describe("accessibility (WCAG 2 A/AA)", () => {
       await page.getByRole("button", { name: "New project" }).click();
       const dialog = page.getByRole("dialog");
       await expect(dialog).toBeVisible();
-      // axe reads colors mid fade-in as near-transparent text; wait for the animation to finish.
-      await dialog.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)));
+      await expectNoViolationsOnceSettled(page, dialog);
+    });
+  }
+
+  // Members: the invite dialog (form and one-time link) and a confirm dialog, in both themes.
+  for (const theme of ["light", "dark"] as const) {
+    test(`the members page and its dialogs have no violations in ${theme} theme`, async ({
+      page,
+      context,
+    }) => {
+      const run = Date.now().toString(36);
+      const slug = `axe-members-${theme}-${run}`;
+      await signUp(page, `axe-members-${theme}-${run}@example.com`);
+      await createOrg(page, `Axe Members ${run}`, slug);
+      await context.addCookies([
+        { name: "sentra-theme", value: theme, url: "http://localhost:3000" },
+      ]);
+      await page.goto(`/orgs/${slug}/members`);
+      await expect(page.getByTestId("member-row")).toHaveCount(1);
+      await expect(page.locator("html")).toHaveClass(new RegExp(theme));
+
+      await page.getByRole("button", { name: "Invite member" }).click();
+      const invite = page.getByRole("dialog");
+      await expect(invite).toBeVisible();
+      await expectNoViolationsOnceSettled(page, invite);
+
+      await page.getByLabel("Email", { exact: true }).fill(`axe-invitee-${run}@example.com`);
+      await page.getByRole("button", { name: "Invite", exact: true }).click();
+      await expect(page.getByTestId("invite-link")).toBeVisible();
+      await expectNoViolationsOnceSettled(page, invite);
+      await page.getByRole("button", { name: "Done" }).click();
+
+      // A populated page: members table, pending invitations, and a confirm dialog on Revoke.
+      await expect(page.getByTestId("invitation-row")).toHaveCount(1);
       await expectNoViolations(page);
+      await page.setViewportSize({ width: 320, height: 700 });
+      await page.getByRole("button", { name: "Revoke" }).click();
+      const confirmation = page.getByRole("alertdialog");
+      await expect(confirmation).toBeVisible();
+      await expectNoViolationsOnceSettled(page, confirmation);
     });
   }
 });
